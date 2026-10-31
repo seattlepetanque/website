@@ -34,13 +34,13 @@ Status values: `todo`, `in-progress`, `done`, `blocked` (with a note).
 | B01 | done | haiku | — | Vendor three.js |
 | B02 | done | haiku | — | Page scaffold and build pipeline |
 | B03 | done | sonnet | B02 | Constants, RNG and terrain |
-| B04 | in-progress | sonnet | B03 | Physics engine |
+| B04 | done | sonnet | B03 | Physics engine |
 | B05 | done | sonnet | B02 | Rules and scoring |
 | B06 | done | sonnet | B01, B03 | Renderer and cameras |
-| B07 | todo | sonnet | B04, B06 | Game loop and precise-mode throws |
+| B07 | in-progress | sonnet | B04, B06 | Game loop and precise-mode throws |
 | B08 | todo | sonnet | B07 | Swing gesture input and gauge |
 | B09 | todo | sonnet | B05, B07 | HUD and full game flow (placeholder AI) |
-| B10 | todo | sonnet | B04, B05 | Monte Carlo AI |
+| B10 | in-progress | sonnet | B04, B05 | Monte Carlo AI |
 | B11 | todo | sonnet | B08, B09, B10 | AI integration, personalities, team choice |
 | B12 | todo | haiku | B07 | Synthesized audio |
 | B13 | todo | sonnet | B11 | Polish: divots, measuring, commentary, fallbacks |
@@ -99,3 +99,8 @@ Add a short "Pétanque game" section to README.md (where the code lives, how to 
 
 ### B15 Final review, tuning, bug fixes (sonnet)
 Run `npm test` and the build check; play-test through debug hooks (simulate a full AI-vs-AI match headlessly in Node using rules + physics + ai to confirm it terminates with a winner); fix bugs; tune constants so lobs/rolls/shots feel right; report remaining issues in this file.
+
+## Notes for B15 (tuning)
+
+- From B04: very heavy backspin (~60 rad/s at speed 9, loft 1.0) can make a boule roll backwards several metres. Real boules check up and stop; cap the reverse roll (e.g. damp spin hard on landing in loose gravel).
+- From B04: a shooter with no backspin keeps rolling after a hit; carreau needs strong backspin. Check this feels right with the gesture input.

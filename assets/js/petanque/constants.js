@@ -37,6 +37,16 @@ export const C = Object.freeze({
   restSpin: 0.5, // rad/s
   restTime: 0.15, // seconds below thresholds before state = resting
   maxSpeed: 40,
+  rollFriction: 1, // scale on terrain mu_r
+  spinDecay: 5, // 1/s: exponential decay of spin about the surface normal
+  hopSpeed: 0.12, // m/s along the normal after a stone kick that lifts a rolling ball
+  bounceMin: 0.4, // m/s: rebound slower than this becomes rolling
+  stoneEventSpeed: 0.3, // m/s: smallest stone hit that logs an event
+  landLooseDrag: 0.12, // fraction of tangential speed lost at landing on fully loose ground
+  restitutionJitter: 0.05, // +-fraction randomising landing restitution
+  divotSpeedRef: 5, // landing speed that gives divotDepthBase
+  divotMinSpeed: 1, // no divot below this landing speed
+  lowAirZ: 0.06, // above this ground clearance an airborne body skips terrain/stone checks
 
   // Out of bounds: dead once fully across a line (see plan §3)
   deadMargin: 0, // extra slack beyond r
