@@ -27,7 +27,17 @@
   .petanque canvas { aspect-ratio: 3 / 4; }
 }
 
-/* Precise-mode controls */
+/* Controls bar and optional precise-mode panel */
+.pc-bar { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+.pc-bar button, .pc-reset {
+  min-height: 2.75rem; padding: .4rem 1.1rem; font: inherit; font-weight: 700; cursor: pointer;
+  color: var(--red, #8a1c2b); background: transparent; border: 2px solid var(--red, #8a1c2b); border-radius: 4px;
+}
+.pc-bar button.is-on { color: var(--paper, #fffaf0); background: var(--red, #8a1c2b); }
+.pc-bar button:focus-visible { outline: 3px solid var(--navy, #14284b); outline-offset: 2px; }
+.pc-panel { display: grid; gap: .75rem; }
+.pc-panel[hidden] { display: none; }
+
 .petanque-controls { display: grid; gap: .75rem; }
 .pc-grid { display: grid; gap: .4rem 1.5rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
 .pc-row { display: grid; grid-template-columns: 5.5rem 1fr 5.5rem; align-items: center; gap: .6rem; }
@@ -50,7 +60,8 @@
 
 /* swing gauge */
 .swing-gauge {
-  position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .25s;
+  position: absolute; top: .75rem; left: .75rem; right: .75rem; aspect-ratio: 16 / 10; /* matches the canvas */
+  pointer-events: none; opacity: 0; transition: opacity .25s;
   color: var(--paper, #fffaf0);
 }
 .swing-gauge.is-active, .swing-gauge.is-ghost { opacity: 1; }
@@ -74,6 +85,7 @@
 .sg-bar-fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--red, #8a1c2b); }
 .sg-bar-ceiling { position: absolute; left: -4px; right: -4px; height: 3px; background: var(--paper, #fffaf0); }
 .swing-gauge:not(.is-active) .sg-bar { display: none; }
+@media (max-width: 34rem) { .swing-gauge { top: .5rem; left: .5rem; right: .5rem; aspect-ratio: 3 / 4; } }
 @media (prefers-reduced-motion: reduce) { .swing-gauge { transition: none; } }
 
 /* HUD: scoreboard, overlay panels */
@@ -128,3 +140,18 @@
   .pt-board { grid-template-columns: 1fr 1fr; }
   .pt-mene { grid-column: 1 / -1; grid-row: 1; }
 }
+
+/* Partner suggestion and how-to hint */
+.pt-suggest { flex-basis: 100%; margin: 0; font-style: italic; color: var(--muted, #4d5468); }
+.pt-suggest:empty { display: none; }
+.pt-hint {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem; margin-top: .6rem; padding: .5rem .75rem;
+  background: var(--paper, #fffaf0); border: 2px dashed var(--navy, #14284b); border-radius: 4px;
+}
+.pt-hint[hidden] { display: none; }
+.pt-hint-text { flex: 1 1 18rem; }
+.pt-hint-close {
+  min-height: 2.5rem; padding: .3rem 1rem; font: inherit; font-weight: 700; cursor: pointer;
+  color: var(--navy, #14284b); background: transparent; border: 2px solid var(--navy, #14284b); border-radius: 4px;
+}
+.pt-hint-close:focus-visible { outline: 3px solid var(--navy, #14284b); outline-offset: 2px; }

@@ -54,7 +54,10 @@ export function createHud(root, hudEl, cb) {
   chooser.setAttribute('role', 'group');
   chooser.setAttribute('aria-label', 'Who throws?');
   chooser.hidden = true;
-  hudEl.append(board, turnEl, chooser);
+  const suggestEl = el('p', 'pt-suggest');
+  const hintEl = el('div', 'pt-hint');
+  hintEl.hidden = true;
+  hudEl.append(board, turnEl, chooser, hintEl);
 
   let setupState = { target: 13, difficulty: 'medium' };
 
@@ -132,9 +135,11 @@ export function createHud(root, hudEl, cb) {
     turnEl.textContent = turn ? turn.text : '';
   }
 
-  function showChooser(players) {
+  // suggestion: optional one-line advice from the partner, replaced later by setSuggestion()
+  function showChooser(players, suggestion) {
     chooser.textContent = '';
     chooser.append(el('span', 'pt-chooser-label', 'Who throws?'));
+    suggestEl.textContent = suggestion || '';
     let first = null;
     for (const p of players) {
       const b = button(p.isHuman ? 'You throw' : `${p.name} throws`, 'pt-btn pt-who', () => {
@@ -144,10 +149,21 @@ export function createHud(root, hudEl, cb) {
       if (!first) first = b;
       chooser.append(b);
     }
+    chooser.append(suggestEl);
     chooser.hidden = false;
     focusSoon(first);
   }
+  function setSuggestion(text) { suggestEl.textContent = text; }
   function hideChooser() { chooser.hidden = true; chooser.textContent = ''; }
+
+  // One-time how-to hint with a dismiss button
+  function showHint(text) {
+    hintEl.textContent = '';
+    hintEl.append(el('span', 'pt-hint-text', text));
+    hintEl.append(button('Got it', 'pt-hint-close', () => { hideHint(); if (cb.onHintDismiss) cb.onHintDismiss(); }));
+    hintEl.hidden = false;
+  }
+  function hideHint() { hintEl.hidden = true; }
 
   // info: { text, detail, scores, nextLabel }
   function showMeneEnd(info) {
@@ -169,5 +185,5 @@ export function createHud(root, hudEl, cb) {
     focusSoon(again);
   }
 
-  return { say, showSetup, hideOverlay, update, showChooser, hideChooser, showMeneEnd, showGameOver };
+  return { say, showSetup, hideOverlay, update, showChooser, setSuggestion, hideChooser, showHint, hideHint, showMeneEnd, showGameOver };
 }

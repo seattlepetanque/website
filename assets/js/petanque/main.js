@@ -1,19 +1,36 @@
-// Game loop and precise-mode throws: terrain, world and renderer wired to range inputs.
+// Game loop: terrain, world, renderer, rules, AI, swing input, audio and HUD wired together.
 import { C } from './constants.js';
-import { mulberry32, gauss } from './rng.js';
+import { mulberry32 } from './rng.js';
 import { createTerrain } from './terrain.js';
-import { createWorld, createBody, launch, simulate } from './physics.js';
+import { createWorld, createBody, launch } from './physics.js';
 import { createRenderer } from './render.js';
 import {
   createMatch, defaultPlayers, apply, nextTeam, playersWithBoules,
 } from './rules.js';
 import { createHud } from './hud.js';
+import { chooseThrowAsync, chooseJackThrow } from './ai.js';
+import { createSwingInput, createSwingGauge } from './input.js';
+import { createAudio } from './audio.js';
 
 const TEAM_NAMES = ['You & Pierre', 'Marcel & Odette'];
+const AIM_MAX = 0.6; // rad of aim either side of straight ahead
 const MAX_STEPS = 24; // physics steps per frame; backlog beyond this is dropped
 const DEG = Math.PI / 180;
 const params = new URLSearchParams(location.search);
 const debug = params.has('debug');
+const AI_MIN_THINK = 800; // ms: the AI never answers faster than this
+const HINT_KEY = 'petanque-hint-seen';
+const PRECISE_KEY = 'petanque-precise';
+const HINT_TEXT = 'Drag sideways to aim. Swipe down then up in the lower part of the court to throw. ' +
+  'Let go higher for a lob, stop sharply before letting go for backspin.';
+
+function store(key, value) { // localStorage that never throws
+  try {
+    if (value === undefined) return globalThis.localStorage.getItem(key);
+    globalThis.localStorage.setItem(key, value);
+  } catch (e) { /* blocked storage: remember nothing */ }
+  return null;
+}
 
 const root = document.querySelector('#petanque');
 const status = document.querySelector('.petanque-status');
@@ -23,65 +40,12 @@ const say = (text) => { if (status) status.textContent = text; };
 
 // slider spec: [key, label, min, max, step, default, unit]
 const SLIDERS = [
-  ['yaw', 'Aim', -15, 15, 0.5, 0, '°'],
+  ['yaw', 'Aim', -35, 35, 0.5, 0, '°'],
   ['speed', 'Speed', 2, 12, 0.1, 7, ' m/s'],
   ['loft', 'Loft', 5, 75, 1, 50, '°'],
   ['backspin', 'Backspin', 0, 150, 1, 30, ' rad/s'],
   ['sidespin', 'Sidespin', -40, 40, 1, 0, ' rad/s'],
 ];
-
-
-// ---- Placeholder AI (B11 swaps this for ai.js with the same signatures) ----
-const NOISE = { // speed (fraction) and yaw (rad) standard deviations
-  easy: { speed: 0.09, yaw: 0.03 },
-  medium: { speed: 0.05, yaw: 0.015 },
-  hard: { speed: 0.025, yaw: 0.008 },
-};
-
-// Bisect launch speed so a lone body comes to rest `dist` metres from the circle
-function searchSpeed(world, kind, yaw, loft, backspin, dist) {
-  const terr = world.terrain.perceived ? world.terrain.perceived() : world.terrain;
-  const scratch = world.clone(terr, mulberry32(4321));
-  let lo = 2, hi = 16;
-  for (let i = 0; i < 9; i++) {
-    const mid = (lo + hi) / 2;
-    scratch.bodies = [];
-    scratch.events.length = 0;
-    const b = createBody(kind, {});
-    scratch.add(b);
-    launch(b, { yaw, speed: mid, loft, backspin, sidespin: 0 });
-    simulate(scratch, 15);
-    const d = b.dead ? Infinity : Math.hypot(b.x - C.throwFrom.x, b.y - C.throwFrom.y);
-    if (d < dist) lo = mid; else hi = mid;
-  }
-  return (lo + hi) / 2;
-}
-
-function aimAt(world, kind, target, loft, backspin, difficulty, rand) {
-  const dx = target.x - C.throwFrom.x, dy = target.y - C.throwFrom.y;
-  const yaw0 = Math.atan2(dx, dy);
-  const speed0 = searchSpeed(world, kind, yaw0, loft, backspin, Math.hypot(dx, dy));
-  const n = NOISE[difficulty] || NOISE.medium;
-  return {
-    yaw: yaw0 + gauss(rand) * n.yaw,
-    speed: speed0 * (1 + gauss(rand) * n.speed),
-    loft, backspin, sidespin: 0,
-  };
-}
-
-// Demi-portée at the jack (placeholder)
-async function chooseThrowAsync({ world, match, player, difficulty, rand }) {
-  const jack = world.bodies.find((b) => b.kind === 'jack' && !b.dead) || match.jack;
-  const throwParams = aimAt(world, 'boule', jack, 0.6, 20, difficulty, rand);
-  return { throwParams, intent: 'point', label: `${player.name} is aiming…` };
-}
-
-// Jack thrown 6.5 to 9.5 m out, roughly centred
-function chooseJackThrow({ world, difficulty, rand }) {
-  const target = { x: 2 + (rand() - 0.5) * 0.8, y: C.throwFrom.y + 6.5 + rand() * 3 };
-  const throwParams = aimAt(world, 'jack', target, 0.5, 0, difficulty, rand);
-  return { throwParams, intent: 'jack', label: 'throws the jack' };
-}
 
 
 function boot() {
@@ -100,9 +64,16 @@ function boot() {
   let flying = null; // body being tracked
   let pending = null; // { kind, playerId } while waiting for the human to throw
   let aimYaw = 0;
+  const aimCam = { yaw: 0 }; // shared with the renderer so dragging moves the camera without restarting its transition
+  const aimView = () => renderer.setCamera('aim', aimCam);
+  const audio = createAudio();
+  let thinkToken = 0; // bumped to drop stale partner-suggestion results
+  let pierreChoice = null; // cached AI choice for Pierre while the chooser is open
+  const pickHuman = params.get('humanturn'); // debug: stop at the human's first boule (or 'chooser')
 
   // Controls
   const inputs = {};
+  const outputs = {};
   controls.textContent = '';
   const grid = document.createElement('div');
   grid.className = 'pc-grid';
@@ -121,27 +92,70 @@ function boot() {
     const show = () => { out.textContent = input.value + unit; };
     input.addEventListener('input', () => {
       show();
-      if (key === 'yaw') {
-        aimYaw = +input.value * DEG;
-        if (!flying) renderer.setCamera('aim', { yaw: aimYaw });
-      }
+      if (key === 'yaw') setAim(+input.value * DEG, true);
     });
     show();
     row.append(lab, input, out);
     grid.append(row);
     inputs[key] = input;
+    outputs[key] = show;
   }
-  const buttons = document.createElement('div');
-  buttons.className = 'pc-buttons';
-  const mkBtn = (text, cls) => {
+  // Layout: [Precise controls] [mute] [New game] bar, then the optional slider panel
+  const bar = document.createElement('div');
+  bar.className = 'pc-bar';
+  const mkBtn = (parent, text, cls) => {
     const b = document.createElement('button');
     b.type = 'button'; b.textContent = text; b.className = cls;
-    buttons.append(b);
+    parent.append(b);
     return b;
   };
-  const throwBtn = mkBtn('Throw jack', 'pc-throw');
-  const newBtn = mkBtn('New game', 'pc-reset');
-  controls.append(grid, buttons);
+  const toggleBtn = mkBtn(bar, 'Precise controls', 'pc-toggle');
+  toggleBtn.setAttribute('aria-controls', 'pc-panel');
+  bar.append(audio.createMuteButton());
+  const newBtn = mkBtn(bar, 'New game', 'pc-reset');
+  const panel = document.createElement('div');
+  panel.className = 'pc-panel';
+  panel.id = 'pc-panel';
+  const buttons = document.createElement('div');
+  buttons.className = 'pc-buttons';
+  const throwBtn = mkBtn(buttons, 'Throw jack', 'pc-throw');
+  panel.append(grid, buttons);
+  controls.append(bar, panel);
+
+  function setPrecise(on, remember) {
+    panel.hidden = !on;
+    toggleBtn.setAttribute('aria-expanded', String(on));
+    toggleBtn.classList.toggle('is-on', on);
+    if (remember) store(PRECISE_KEY, on ? '1' : '0');
+  }
+  setPrecise(store(PRECISE_KEY) === '1', false);
+  toggleBtn.addEventListener('click', () => setPrecise(panel.hidden, true));
+
+  // Aim from swing drag or slider; the yaw slider mirrors it
+  function setAim(yaw, fromSlider) {
+    aimYaw = Math.max(-AIM_MAX, Math.min(AIM_MAX, yaw));
+    aimCam.yaw = aimYaw;
+    if (!fromSlider) {
+      inputs.yaw.value = (Math.round(aimYaw / DEG * 2) / 2).toString();
+      outputs.yaw();
+    }
+  }
+
+  // Swing input and gauge sit over the canvas
+  const gauge = createSwingGauge(root);
+  const swing = createSwingInput(canvas, {
+    getAimYaw: () => aimYaw,
+    onAim: (dyaw) => setAim(aimYaw + dyaw, false),
+    onSwingStart: () => audio.unlock(),
+    onSwingUpdate: (state) => { if (pending) gauge.update(state); },
+    onThrow: (tp) => {
+      gauge.hide();
+      if (!pending || flying) return;
+      gauge.showGhost(tp);
+      humanThrow(tp);
+    },
+    onCancel: () => gauge.hide(),
+  });
 
   const readParams = () => ({
     yaw: +inputs.yaw.value * DEG,
@@ -154,14 +168,16 @@ function boot() {
   function enableControls(on) {
     for (const k in inputs) inputs[k].disabled = !on;
     throwBtn.disabled = !on;
+    if (on) swing.enable(); else { swing.disable(); gauge.hide(); }
   }
   enableControls(false);
 
   const hud = createHud(root, document.querySelector('.petanque-hud'), {
-    onStart: (opts) => startGame(opts),
+    onStart: (opts) => { audio.unlock(); startGame(opts); },
     onNext: () => nextMene(),
     onPlayAgain: () => toSetup(),
     onChoose: (id) => beginTurn(id),
+    onHintDismiss: () => store(HINT_KEY, '1'),
   });
   const say2 = hud.say;
 
@@ -206,8 +222,10 @@ function boot() {
     match = null; pending = null;
     enableControls(false);
     clearWorld();
-    renderer.setCamera('aim', { yaw: 0 });
+    setAim(0, false);
+    aimView();
     hud.hideChooser();
+    hud.hideHint();
     hud.showSetup({ difficulty });
   }
 
@@ -217,7 +235,7 @@ function boot() {
     instant = !!opts.instant;
     const players = defaultPlayers();
     if (opts.allAI) for (const p of players) p.isHuman = false;
-    match = createMatch({ target: opts.target || 13, players, firstJackTeam: Math.random() < 0.5 ? 0 : 1 });
+    match = createMatch({ target: opts.target || 13, players, firstJackTeam: opts.firstJackTeam ?? (Math.random() < 0.5 ? 0 : 1) });
     hud.hideOverlay();
     beginMene(true);
   }
@@ -231,9 +249,9 @@ function boot() {
       match.players.find((p) => p.team === team);
     const lead = first ? `${TEAM_NAMES[team]} won the toss. ` : '';
     refreshHud({ team, playerId: thrower.id, text: `${thrower.isHuman ? 'You' : thrower.name} throw${thrower.isHuman ? '' : 's'} the jack` });
-    renderer.setCamera('aim', { yaw: aimYaw });
+    aimView();
     if (thrower.isHuman) {
-      humanTurn('jack', thrower.id, lead + 'Your jack. Set the sliders and throw it 6 to 10 metres out.');
+      humanTurn('jack', thrower.id, lead + 'Your jack. Aim, then swing to throw it 6 to 10 metres out: a low, gentle throw works best.');
     } else {
       aiJack(thrower, lead);
     }
@@ -245,50 +263,88 @@ function boot() {
     pending = { kind, playerId };
     throwBtn.textContent = kind === 'jack' ? 'Throw jack' : 'Throw boule';
     enableControls(true);
-    renderer.setCamera('aim', { yaw: aimYaw });
+    aimView();
     say2(text);
-    if (!instant) setTimeout(() => throwBtn.focus({ preventScroll: true }), 0);
+    if (pickHuman !== null || store(HINT_KEY) !== '1') hud.showHint(HINT_TEXT);
+    if (pickHuman !== null) gauge.update({ height: 0.35, power: 0.6, ceiling: 0.8, phase: 'forward' });
+    if (!instant && !panel.hidden) setTimeout(() => throwBtn.focus({ preventScroll: true }), 0);
   }
 
-  throwBtn.addEventListener('click', () => {
+  function humanThrow(p) {
     if (!pending || flying) return;
     const { kind, playerId } = pending;
     pending = null;
-    doThrow(kind, playerId, readParams());
-  });
+    audio.unlock();
+    store(HINT_KEY, '1');
+    hud.hideHint();
+    doThrow(kind, playerId, p);
+  }
+
+  throwBtn.addEventListener('click', () => humanThrow(readParams()));
   newBtn.addEventListener('click', () => {
     if (match) toSetup();
   });
 
-  function doThrow(kind, playerId, p) {
+  function doThrow(kind, playerId, p, comment) {
+    pierreChoice = null; thinkToken++;
+    hud.hideChooser();
     const player = match.players.find((q) => q.id === playerId);
     if (kind === 'boule') match = apply(match, { type: 'bouleThrown', playerId });
     refreshHud({ team: player.team, playerId, text: `${player.isHuman ? 'You are' : player.name + ' is'} throwing…` });
-    say2('Rolling…');
+    say2(comment || 'Rolling…');
     launchBody(kind, player.team, playerId, p);
   }
+
+  const sleep = (ms) => new Promise((res) => setTimeout(res, instant ? 0 : ms));
 
   async function aiJack(player, lead) {
     refreshHud({ team: player.team, playerId: player.id, text: `${player.name} throws the jack` });
     say2(`${lead}${player.name} is aiming…`);
     const t = token;
-    await sleep(900);
+    await sleep(AI_MIN_THINK + 100);
     if (t !== token) return;
-    const { throwParams } = chooseJackThrow({ world, difficulty, rand: aiRand });
+    const { throwParams, label } = chooseJackThrow({ world, difficulty, rand: aiRand, player });
     pending = null;
-    doThrow('jack', player.id, throwParams);
+    doThrow('jack', player.id, throwParams, label);
   }
-
-  const sleep = (ms) => new Promise((res) => setTimeout(res, instant ? 0 : ms));
 
   async function aiBoule(player) {
     say2(`${player.name} is aiming…`);
     const t = token;
-    const choice = await chooseThrowAsync({ world, match, player, difficulty, rand: aiRand });
-    await sleep(1100);
+    const cached = pierreChoice && pierreChoice.id === player.id ? pierreChoice.choice : null;
+    pierreChoice = null;
+    const [choice] = await Promise.all([
+      cached || chooseThrowAsync({ world, match, player, difficulty, rand: aiRand }),
+      sleep(AI_MIN_THINK),
+    ]);
     if (t !== token) return;
-    say2(choice.label.replace('is aiming…', 'throws…'));
-    doThrow('boule', player.id, choice.throwParams);
+    say2(choice.label);
+    await sleep(700);
+    if (t !== token) return;
+    doThrow('boule', player.id, choice.throwParams, choice.label);
+  }
+
+  // Pierre looks at the court and tells you what he would do
+  async function suggest(pierre) {
+    const mine = ++thinkToken;
+    const t = token;
+    let choice;
+    try {
+      choice = await chooseThrowAsync({ world, match, player: pierre, difficulty, rand: aiRand });
+    } catch (err) { return; }
+    if (mine !== thinkToken || t !== token) return;
+    pierreChoice = { id: pierre.id, choice };
+    let text = 'You point, I\'ll keep my boules for shooting.';
+    if (choice.intent === 'shoot') {
+      const j = jackBody();
+      const foes = world.bodies.filter((b) => b.kind === 'boule' && !b.dead && b.team === 1 && j);
+      foes.sort((a, b) => Math.hypot(a.x - j.x, a.y - j.y) - Math.hypot(b.x - j.x, b.y - j.y));
+      text = foes.length ? `I'd shoot ${ownerName(foes[0])} boule. Want me to?` : 'I\'d like to shoot. Want me to?';
+    } else if (choice.intent === 'point') {
+      text = 'I can see a good point from here, but you point and I\'ll keep my boules for shooting.';
+    }
+    hud.setSuggestion(`Pierre: "${text}"`);
+    if (pickHuman !== null && pickHuman !== 'chooser') beginTurn('you'); // debug: go straight to the human throw
   }
 
   // Pick who throws next, from rules.nextTeam()
@@ -300,7 +356,9 @@ function boot() {
       refreshHud({ team, playerId: null, text: 'Your team throws next' });
       say2('Your team to play. Who throws?');
       renderer.setCamera('head', { target: match.jack });
-      hud.showChooser(avail);
+      hud.showChooser(avail, 'Pierre is sizing up the court…');
+      const pierre = avail.find((p) => !p.isHuman);
+      if (pierre) suggest(pierre);
       return;
     }
     // AI side: whoever holds more boules goes first, the first listed on ties
@@ -309,10 +367,11 @@ function boot() {
   }
 
   function beginTurn(playerId) {
+    hud.hideChooser();
     const player = match.players.find((p) => p.id === playerId);
     refreshHud({ team: player.team, playerId, text: `${player.isHuman ? 'Your throw' : player.name + ' to throw'}` });
     if (player.isHuman) {
-      humanTurn('boule', playerId, 'Your turn. Set the sliders and throw a boule.');
+      humanTurn('boule', playerId, 'Your turn. Aim with a sideways drag, then swing to throw.');
     } else {
       aiBoule(player);
     }
@@ -332,12 +391,12 @@ function boot() {
     const j = jackBody();
     if (j && j.dead) return 'The jack is out: dead jack.';
     if (was.kind === 'jack') return `Jack is ${Math.hypot(was.x - C.circle.x, was.y - C.circle.y).toFixed(1)} m out.`;
-    if (was.dead) return `${ownerName(was)}'s boule is out: dead boule.`;
-    return `${ownerName(was)}'s boule is ${Math.hypot(was.x - j.x, was.y - j.y).toFixed(2)} m from the jack.`;
+    if (was.dead) return `${ownerName(was)} boule is out: dead boule.`;
+    return `${ownerName(was)} boule is ${Math.hypot(was.x - j.x, was.y - j.y).toFixed(2)} m from the jack.`;
   }
   const ownerName = (b) => {
     const p = match && match.players.find((q) => q.id === b.owner);
-    return p ? (p.isHuman ? 'Your' : p.name).replace(/^Your$/, 'Your') : 'The';
+    return p ? (p.id === 'you' ? 'Your' : p.name + "'s") : 'The';
   };
 
   function onSettled() {
@@ -346,7 +405,7 @@ function boot() {
     if (!match) { // debug throws outside a game
       const j = jackBody();
       if (j && !j.dead) renderer.setCamera('head', { target: { x: j.x, y: j.y } });
-      else renderer.setCamera('aim', { yaw: aimYaw });
+      else aimView();
       return;
     }
     const snap = snapshot();
@@ -355,7 +414,7 @@ function boot() {
       const team = match.jackTeam;
       match = apply(match, { type: 'jackThrown', team, jack: snap.jack });
       if (match.phase === 'jack') { // invalid: the other team throws it
-        renderer.setCamera('aim', { yaw: aimYaw });
+        aimView();
         say2(`${note} Not a legal jack (6 to 10 m, 1 m from the lines). ${TEAM_NAMES[match.jackTeam]} throw it.`);
         later(() => beginMene(false), 1500);
         return;
@@ -378,8 +437,9 @@ function boot() {
 
   function endOfMene(note) {
     const r = match.result;
-    const j = match.jack;
-    renderer.setCamera(j && !j.dead ? 'head' : 'aim', { target: j, yaw: 0 });
+    const j = jackBody();
+    if (j && !j.dead) renderer.setCamera('head', { target: { x: j.x, y: j.y } });
+    else aimView();
     refreshHud(null);
     let text, detail = note;
     if (r.void) text = 'Void mène: no points';
@@ -419,13 +479,16 @@ function boot() {
       if (flying && world.settled()) onSettled();
     }
     if (n === MAX_STEPS) acc = 0; // drop backlog rather than spiral
-    world.events.length = 0;
+    if (world.events.length) {
+      audio.handleEvents(world.events, new Map(world.bodies.map((b) => [b.id, b])));
+      world.events.length = 0;
+    }
     renderer.sync(world);
     renderer.render(dt);
     requestAnimationFrame(frame);
   }
 
-  renderer.setCamera('aim', { yaw: aimYaw });
+  aimView();
   requestAnimationFrame(frame);
 
   if (debug) {
@@ -440,6 +503,9 @@ function boot() {
   if (debug && params.has('autotest')) {
     // AI-only quick match, every throw simulated to rest instantly
     startGame({ target: 7, difficulty: 'medium', allAI: true, instant: true });
+  } else if (debug && pickHuman !== null) {
+    // Stop at the human's first boule (or at the chooser with ?humanturn=chooser)
+    startGame({ target: 7, difficulty: 'medium', instant: true, firstJackTeam: 1 });
   } else {
     toSetup();
   }
