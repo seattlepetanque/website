@@ -45,6 +45,7 @@ if [ ! -f "$BUILD_DIR/index.html" ]; then
 fi
 
 log "publishing to $WEB_ROOT"
-# Keep host-managed paths: DreamHost's Let's Encrypt renewals write to .well-known/.
-rsync -a --delete --exclude='/.well-known/' "$BUILD_DIR/" "$WEB_ROOT/"
+# Keep paths the build doesn't own: DreamHost's Let's Encrypt renewals write to
+# .well-known/, and setup-host.sh installs the webhook/login scripts in _hooks/.
+rsync -a --delete --exclude='/.well-known/' --exclude='/_hooks/' "$BUILD_DIR/" "$WEB_ROOT/"
 log "deploy complete"

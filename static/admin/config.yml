@@ -6,9 +6,9 @@ backend:
   # GitHub repo (owner/name). Confirm this matches the repo the site deploys from.
   repo: seattlepetanque/website
   branch: main
-  # GitHub OAuth helper (deploy/hooks/oauth.php) on the hooks subdomain.
-  base_url: https://hooks.seattlepetanque.org
-  auth_endpoint: oauth.php
+  # GitHub OAuth helper: deploy/hooks/oauth.php, installed at /_hooks/ on the site.
+  base_url: https://seattlepetanque.org
+  auth_endpoint: _hooks/oauth.php
   auth_scope: public_repo
 
 # Lets editors run `npx decap-server` and edit the local working copy without GitHub login.

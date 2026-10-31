@@ -6,7 +6,7 @@
 declare(strict_types=1);
 
 const CONFIG_FILE = '/home/dh_jsaetx/.decap-oauth.ini';
-const REDIRECT_URI = 'https://hooks.seattlepetanque.org/oauth.php';
+const REDIRECT_URI = 'https://seattlepetanque.org/_hooks/oauth.php';
 const SCOPE = 'public_repo';
 const COOKIE_NAME = 'decap_oauth_state';
 
@@ -47,7 +47,7 @@ function set_state_cookie(string $value, int $maxAge): void
 {
     setcookie(COOKIE_NAME, $value, [
         'expires' => $maxAge > 0 ? time() + $maxAge : time() - 3600,
-        'path' => '/oauth.php',
+        'path' => '/_hooks/oauth.php',
         'secure' => true,
         'httponly' => true,
         'samesite' => 'Lax',

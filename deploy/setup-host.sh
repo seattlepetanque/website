@@ -15,7 +15,7 @@ BRANCH="main"
 HOME="${HOME:-/home/dh_jsaetx}"
 BIN_DIR="$HOME/bin"
 SITE_SRC="$HOME/site-src"
-HOOKS_DOCROOT="$HOME/hooks.seattlepetanque.org"
+HOOKS_DIR="$HOME/seattlepetanque.org/_hooks"
 SECRET_FILE="$HOME/.deploy-secret"
 
 log() {
@@ -112,16 +112,20 @@ fi
 
 # --- hooks docroot -----------------------------------------------------------
 # Copy the contents with "/." so dotfiles such as .htaccess are included.
-mkdir -p "$HOOKS_DOCROOT"
-cp -R "$SITE_SRC/deploy/hooks/." "$HOOKS_DOCROOT/"
-log "copied hooks to $HOOKS_DOCROOT"
+# deploy.sh's rsync excludes /_hooks/, so site deploys never delete these.
+mkdir -p "$HOOKS_DIR"
+cp -R "$SITE_SRC/deploy/hooks/." "$HOOKS_DIR/"
+# umask 077 above would leave these unreadable by Apache; scripts are public, secrets are not.
+chmod 755 "$HOOKS_DIR"
+chmod 644 "$HOOKS_DIR"/*.php "$HOOKS_DIR/.htaccess"
+log "copied hooks to $HOOKS_DIR"
 
 # --- deploy script -----------------------------------------------------------
 chmod +x "$SITE_SRC/deploy/deploy.sh"
 
 log "setup complete. Next steps:"
 cat <<EOF
-  1. Confirm https://hooks.seattlepetanque.org/deploy.php answers over HTTPS (GET returns 405).
+  1. Confirm https://seattlepetanque.org/_hooks/deploy.php answers (GET returns 405).
   2. Add the GitHub webhook (see deploy/README.md) using the secret above.
   3. Install the cron line from $SITE_SRC/deploy/crontab.txt (crontab -e).
   4. Run a first deploy by hand: $SITE_SRC/deploy/deploy.sh

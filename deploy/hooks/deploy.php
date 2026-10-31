@@ -1,5 +1,5 @@
 <?php
-// GitHub push webhook for hooks.seattlepetanque.org.
+// GitHub push webhook, served at https://seattlepetanque.org/_hooks/deploy.php.
 // Verifies the X-Hub-Signature-256 HMAC, then starts deploy.sh in the background.
 
 const SECRET_FILE = '/home/dh_jsaetx/.deploy-secret';

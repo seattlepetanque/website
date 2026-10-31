@@ -4,7 +4,7 @@
 
 - **Source of truth:** this GitHub repo. Content is Markdown with YAML front matter.
 - **Editing:** Decap CMS at `/admin/`. Editors log in with GitHub; locally, use `npx decap-server`.
-- **Build and host:** DreamHost shared hosting. On every push, a GitHub webhook calls `hooks.seattlepetanque.org/deploy.php`, which runs `deploy/deploy.sh` (git pull + hugo build) into `~/seattlepetanque.org`. A nightly cron job also runs `deploy.sh` so past events roll over from "Upcoming" to "Past" automatically.
+- **Build and host:** DreamHost shared hosting. On every push, a GitHub webhook calls `seattlepetanque.org/_hooks/deploy.php`, which runs `deploy/deploy.sh` (git pull + hugo build) into `~/seattlepetanque.org`. A nightly cron job also runs `deploy.sh` so past events roll over from "Upcoming" to "Past" automatically.
 - **Host clone:** a partial clone with sparse checkout, so `backups/` is never downloaded to the host.
 - **URLs:** keep the old Publii URLs (`/events.html`, `/links.html`, `/history-of-petanque-in-the-northwest.html`). Hugo `uglyURLs` plus `aliases` handle anything that moves.
 
@@ -86,3 +86,4 @@ The `events/` and `blog/` folders deliberately have **no `_index.md`**. Decap wo
 - Decap preview pane now matches the site: Hugo publishes /admin/preview.css (main + bistro, from layouts/index.html), and static/admin/preview.js registers preview templates for events, blog, home and links. Verified with headless Chrome screenshots.
 - Fix: the preview.css publish block had been placed outside `define "main"` in layouts/index.html, which blanked the home page. Moved it into baseof.html <head>.
 - Fix: the moved preview block shadowed `$theme` (body class broke, so no theme CSS), so it now reuses `$tc`. The Google Fonts URL was being URL-escaped, so DM Serif Display never loaded; fixed with safeURL. Run the dev server with --disableFastRender, since fast render kept serving stale templates.
+- Moved the webhook and login scripts from a hooks subdomain to ~/seattlepetanque.org/_hooks/ (no extra hosting or cert needed). rsync excludes /_hooks/. deploy/README.md documents secret storage.

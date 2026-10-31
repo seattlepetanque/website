@@ -16,11 +16,13 @@ or the SSH setting for that user). Then connect:
 ssh dh_jsaetx@<your-dreamhost-host>
 ```
 
-## 2. Add the hooks subdomain
+## 2. Back up the current live site
 
-In the DreamHost panel, add a subdomain `hooks.seattlepetanque.org`. Point it at a new
-docroot, `/home/dh_jsaetx/hooks.seattlepetanque.org`. Then enable HTTPS for it with the
-panel's Let's Encrypt option.
+The first deploy replaces everything in `~/seattlepetanque.org`. Before running it, keep a copy of the old Publii site:
+
+```sh
+tar czf ~/publii-site-$(date +%F).tgz -C ~ seattlepetanque.org
+```
 
 ## 3. Run the setup script
 
@@ -37,16 +39,18 @@ The script is idempotent, so it is safe to re-run. It does the following:
 - installs hugo 0.169.0 to `~/bin/hugo` (extended build, falling back to standard)
 - clones the repo to `~/site-src` as a partial, sparse checkout that leaves out `backups/`
 - creates `~/.deploy-secret` if it is missing, and prints it once
+- creates a template `~/.decap-oauth.ini` if it is missing (see "Decap login" below)
+- copies `deploy/hooks/` (deploy.php, oauth.php, .htaccess) into `~/seattlepetanque.org/_hooks/`
 
 Copy the printed secret now. If you lose it, read it with `cat ~/.deploy-secret`.
 Re-run `setup-host.sh` whenever `deploy/hooks/` changes, because it copies the hooks
-into the docroot.
+into `_hooks/`. Site deploys never touch `_hooks/`: deploy.sh's rsync excludes it.
 
 ## 4. Add the GitHub webhook
 
 In the GitHub repo, go to Settings > Webhooks > Add webhook:
 
-- **Payload URL:** `https://hooks.seattlepetanque.org/deploy.php`
+- **Payload URL:** `https://seattlepetanque.org/_hooks/deploy.php` (must be https, because the site redirects http, which would drop the POST)
 - **Content type:** `application/json`
 - **Secret:** the value from step 3
 - **Which events:** Just the push event
@@ -104,15 +108,15 @@ repo only.
 
 ## Decap login (OAuth)
 
-`deploy/hooks/oauth.php` lets editors log in to `/admin/` with GitHub. It is copied to the
-hooks docroot by `setup-host.sh` and reads its credentials from `~/.decap-oauth.ini`
+`deploy/hooks/oauth.php` lets editors log in to `/admin/` with GitHub. It is copied to
+`~/seattlepetanque.org/_hooks/` by `setup-host.sh` and reads its credentials from `~/.decap-oauth.ini`
 (outside the docroot, mode 600).
 
 1. **Create a GitHub OAuth App** under the seattlepetanque organization: Org Settings >
    Developer settings > OAuth Apps > New OAuth App.
    - Application name: e.g. `Seattle Petanque CMS`
    - Homepage URL: `https://seattlepetanque.org`
-   - Authorization callback URL: `https://hooks.seattlepetanque.org/oauth.php`
+   - Authorization callback URL: `https://seattlepetanque.org/_hooks/oauth.php`
 2. **Generate a client secret** on the app's page. Re-run `sh ./setup-host.sh` (it creates
    a template `~/.decap-oauth.ini` if missing and never overwrites an existing one), then
    edit it and put in `client_id` and `client_secret`. `allowed_origins` lists the sites
@@ -130,8 +134,45 @@ hooks docroot by `setup-host.sh` and reads its credentials from `~/.decap-oauth.
      `allowed_origins`. Add exactly what is in the address bar (www vs apex are different
      origins), with scheme and no trailing slash.
    - GitHub shows "redirect_uri mismatch": the OAuth App callback URL must be exactly
-     `https://hooks.seattlepetanque.org/oauth.php`.
+     `https://seattlepetanque.org/_hooks/oauth.php`.
    - "Server configuration error" (HTTP 500): `~/.decap-oauth.ini` is missing, unreadable,
      or lacks a key.
    - "login session was invalid or expired": cookies blocked, or more than 10 minutes
      passed between starting and finishing login. Try again.
+
+## Secrets: where they live and who can read them
+
+The repo is public and holds **no secrets**. There are exactly two secrets, both stored only on the
+DreamHost host, in the home directory (outside the web root), with mode `600`:
+
+| File | Contains | Also stored at | Used by |
+|---|---|---|---|
+| `~/.deploy-secret` | Webhook HMAC key (random 64 hex chars) | GitHub webhook settings (write-only; GitHub never shows it again) | `_hooks/deploy.php` |
+| `~/.decap-oauth.ini` | OAuth app `client_id` (not secret) and `client_secret` | GitHub OAuth app page (the secret is shown once at creation) | `_hooks/oauth.php` |
+
+Why they can't be fetched over the web:
+- Apache serves only `~/seattlepetanque.org/`. Files in `~` itself have no URL.
+- Inside the site, `_hooks/.htaccess` denies everything except `deploy.php` and `oauth.php`, and the
+  root `.htaccess` denies any dotfile.
+- Neither script ever prints a secret. The webhook only compares an HMAC. The login script sends
+  the client secret only to GitHub over HTTPS.
+
+Who can read them on the server: only the `dh_jsaetx` user. DreamHost runs PHP as that same user,
+which is how the scripts read them. So:
+- **Do not install other PHP apps** (WordPress, etc.) under `dh_jsaetx`. Any PHP code running as
+  this user could read these files.
+- **Protect SSH access**: use a strong password, prefer SSH keys, and turn on 2FA for the DreamHost panel.
+  Anyone with shell access as `dh_jsaetx` can read everything.
+
+What an attacker could do with each one, and how to recover:
+- **Webhook secret leaked:** they could trigger a rebuild of what is already on `main`. They
+  cannot change content, because deploy.sh only builds what is in GitHub. Rotate it with `openssl rand -hex 32 > ~/.deploy-secret`
+  and paste the new value into the GitHub webhook.
+- **OAuth client secret leaked:** they could build a fake "Seattle Petanque CMS" login, but a
+  user would still have to approve it on GitHub. Rotate it on the OAuth app page (generate a new
+  secret, delete the old one) and update `~/.decap-oauth.ini`.
+- **Editor tokens** are never stored on the server. Decap keeps the logged-in editor's token in
+  that editor's browser. It has `public_repo` scope, which is write access to every public repo
+  that editor can write to, not just this one. Editors should log out of `/admin/` on shared
+  computers. Anyone can revoke a token under GitHub > Settings > Applications > Authorized OAuth Apps.
+
