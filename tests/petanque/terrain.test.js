@@ -97,3 +97,19 @@ test('sample is fast', () => {
   assert.ok(Number.isFinite(s));
   assert.ok(performance.now() - t0 < 1000);
 });
+
+test('pebbles barely protrude (a boule rides over them) while rocks stay real obstacles', () => {
+  const t = createTerrain(8);
+  let maxPebble = 0, maxRock = 0, rocks = 0;
+  for (let x = 0; x < 4; x += 0.1) {
+    for (let y = 0; y < 15; y += 0.1) {
+      const g = t.perceived().sample(x, y).h;
+      for (const s of t.stonesNear(x, y, 0.001)) {
+        const top = s.h + s.r - g;
+        if (s.r > C.pebbleR[1]) { maxRock = Math.max(maxRock, top); rocks++; } else maxPebble = Math.max(maxPebble, top);
+      }
+    }
+  }
+  assert.ok(maxPebble < 0.006, `pebble protrusion ${maxPebble}`);
+  assert.ok(rocks > 0 && maxRock > 0.012, `rock protrusion ${maxRock}`);
+});

@@ -45,8 +45,8 @@ Status values: `todo`, `in-progress`, `done`, `blocked` (with a note).
 | B12 | done | haiku | B07 | Synthesized audio |
 | B13 | done | sonnet | B11 | Polish: divots, measuring, commentary, fallbacks |
 | B14 | done | haiku | B11 | README and docs |
-| B15 | todo | sonnet | B12, B13, B14, B16 | Final review, tuning, bug fixes |
-| B16 | in-progress | sonnet | B10 | Physics realism: stones, shots, spin |
+| B15 | in-progress | sonnet | B12, B13, B14, B16 | Final review, tuning, bug fixes |
+| B16 | done | sonnet | B10 | Physics realism: stones, shots, spin |
 
 ### B01 Vendor three.js (haiku)
 Download a pinned three.js release (use `three@0.170.0`) `build/three.module.min.js` from `https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js` into `assets/js/vendor/three.module.js`, plus its `LICENSE` as `assets/js/vendor/three.LICENSE`. Add a one-line header comment file `assets/js/vendor/README.md` stating source URL and version. Done when the file exists and starts with the three.js license banner.
@@ -115,3 +115,4 @@ Run `npm test` and the build check; play-test through debug hooks (simulate a fu
 - From B11 screenshots: the swing gauge arc and labels are oversized and cover the court; the head camera centres on the jack and can cut off boules near the edge (frame the jack plus nearby live boules); the human jack throw has no special mapping and depends on a legal 6–10 m swing.
 - From B13 screenshot: the mène-end card said "Odette's boule is 1.64 m from the jack" while the measuring labels showed 37 cm and 52 cm for the scoring boules; check which distance the card reports.
 - From B13: the phone gauge CSS was edited after the last 390 px screenshot; re-check it, and capture the setup overlay on a phone.
+- From B16: a hit target can roll 9 m or more (rolling resistance 0.08–0.15); carreau mostly happens only on clean in-air hits; plombée has a long tail from rock deflections. Measurement scripts: tests/petanque/measure-physics.js, measure-ai.js.

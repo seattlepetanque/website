@@ -23,20 +23,21 @@ export const AI = {
     pointeur: [1, 1.8],
     tireur: [1.5, 1],
   },
+  shootBonus: { pointeur: 0, tireur: 0.15 }, // tireurs like a shot: added to the score of tir candidates
   maxSimSeconds: 14,
   refineSims: 4,
   refineIters: 2,
   riskAversion: 0.1,
   shootRange: 1, // shoot opponent boules this close to the jack
-  tirShort: 1.3, // aim the landing this far short of the target
+  tirShort: 0.08, // aim the landing this far short of the target (hit in the air or on the first hop: carreau)
   jackTarget: 8, // m from circle for the jack throw
 };
 
 export const STYLES = {
   roulette: { loft: 0.21, backspin: 15 },
   demi: { loft: 0.6, backspin: 55 },
-  plombee: { loft: 1.25, backspin: 120 },
-  tir: { loft: 1.1, backspin: 130 },
+  plombee: { loft: 1.25, backspin: 80 },
+  tir: { loft: 0.55, backspin: 80 },
   jack: { loft: 1.1, backspin: 40 },
   jackLow: { loft: 0.6, backspin: 20 },
 };
@@ -258,7 +259,7 @@ function* decide({ world, match, player, difficulty = 'medium', rand }) {
     }
     const mean = sum / nSims;
     const sd = Math.sqrt(Math.max(0, sum2 / nSims - mean * mean));
-    const score = mean - AI.riskAversion * sd;
+    const score = mean - AI.riskAversion * sd + (k.intent === 'shoot' ? (AI.shootBonus[role] || 0) : 0);
     if (!best || score > best.score) best = { k, p, score };
     yield;
   }

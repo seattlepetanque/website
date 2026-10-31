@@ -26,8 +26,10 @@ export const C = Object.freeze({
   contactFriction: 0.5, // Coulomb mu at landing contact
   boule2boule: 0.85, // steel-steel restitution
   boule2jack: 0.6,
-  bodyFriction: 0.2, // tangential friction between spheres
-  stoneRestitution: 0.3,
+  bodyFriction: 0.1, // tangential friction between spheres
+  stoneRestitution: 0.3, // rocks
+  pebbleRestitution: 0.05, // pebbles soak up energy rather than bouncing
+  stoneMassRef: 0.3, // kg: a pebble's kick scales by min(1, ref / mass), so boules shrug it off, the jack does not
 
   // Rolling
   rollResistPacked: 0.08, // mu_r on packed gravel
@@ -43,7 +45,13 @@ export const C = Object.freeze({
   bounceMin: 0.4, // m/s: rebound slower than this becomes rolling
   stoneEventSpeed: 0.3, // m/s: smallest stone hit that logs an event
   landLooseDrag: 0.12, // fraction of tangential speed lost at landing on fully loose ground
-  restitutionJitter: 0.05, // +-fraction randomising landing restitution
+  landDig: 0.9, // extra tangential speed lost by a hard landing (full at impact 9 m/s, zero below 4), scaled by looseness
+  landSpinDamp: 0.55, // fraction of spin lost by a hard landing, scaled by looseness
+  landTilt: 0.11, // rad: random tilt of the landing normal (pebble faces), the main source of throw-to-throw spread
+  landBounceDamp: 0.08, // restitution divides by 1 + this * impact speed (hard landings plant)
+  reverseSpeedMax: 0.7, // m/s: a boule can creep backwards no faster than this
+  reverseDistMax: 0.25, // m: nor further than this (backspin checks, never reverses far)
+  restitutionJitter: 0.1, // +-fraction randomising landing restitution
   divotSpeedRef: 5, // landing speed that gives divotDepthBase
   divotMinSpeed: 1, // no divot below this landing speed
   lowAirZ: 0.06, // above this ground clearance an airborne body skips terrain/stone checks
@@ -60,8 +68,8 @@ export const C = Object.freeze({
   ]),
   crownMax: 0.012, // optional crown/hollow magnitude
   maxHeight: 0.045, // hard clamp on macro height (within +-5 cm)
-  jitterAmp: 0.0015, // hidden high-frequency height, m
-  jitterFreq: 45, // cycles per metre
+  jitterAmp: 0.0015,
+  jitterFreq: 45,
 
   // Terrain: looseness
   looseFreq: 0.45,
@@ -72,7 +80,7 @@ export const C = Object.freeze({
   stoneCell: 0.1, // spatial hash cell
   pebbleMinSpacing: 0.13,
   pebbleR: Object.freeze([0.0025, 0.0075]), // radius (5-15 mm diameter)
-  pebbleBury: 0.45, // fraction of radius below ground
+  pebbleBury: 0.7, // fraction of radius below ground
   rockCount: Object.freeze([10, 25]),
   rockR: Object.freeze([0.01, 0.02]), // radius (20-40 mm diameter)
   rockBury: 0.3,

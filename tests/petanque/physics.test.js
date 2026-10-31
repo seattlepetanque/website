@@ -4,6 +4,7 @@ import { C } from '../../assets/js/petanque/constants.js';
 import { mulberry32 } from '../../assets/js/petanque/rng.js';
 import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { createBody, launch, createWorld, simulate } from '../../assets/js/petanque/physics.js';
+import { spread, tir, reverse, plombee } from './measure-physics.js';
 
 // Flat terrain stub; optional slope (h = -slope * y) and stones
 function stub({ slope = 0, friction = 0.1, loose = 0, stones = [] } = {}) {
@@ -46,7 +47,7 @@ test('roulette rolls much further than it flew', () => {
     simulate(w);
     const land = firstLand(w);
     const flown = land.y - C.throwFrom.y, rolled = b.y - land.y;
-    assert.ok(rolled > 2 * flown, `flew ${flown} rolled ${rolled}`);
+    assert.ok(rolled > 1.5 * flown, `flew ${flown} rolled ${rolled}`);
   }
 });
 
@@ -83,8 +84,74 @@ test('a pebble in the path changes the trajectory', () => {
     return { b, w };
   };
   const clear = run([]);
-  const pebble = run([{ x: 2.012, y: 4, r: 0.0075, h: -0.0035 }]);
-  assert.ok(Math.abs(pebble.b.x - clear.b.x) > 0.05 || Math.abs(pebble.b.y - clear.b.y) > 0.2);
+  const pebble = run([{ x: 2.012, y: 4, r: 0.0075, h: -0.003 }]);
+  assert.ok(Math.abs(pebble.b.x - clear.b.x) > 0.005 || Math.abs(pebble.b.y - clear.b.y) > 0.02);
+});
+
+test('a pebble nudges a heavy boule modestly but the light jack a lot more', () => {
+  const dev = (kind) => {
+    const run = (stones) => {
+      const w = createWorld(stub({ stones }), rand());
+      const b = w.add(createBody(kind, { x: 2, y: 3, team: 0 }));
+      b.state = 'rolling'; b.vy = 3; b.wx = -3 / b.r;
+      simulate(w);
+      return b;
+    };
+    const clear = run([]);
+    const hit = run([{ x: 2.012, y: 4, r: 0.0075, h: -0.003 }]);
+    return Math.hypot(hit.x - clear.x, hit.y - clear.y);
+  };
+  assert.ok(dev('boule') < 0.8, `boule moved ${dev('boule')}`);
+  assert.ok(dev('jack') > dev('boule'), `jack ${dev('jack')} boule ${dev('boule')}`);
+});
+
+test('a rock directly in the path still deflects a boule strongly', () => {
+  const run = (stones) => {
+    const w = createWorld(stub({ stones }), rand());
+    const b = w.add(boule(2, 3));
+    b.state = 'rolling'; b.vy = 4; b.wx = -4 / b.r;
+    simulate(w);
+    return b;
+  };
+  const clear = run([]);
+  const rock = run([{ x: 2.02, y: 5, r: 0.02, h: 0.008 }]);
+  assert.ok(Math.hypot(rock.x - clear.x, rock.y - clear.y) > 0.8, `moved ${rock.x - clear.x}, ${rock.y - clear.y}`);
+});
+
+test('identical throws on seeded gravel spread 0.3-0.6 m (boule) and more for the jack', () => {
+  const demi = spread('boule', { yaw: 0, loft: 0.6, backspin: 55, sidespin: 0 }, 8, 3, 25);
+  const jack = spread('jack', { yaw: 0, loft: 0.6, backspin: 20, sidespin: 0 }, 8, 3, 25);
+  assert.ok(demi > 0.25 && demi < 0.65, `demi spread ${demi}`);
+  assert.ok(jack > demi * 1.3, `jack ${jack} vs demi ${demi}`);
+});
+
+test('a direct in-air hit sends the target away and the shooter drops near the impact (carreau)', () => {
+  for (const bs of [40, 60, 80]) {
+    for (const dz of [0.03, 0.04]) {
+      const r = tir(bs, 1, stub(), dz);
+      assert.ok(r.targetMove > 1, `target moved ${r.targetMove}`);
+      assert.ok(r.shooterFromImpact < 0.5 && !r.shooterDead, `bs ${bs} dz ${dz}: shooter ${r.shooterFromImpact}`);
+    }
+  }
+});
+
+test('backspin never rolls a boule back more than 0.3 m', () => {
+  let worst = -9;
+  for (const bs of [0, 60, 100, 150]) {
+    for (const [sp, lf] of [[5, 1.3], [7, 1.0], [9, 1.0], [11, 1.3]]) {
+      worst = Math.max(worst, reverse(bs, stub(), 1, sp, lf));
+      for (let t = 1; t <= 3; t++) for (let sd = 1; sd <= 3; sd++) worst = Math.max(worst, reverse(bs, createTerrain(t), sd, sp, lf));
+    }
+  }
+  assert.ok(worst <= 0.3, `reverse roll ${worst}`);
+});
+
+test('a plombee with 60 rad/s backspin ends close to where it landed', () => {
+  assert.ok(plombee(60, stub()) < 0.5);
+  const d = [];
+  for (let t = 1; t <= 4; t++) for (let sd = 1; sd <= 5; sd++) d.push(plombee(60, createTerrain(t), sd));
+  d.sort((a, b) => a - b);
+  assert.ok(d[Math.floor(d.length / 2)] < 0.5, `median ${d[Math.floor(d.length / 2)]}`);
 });
 
 test('a shot landing on a resting boule moves it and the shooter nearly stops (carreau)', () => {
