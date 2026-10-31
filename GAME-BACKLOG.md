@@ -40,12 +40,13 @@ Status values: `todo`, `in-progress`, `done`, `blocked` (with a note).
 | B07 | done | sonnet | B04, B06 | Game loop and precise-mode throws |
 | B08 | done | sonnet | B07 | Swing gesture input and gauge |
 | B09 | done | sonnet | B05, B07 | HUD and full game flow (placeholder AI) |
-| B10 | in-progress | sonnet | B04, B05 | Monte Carlo AI |
-| B11 | todo | sonnet | B08, B09, B10 | AI integration, personalities, team choice |
+| B10 | done | sonnet | B04, B05 | Monte Carlo AI |
+| B11 | in-progress | sonnet | B08, B09, B10 | AI integration, personalities, team choice |
 | B12 | done | haiku | B07 | Synthesized audio |
 | B13 | todo | sonnet | B11 | Polish: divots, measuring, commentary, fallbacks |
 | B14 | todo | haiku | B11 | README and docs |
-| B15 | todo | sonnet | B12, B13, B14 | Final review, tuning, bug fixes |
+| B15 | todo | sonnet | B12, B13, B14, B16 | Final review, tuning, bug fixes |
+| B16 | in-progress | sonnet | B10 | Physics realism: stones, shots, spin |
 
 ### B01 Vendor three.js (haiku)
 Download a pinned three.js release (use `three@0.170.0`) `build/three.module.min.js` from `https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js` into `assets/js/vendor/three.module.js`, plus its `LICENSE` as `assets/js/vendor/three.LICENSE`. Add a one-line header comment file `assets/js/vendor/README.md` stating source URL and version. Done when the file exists and starts with the three.js license banner.
@@ -96,6 +97,9 @@ Divot decals in render, measuring lines at mène end, commentary for carreau/bib
 
 ### B14 README and docs (haiku)
 Add a short "Pétanque game" section to README.md (where the code lives, how to run tests, how to tune `constants.js`), and update the repo layout block.
+
+### B16 Physics realism: stones, shots, spin (sonnet)
+Fix the problems B10 measured: identical throws end 1–2 m apart because pebbles kick 0.72 kg boules sideways (often to the side line); a tir that hits a boule in the air bounces back several metres; heavy backspin can roll a boule backwards metres; a plombée needs ~120 rad/s backspin to stay near its landing spot. Targets: a boule's resting-spread from identical demi-portée throws on seeded gravel ~0.3–0.6 m at 8 m (jack noticeably more erratic); rare visible rocks can still cause big deflections; a direct in-air hit on a boule transfers most momentum to the target and the shooter drops near the impact point (carreau possible with moderate backspin ~40–80 rad/s); backspin checks a boule but never reverses it more than ~0.3 m; a plombée with ~50–80 rad/s stays within ~0.5 m. Owns physics.js, terrain.js, constants.js and their tests; update ai.js style presets (STYLES / AI) and ai tests only where the new physics requires it. Re-measure and report AI accuracy per difficulty afterwards.
 
 ### B15 Final review, tuning, bug fixes (sonnet)
 Run `npm test` and the build check; play-test through debug hooks (simulate a full AI-vs-AI match headlessly in Node using rules + physics + ai to confirm it terminates with a winner); fix bugs; tune constants so lobs/rolls/shots feel right; report remaining issues in this file.
