@@ -114,7 +114,7 @@ repo only.
 
 1. **Create a GitHub OAuth App** under the seattlepetanque organization: Org Settings >
    Developer settings > OAuth Apps > New OAuth App.
-   - Application name: e.g. `Seattle Petanque CMS`
+   - Application name: e.g. `Seattle Pétanque CMS`
    - Homepage URL: `https://seattlepetanque.org`
    - Authorization callback URL: `https://seattlepetanque.org/_hooks/oauth.php`
 2. **Generate a client secret** on the app's page. Re-run `sh ./setup-host.sh` (it creates
@@ -168,7 +168,7 @@ What an attacker could do with each one, and how to recover:
 - **Webhook secret leaked:** they could trigger a rebuild of what is already on `main`. They
   cannot change content, because deploy.sh only builds what is in GitHub. Rotate it with `openssl rand -hex 32 > ~/.deploy-secret`
   and paste the new value into the GitHub webhook.
-- **OAuth client secret leaked:** they could build a fake "Seattle Petanque CMS" login, but a
+- **OAuth client secret leaked:** they could build a fake "Seattle Pétanque CMS" login, but a
   user would still have to approve it on GitHub. Rotate it on the OAuth app page (generate a new
   secret, delete the old one) and update `~/.decap-oauth.ini`.
 - **Editor tokens** are never stored on the server. Decap keeps the logged-in editor's token in

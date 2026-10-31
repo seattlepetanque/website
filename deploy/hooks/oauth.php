@@ -69,7 +69,7 @@ function render_result(bool $ok, array $payload, array $allowedOrigins, string $
     echo <<<HTML
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Seattle Petanque login</title>
+<title>Seattle Pétanque login</title>
 <style nonce="$nonce">body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem}</style>
 </head><body>
 <p>$text</p>

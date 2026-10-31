@@ -1,15 +1,15 @@
 ---
 title: Links
 ---
-## Seattle Petanque Club Links
+## Seattle Pétanque Club Links
 
-[Seattle Petanque Club - This site](https://seattlepetanque.org)
+[Seattle Pétanque Club - This site](https://seattlepetanque.org)
 
-[Seattle Petanque Meetup Page - Check here for weekly gatherings](https://www.meetup.com/seattle-petanque-meetup-group/)
+[Seattle Pétanque Meetup Page - Check here for weekly gatherings](https://www.meetup.com/seattle-petanque-meetup-group/)
 
-[Petanque In Seattle - Facebook page](https://www.facebook.com/petanqueinseattle)
+[Pétanque In Seattle - Facebook page](https://www.facebook.com/petanqueinseattle)
 
-## PNW Regional and National Petanque Sites
+## PNW Regional and National Pétanque Sites
 
 [FPUSA - Federation of Petanque USA](https://www.usapetanque.org/index.html/)
 
@@ -25,7 +25,7 @@ title: Links
 
 ## Rules
 
-[Official International Rules of Petanque (pdf)](https://fipjp.org/images/2021/reglements/Official_Rules_Petanque-En.pdf)
+[Official International Rules of Pétanque (pdf)](https://fipjp.org/images/2021/reglements/Official_Rules_Petanque-En.pdf)
 
 [FPUSA Tournament Rules (pdf)](https://usapetanque.org/uploads/3/4/9/7/34979601/2019_tournament_regulations_2_-_jmb_nw.pdf)
 
@@ -33,7 +33,7 @@ title: Links
 
 [Celebrating Pétanque (Google Web Game)](https://doodles.google/doodle/celebrating-petanque/)
 
-## Where To Buy Petanque Boules
+## Where To Buy Pétanque Boules
 
 [Petanque America](https://petanque-america.com/)
 
