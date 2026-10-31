@@ -33,6 +33,8 @@ title: Links
 
 [Celebrating Pétanque (Google Web Game)](https://doodles.google/doodle/celebrating-petanque/)
 
+[Play Pétanque on this site](/game.html)
+
 ## Where To Buy Pétanque Boules
 
 [Pétanque America](https://petanque-america.com/)

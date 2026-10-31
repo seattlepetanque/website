@@ -34,6 +34,7 @@
   <link rel="stylesheet" href="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}">{{ end }}
   {{- with $tc | minify | fingerprint }}
   <link rel="stylesheet" href="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}">{{ end }}
+  {{- block "head" . }}{{ end }}
 {{- /* Publish a stable, unfingerprinted /admin/preview.css (main + theme) for the Decap preview pane. */ -}}
 {{- with resources.Get "css/main.css" }}{{ with slice (. | minify) ($tc | minify) | resources.Concat "admin/preview.css" }}{{ .Publish }}{{ end }}{{ end -}}
 </head>

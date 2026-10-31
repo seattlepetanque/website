@@ -1,0 +1,22 @@
+{{ define "head" }}
+{{- with resources.Get "css/game.css" | minify | fingerprint }}
+<link rel="stylesheet" href="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}">
+{{- end }}
+{{- with resources.Get "js/petanque/main.js" | js.Build (dict "format" "esm" "minify" true "target" "es2020") | fingerprint }}
+<script type="module" src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}"></script>
+{{- end }}
+{{ end }}
+
+{{ define "main" }}
+<article class="content">
+  <h1>{{ .Title }}</h1>
+  {{ .Content }}
+</article>
+<div id="petanque" class="petanque">
+  <canvas role="img" aria-label="Pétanque court with boules and jack"></canvas>
+  <div class="petanque-hud"></div>
+  <div class="petanque-controls"></div>
+  <p class="petanque-status" aria-live="polite"></p>
+  <noscript><p>This game needs JavaScript to run.</p></noscript>
+</div>
+{{ end }}
