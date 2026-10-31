@@ -22,11 +22,11 @@ export const SWING = Object.freeze({
   backspinMax: 150, sidespinMax: 40, // rad/s
   maxYawOffset: 0.1, // rad (~6 degrees)
   minForward: 0.12, // upstroke must cover this much of H or it is not a throw
-  fullSpeed: 5, // H/s of peak stroke speed that gives speedMax
+  fullSpeed: 9, // H/s of peak stroke speed that gives speedMax
   peakWindow: 120, // ms: peak speed is measured over the end of the stroke
   speedWindow: 30, // ms: span used to measure a speed
   releaseWindow: 40, // ms: span used for release speed
-  heightLow: 0.1, heightHigh: 0.6, // release height (H above start) for loftMin / loftMax
+  heightLow: 0.1, heightHigh: 0.5, // release height (H above start) for loftMin / loftMax
   fullBackswing: 0.2, // backswing (H) that unlocks the full power ceiling
   minCeiling: 6, // m/s ceiling with no backswing
   backspinHi: 0.1, backspinLo: 0.8, // release/peak ratio: <= hi gives full backspin, >= lo none
@@ -254,7 +254,7 @@ export function createSwingInput(element, handlers = {}) {
 const NS = 'http://www.w3.org/2000/svg';
 const ARC = { cx: 50, cy: 50, r: 40 };
 // Arc position for a release height h (H units above start): s 0 (bottom) .. 1 (top)
-const arcS = (h) => clamp((h + 0.1) / 0.8, 0, 1);
+const arcS = (h) => clamp((h + 0.1) / 0.7, 0, 1);
 function arcPoint(s) {
   const phi = (-90 + 180 * s) * DEG;
   return { x: ARC.cx + ARC.r * Math.cos(phi), y: ARC.cy - ARC.r * Math.sin(phi) };

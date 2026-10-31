@@ -45,7 +45,7 @@ Status values: `todo`, `in-progress`, `done`, `blocked` (with a note).
 | B12 | done | haiku | B07 | Synthesized audio |
 | B13 | done | sonnet | B11 | Polish: divots, measuring, commentary, fallbacks |
 | B14 | done | haiku | B11 | README and docs |
-| B15 | in-progress | sonnet | B12, B13, B14, B16 | Final review, tuning, bug fixes |
+| B15 | done | sonnet | B12, B13, B14, B16 | Final review, tuning, bug fixes |
 | B16 | done | sonnet | B10 | Physics realism: stones, shots, spin |
 
 ### B01 Vendor three.js (haiku)
@@ -116,3 +116,16 @@ Run `npm test` and the build check; play-test through debug hooks (simulate a fu
 - From B13 screenshot: the mène-end card said "Odette's boule is 1.64 m from the jack" while the measuring labels showed 37 cm and 52 cm for the scoring boules; check which distance the card reports.
 - From B13: the phone gauge CSS was edited after the last 390 px screenshot; re-check it, and capture the setup overlay on a phone.
 - From B16: a hit target can roll 9 m or more (rolling resistance 0.08–0.15); carreau mostly happens only on clean in-air hits; plombée has a long tail from rock deflections. Measurement scripts: tests/petanque/measure-physics.js, measure-ai.js.
+
+## Remaining issues
+
+B15 outcome: all "Notes for B15" were fixed or decided (rolling resistance retuned to 0.14 packed / 0.28 loose; swing `fullSpeed` 5 to 9 and `heightHigh` 0.6 to 0.5; human jack gets a speed assist (`assistJackThrow`), a drawn 6 m / 10 m zone and jack slider defaults; mène-end card now reports the winning boule's edge-to-edge gap, matching the measuring labels; gauge nudged off the canvas edge). `tests/petanque/match.test.js` plays full AI-vs-AI matches headlessly.
+
+Worth a human play-test or not done:
+- Real-device gesture feel (mouse, trackpad, phone touch). Only synthetic swings were checked; typical swings land 5 to 10 m, but the speed/loft scale may want a further nudge.
+- Audio by ear (clack, crunch, roll levels).
+- Hit boules now travel about 1.5 to 4 m on gravel; tir feel and carreau frequency are untested by hand.
+- Phone setup card sits below the intro text, so on a 390 px screen the player scrolls to it; the setup could scroll into view on load.
+- In `?debug&autotest` (all players AI) the human player's name "You" gives odd commentary ("You is aiming...").
+- The head camera at game over is dimmed by the overlay and loose boules spread over 2 m make labels small.
+- The AI launch table is built on the first AI turn (a short pause on slow devices).

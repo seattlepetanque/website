@@ -171,7 +171,7 @@ export function createHud(root, hudEl, cb) {
     if (info.detail) c.append(el('p', 'pt-blurb', info.detail));
     const next = button('Next mène', 'pt-btn pt-next', cb.onNext);
     c.append(next);
-    say(info.text + (info.detail ? ' ' + info.detail : ''));
+    say(info.text + (info.detail ? (/[.!?]$/.test(info.text) ? ' ' : '. ') + info.detail : ''));
     focusSoon(next);
   }
 
@@ -181,7 +181,7 @@ export function createHud(root, hudEl, cb) {
     if (info.detail) c.append(el('p', 'pt-blurb', info.detail));
     const again = button('Play again', 'pt-btn pt-again', cb.onPlayAgain);
     c.append(again);
-    say(info.text + (info.detail ? ' ' + info.detail : ''));
+    say(info.text + (info.detail ? (/[.!?]$/.test(info.text) ? ' ' : '. ') + info.detail : ''));
     focusSoon(again);
   }
 

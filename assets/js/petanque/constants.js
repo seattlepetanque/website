@@ -32,8 +32,8 @@ export const C = Object.freeze({
   stoneMassRef: 0.3, // kg: a pebble's kick scales by min(1, ref / mass), so boules shrug it off, the jack does not
 
   // Rolling
-  rollResistPacked: 0.08, // mu_r on packed gravel
-  rollResistLoose: 0.15, // mu_r on loose gravel
+  rollResistPacked: 0.14, // mu_r on packed gravel
+  rollResistLoose: 0.28, // mu_r on loose gravel
   slipFriction: 0.5, // sliding friction while slip speed is nonzero
   restSpeed: 0.02, // m/s: below this (and on the ground) a body rests
   restSpin: 0.5, // rad/s

@@ -76,7 +76,7 @@ Debug URLs (add the query to `/game.html`):
 
 - `?debug`: turns on debug hooks.
 - `?debug&autotest`: AI-only quick match, with no delays.
-- `?debug&humanturn`: stops at your first boule. Use `?debug&humanturn=chooser` to stop at the who-throws chooser.
+- `?debug&humanturn`: stops at your first boule. Use `?debug&humanturn=chooser` to stop at the who-throws chooser, or `?debug&humanturn=jack` to throw the jack yourself.
 - `?seed=N`: fixes the court and random numbers, so the same N gives the same game.
 
 `GAME-PLAN.md` describes the design. `GAME-BACKLOG.md` lists the work items and their history.

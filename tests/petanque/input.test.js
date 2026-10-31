@@ -81,3 +81,13 @@ test('taps, tiny and downward strokes return null', () => {
   assert.equal(run({ rise: -50 }), null); // ends below start, only a backswing
   assert.equal(run({ back: 0, rise: 20 }), null);
 });
+
+test('a natural desktop swing gives a mid-court throw, not a rocket', () => {
+  // ~150 px down, ~250 px up in ~160 ms with the hand accelerating to the release
+  const r = run({ back: 150, rise: 100, dur: 160, backMs: 140, ease: (u) => u ** 1.6 });
+  assert.ok(r.speed > 5 && r.speed < 8, `speed ${r.speed}`);
+  // a bigger, higher swing lofts the boule
+  const lob = run({ back: 150, rise: 250, dur: 170, backMs: 150, ease: (u) => u ** 1.6 });
+  assert.ok(lob.loft > 0.5 && lob.loft < 1.2, `loft ${lob.loft}`);
+  assert.ok(lob.speed < 11, `speed ${lob.speed}`);
+});

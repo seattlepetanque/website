@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mulberry32, gauss } from '../../assets/js/petanque/rng.js';
+import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { createBody, launch, createWorld, simulate } from '../../assets/js/petanque/physics.js';
 import { createMatch, jackValid } from '../../assets/js/petanque/rules.js';
-import { chooseThrow, chooseThrowAsync, chooseJackThrow } from '../../assets/js/petanque/ai.js';
+import { chooseThrow, chooseThrowAsync, chooseJackThrow, assistJackThrow } from '../../assets/js/petanque/ai.js';
 
 // Flat packed terrain, no stones
 function flat() {
@@ -107,4 +108,18 @@ test('chooseThrowAsync matches chooseThrow for the same seed', async () => {
   const sync = chooseThrow(args(77));
   const async_ = await chooseThrowAsync(args(77));
   assert.deepEqual(async_, sync);
+});
+
+test('assistJackThrow pulls a wide range of swing speeds into a legal jack most of the time', () => {
+  let ok = 0, n = 0;
+  for (const loft of [0.3, 0.6, 1.0]) for (const speed of [4.8, 5.6, 6.4, 7.2, 8.2]) for (let t = 1; t <= 3; t++) {
+    const terrain = createTerrain(t);
+    const world = createWorld(terrain, mulberry32(t * 7));
+    const j = launch(createBody('jack', {}), assistJackThrow({ yaw: 0, speed, loft, backspin: 0, sidespin: 0 }));
+    world.add(j);
+    simulate(world);
+    n++;
+    if (jackValid({ x: j.x, y: j.y, dead: j.dead })) ok++;
+  }
+  assert.ok(ok >= 0.65 * n, `${ok}/${n} valid`);
 });

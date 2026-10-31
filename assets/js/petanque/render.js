@@ -307,6 +307,27 @@ export function createRenderer(canvas, terrain) {
   }
   function clearDivots() { for (const m of divotMeshes) m.visible = false; divotNext = 0; }
 
+  // Legal jack zone: two arcs 6 m and 10 m from the circle, shown while a human aims the jack
+  const jackZone = new THREE.Group();
+  jackZone.visible = false;
+  {
+    const mat = new THREE.MeshBasicMaterial({ color: '#ffd24a', transparent: true, opacity: 0.85, depthTest: false });
+    const c = C.circle;
+    for (const rad of [C.jackMinDist, C.jackMaxDist]) {
+      for (let a = -Math.PI / 2; a <= Math.PI / 2; a += 0.012) {
+        const x = c.x + rad * Math.sin(a), y = c.y + rad * Math.cos(a);
+        if (x < 1 || x > C.terrainW - 1 || y > C.terrainL - 1) continue;
+        const m = new THREE.Mesh(new THREE.BoxGeometry(0.115, 0.06, 0.004), mat);
+        m.position.set(x, y, terrain.sample(x, y).h + 0.008);
+        m.rotation.z = -a;
+        m.renderOrder = 3;
+        jackZone.add(m);
+      }
+    }
+  }
+  scene.add(jackZone);
+  function showJackZone(on) { jackZone.visible = !!on; }
+
   // Measuring tape: lines from the jack to each measured boule, with cm labels
   const measure = new THREE.Group();
   scene.add(measure);
@@ -518,5 +539,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { sync, setCamera, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, clearMeasure };
+  return { sync, setCamera, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, clearMeasure, showJackZone };
 }

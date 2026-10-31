@@ -73,7 +73,7 @@
 }
 .swing-gauge.is-active { opacity: .78; }
 .swing-gauge.is-ghost { opacity: .4; transition-duration: 1.2s; }
-.sg-svg { position: absolute; right: 4%; bottom: 2%; height: 36%; width: auto; max-width: 30%; overflow: visible; }
+.sg-svg { position: absolute; right: 9%; bottom: 2%; height: 36%; width: auto; max-width: 30%; overflow: visible; }
 .sg-arc { fill: none; stroke-width: 3; stroke-linecap: butt; }
 .sg-roulette { stroke: var(--paper, #fffaf0); opacity: .45; }
 .sg-demi { stroke: var(--paper, #fffaf0); opacity: .8; }
@@ -88,7 +88,7 @@
   background: var(--navy, #14284b); border-radius: 3px; opacity: .85;
 }
 .sg-ghost-text:empty { display: none; }
-.sg-bar { position: absolute; right: 22%; bottom: 3%; width: .5rem; height: 30%; background: rgba(20, 40, 75, .55); border: 2px solid var(--paper, #fffaf0); border-radius: 4px; }
+.sg-bar { position: absolute; right: 27%; bottom: 3%; width: .5rem; height: 30%; background: rgba(20, 40, 75, .55); border: 2px solid var(--paper, #fffaf0); border-radius: 4px; }
 .sg-bar-fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--red, #8a1c2b); }
 .sg-bar-ceiling { position: absolute; left: -4px; right: -4px; height: 3px; background: var(--paper, #fffaf0); }
 .swing-gauge:not(.is-active) .sg-bar { display: none; }

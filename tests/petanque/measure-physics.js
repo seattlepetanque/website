@@ -5,7 +5,7 @@ import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { createBody, launch, createWorld, simulate } from '../../assets/js/petanque/physics.js';
 
 const flat = () => {
-  const s = { h: 0, nx: 0, ny: 0, nz: 1, friction: 0.1, loose: 0.3 };
+  const s = { h: 0, nx: 0, ny: 0, nz: 1, friction: 0.2, loose: 0.3 };
   return { sample: () => s, stonesNear: () => [], addDivot() {}, resetDivots() {}, visibleStones: () => [], perceived() { return this; } };
 };
 

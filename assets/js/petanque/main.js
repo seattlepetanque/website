@@ -8,7 +8,7 @@ import {
   createMatch, defaultPlayers, apply, nextTeam, playersWithBoules,
 } from './rules.js';
 import { createHud } from './hud.js';
-import { chooseThrowAsync, chooseJackThrow } from './ai.js';
+import { chooseThrowAsync, chooseJackThrow, assistJackThrow, idealJackSpeed } from './ai.js';
 import { createSwingInput, createSwingGauge } from './input.js';
 import { createAudio } from './audio.js';
 
@@ -154,7 +154,7 @@ function boot() {
       gauge.hide();
       if (!pending || flying) return;
       gauge.showGhost(tp);
-      humanThrow(tp);
+      humanThrow(pending.kind === 'jack' ? assistJackThrow(tp) : tp);
     },
     onCancel: () => gauge.hide(),
   });
@@ -209,6 +209,7 @@ function boot() {
     terrain.resetDivots();
     renderer.clearDivots();
     renderer.clearMeasure();
+    renderer.showJackZone(false);
     throwEvents = [];
     flying = null;
     renderer.sync(world);
@@ -222,6 +223,7 @@ function boot() {
     }
     preThrow = new Map(world.bodies.map((b) => [b.id, { x: b.x, y: b.y }]));
     throwEvents = [];
+    renderer.showJackZone(false);
     const body = createBody(kind, { team: kind === 'jack' ? -1 : team, owner });
     world.add(body);
     launch(body, p);
@@ -239,7 +241,7 @@ function boot() {
 
   // ---- Game flow ----
   function toSetup() {
-    token++;
+    token++; thinkToken++; pierreChoice = null;
     match = null; pending = null;
     enableControls(false);
     clearWorld();
@@ -251,7 +253,7 @@ function boot() {
   }
 
   function startGame(opts) {
-    token++;
+    token++; thinkToken++; pierreChoice = null;
     difficulty = opts.difficulty || 'medium';
     instant = !!opts.instant;
     const players = defaultPlayers();
@@ -272,7 +274,7 @@ function boot() {
     refreshHud({ team, playerId: thrower.id, text: `${thrower.isHuman ? 'You' : thrower.name} throw${thrower.isHuman ? '' : 's'} the jack` });
     aimView();
     if (thrower.isHuman) {
-      humanTurn('jack', thrower.id, lead + 'Your jack. Aim, then swing to throw it 6 to 10 metres out: a low, gentle throw works best.');
+      humanTurn('jack', thrower.id, lead + 'Your jack. Aim, then swing to throw it between the two yellow lines (6 to 10 metres out). A medium swing works best.');
     } else {
       aiJack(thrower, lead);
     }
@@ -280,8 +282,17 @@ function boot() {
 
   function refreshHud(turn) { hud.update(match, turn); }
 
+  let slidersFor = 'boule';
   function humanTurn(kind, playerId, text) {
     pending = { kind, playerId };
+    renderer.showJackZone(kind === 'jack');
+    if (kind !== slidersFor) { // slider defaults that suit the jack (light, short) or a boule
+      const d = kind === 'jack'
+        ? { speed: idealJackSpeed(35 * DEG, 10).toFixed(1), loft: 35, backspin: 10, sidespin: 0 }
+        : { speed: 7, loft: 50, backspin: 30, sidespin: 0 };
+      for (const k in d) { inputs[k].value = d[k]; outputs[k](); }
+      slidersFor = kind;
+    }
     throwBtn.textContent = kind === 'jack' ? 'Throw jack' : 'Throw boule';
     enableControls(true);
     aimView();
@@ -334,10 +345,20 @@ function boot() {
     const t = token;
     const cached = pierreChoice && pierreChoice.id === player.id ? pierreChoice.choice : null;
     pierreChoice = null;
-    const [choice] = await Promise.all([
-      cached || chooseThrowAsync({ world, match, player, difficulty, rand: aiRand }),
-      sleep(AI_MIN_THINK),
-    ]);
+    let choice;
+    try {
+      [choice] = await Promise.all([
+        cached || chooseThrowAsync({ world, match, player, difficulty, rand: aiRand }),
+        sleep(AI_MIN_THINK),
+      ]);
+    } catch (err) {
+      console.error(err);
+      if (t !== token) return;
+      // fall back to a plain throw at the jack so the game never stalls
+      const j = jackBody();
+      const yaw = j ? Math.atan2(j.x - C.throwFrom.x, j.y - C.throwFrom.y) : 0;
+      choice = { label: `${player.name} throws`, throwParams: { yaw, speed: 6.5, loft: 0.6, backspin: 40, sidespin: 0 } };
+    }
     if (t !== token) return;
     say2(choice.label);
     await sleep(700);
@@ -388,6 +409,7 @@ function boot() {
   }
 
   function beginTurn(playerId) {
+    thinkToken++; // drop a partner suggestion still being computed
     hud.hideChooser();
     const player = match.players.find((p) => p.id === playerId);
     refreshHud({ team: player.team, playerId, text: `${player.isHuman ? 'Your throw' : player.name + ' to throw'}` });
@@ -415,7 +437,7 @@ function boot() {
     if (was.kind === 'jack') return `Jack is ${Math.hypot(was.x - C.circle.x, was.y - C.circle.y).toFixed(1)} m out.`;
     if (was.dead) return `${ownerName(was)} boule is out: dead boule.`;
     const gap = Math.hypot(was.x - j.x, was.y - j.y) - was.r - j.r;
-    const base = `${ownerName(was)} boule is ${Math.hypot(was.x - j.x, was.y - j.y).toFixed(2)} m from the jack.`;
+    const base = `${ownerName(was)} boule is ${gapText(was, j)} from the jack.`;
     // carreau: the shooter hit an opposing boule, knocked it away and took its place
     for (const ev of evs) {
       if (ev.type !== 'hit' || (ev.a !== was.id && ev.b !== was.id)) continue;
@@ -430,6 +452,12 @@ function boot() {
     if (gap < 0.02) return `Biberon! ${ownerName(was)} boule is touching the jack.`;
     return base;
   }
+  // Edge-to-edge gap, the same figure as the measuring labels at the end of a mène
+  const gapCm = (b, j) => Math.max(0, Math.round((Math.hypot(b.x - j.x, b.y - j.y) - b.r - j.r) * 100));
+  const gapText = (b, j) => {
+    const cm = gapCm(b, j);
+    return cm < 100 ? `${cm} cm` : `${(cm / 100).toFixed(2)} m`;
+  };
   const ownerName = (b) => {
     const p = match && match.players.find((q) => q.id === b.owner);
     return p ? (p.id === 'you' ? 'Your' : p.name + "'s") : 'The';
@@ -497,6 +525,12 @@ function boot() {
       headView(j, items, 0.4); // subject high in the view, clear of the result card
     } else aimView();
     if (r.void && jackOut) note = 'The jack is out: mène void.';
+    else if (!jackOut && !r.void && r.measured && r.measured.length) {
+      // report the winning boule's gap, the figure on its measuring label
+      const win = world.bodies.find((b) => b.id === r.measured[0].id);
+      const special = /^(Carreau|Biberon)/.test(note) ? note + ' ' : '';
+      if (win) note = `${special}Closest: ${ownerName(win)} boule, ${gapText(win, j)} from the jack.`;
+    }
     refreshHud(null);
     let text, detail = note;
     if (r.void) text = 'Void mène: no points';
@@ -564,7 +598,7 @@ function boot() {
     startGame({ target: 7, difficulty: 'medium', allAI: true, instant: true });
   } else if (debug && pickHuman !== null) {
     // Stop at the human's first boule (or at the chooser with ?humanturn=chooser)
-    startGame({ target: 7, difficulty: 'medium', instant: true, firstJackTeam: 1 });
+    startGame({ target: 7, difficulty: 'medium', instant: true, firstJackTeam: pickHuman === 'jack' ? 0 : 1 });
   } else {
     toSetup();
   }
