@@ -1,0 +1,15 @@
+ErrorDocument 404 /404.html
+
+# Old Publii tag and author archives.
+RedirectMatch 301 ^/(tags|authors)(/.*)?$ /blog.html
+
+RewriteEngine On
+# One canonical address: https://seattlepetanque.org (no www, always HTTPS).
+RewriteCond %{HTTP_HOST} ^www\. [NC,OR]
+RewriteCond %{HTTPS} off
+RewriteRule ^ https://seattlepetanque.org%{REQUEST_URI} [L,R=301]
+
+# Hide dotfiles (.git, .env, .htaccess itself, etc.).
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>

@@ -1,0 +1,16 @@
+# Crontab for the DreamHost account dh_jsaetx.
+#
+# Install: `crontab -l` shows the current entries. `crontab -e` REPLACES the whole
+# crontab, so paste these lines in alongside any existing ones. You can also add
+# them through the DreamHost panel's cron section.
+#
+# Cron has a minimal PATH, so set it explicitly.
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# Nightly deploy at 03:15. Rebuilding rolls past events from "Upcoming" to "Past".
+15 3 * * * /home/dh_jsaetx/site-src/deploy/deploy.sh >> /home/dh_jsaetx/deploy.log 2>&1
+
+# Weekly log trim, Sunday 04:00: keep the last 5000 lines.
+# cat into the existing file (rather than mv) keeps the inode, so the
+# appending writers keep working.
+0 4 * * 0 tail -n 5000 /home/dh_jsaetx/deploy.log > /home/dh_jsaetx/deploy.log.tmp && cat /home/dh_jsaetx/deploy.log.tmp > /home/dh_jsaetx/deploy.log && rm -f /home/dh_jsaetx/deploy.log.tmp

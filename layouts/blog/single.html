@@ -1,0 +1,9 @@
+{{ define "main" }}
+<article class="content blog-post">
+  <h1>{{ .Title }}</h1>
+  <p class="meta"><time datetime="{{ .Date.Format "2006-01-02" }}">{{ .Date.Format "January 2, 2006" }}</time>{{ with .Params.author }} &middot; {{ . }}{{ end }}</p>
+  {{ with .Params.image }}<img class="figure" src="{{ . }}" alt="{{ $.Params.image_alt }}">{{ end }}
+  {{ .Content }}
+  <p><a href="{{ "blog.html" | relURL }}">&larr; All blog posts</a></p>
+</article>
+{{ end }}

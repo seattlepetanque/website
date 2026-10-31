@@ -1,0 +1,19 @@
+{{ define "main" }}
+{{- $split := partial "events/split.html" (slice .) }}
+<article class="content event-detail{{ if $split.past }} is-past{{ end }}">
+  <h1>{{ .Title }}</h1>
+  {{ if $split.past }}<p><span class="badge">Past event</span></p>{{ end }}
+  <p class="meta when">{{ partial "events/date.html" . }}
+  {{- with .Params.end_date }}<br>Ends: <time datetime="{{ . }}">{{ (. | time.AsTime).Format "Monday, January 2, 2006" }}{{ $e := . | time.AsTime }}{{ if not (and (eq $e.Hour 0) (eq $e.Minute 0)) }} at {{ $e.Format "3:04 PM" }}{{ end }}</time>{{ end }}</p>
+  {{ with .Params.location }}<p class="meta where">Location: {{ if $.Params.map_url }}<a href="{{ $.Params.map_url }}">{{ . }}</a>{{ else }}{{ . }}{{ end }}</p>{{ end }}
+  {{ .Content }}
+  {{- with .Params.photos }}
+  <div class="gallery gallery-{{ len . }}">
+    {{- range $i, $p := . }}{{ with $p.image }}
+    <figure><a href="{{ . }}"><img src="{{ . }}" alt="{{ $p.alt }}"{{ if gt $i 0 }} loading="lazy"{{ end }}></a>{{ with $p.caption }}<figcaption>{{ . }}</figcaption>{{ end }}</figure>
+    {{- end }}{{ end }}
+  </div>
+  {{- end }}
+  <p><a href="{{ "events.html" | relURL }}">&larr; All events</a></p>
+</article>
+{{ end }}

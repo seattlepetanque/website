@@ -1,0 +1,15 @@
+{{ define "main" }}
+<h1>{{ .Title }}</h1>
+{{ with hugo.Data.settings.events_intro }}<div class="intro">{{ . | markdownify }}</div>{{ end }}
+{{- $split := partial "events/split.html" .Pages }}
+<section class="events-list">
+  <h2>Upcoming</h2>
+  {{ partial "events/upcoming-list.html" $split }}
+</section>
+{{ with $split.past }}
+<section class="events-list events-past">
+  <h2>Past</h2>
+  {{ range . }}{{ partial "events/item.html" . }}{{ end }}
+</section>
+{{ end }}
+{{ end }}

@@ -1,0 +1,20 @@
+/* Shared base. Each theme in themes/*.css supplies the look. */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; overflow-wrap: break-word; min-height: 100vh; display: flex; flex-direction: column; }
+main { flex: 1 0 auto; width: 100%; }
+img, svg { max-width: 100%; height: auto; }
+iframe { max-width: 100%; border: 0; }
+iframe[src*="youtube"] { width: 100%; height: auto; aspect-ratio: 16 / 9; display: block; }
+.skip { position: absolute; left: -999px; top: 0; z-index: 100; }
+.skip:focus { left: 1rem; top: 1rem; padding: .6rem 1rem; background: #fff; color: #000; outline: 3px solid #000; }
+:focus-visible { outline: 3px solid var(--focus, currentColor); outline-offset: 3px; }
+nav ul { list-style: none; margin: 0; padding: 0; }
+.datetile { display: none; }
+.thumb img { display: block; }
+.content img { display: block; }
+.content table { max-width: 100%; display: block; overflow-x: auto; }
+.content pre { overflow-x: auto; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

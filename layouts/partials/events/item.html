@@ -1,0 +1,17 @@
+{{- $split := partial "events/split.html" (slice .) -}}
+{{- $past := gt (len $split.past) 0 -}}
+<article class="item event-item {{ if $past }}is-past{{ else }}is-upcoming{{ end }}">
+  {{- /* Calendar tile: decorative (the date is repeated as text); only some themes show it. */}}
+  {{- if .Params.recurring }}
+  <div class="datetile datetile--recurring" aria-hidden="true"><span class="datetile-top">Regular</span><span class="datetile-big">&#8635;</span></div>
+  {{- else }}
+  <div class="datetile" aria-hidden="true"><span class="datetile-top">{{ .Date.Format "Jan" }}</span><span class="datetile-big">{{ .Date.Format "2" }}</span><span class="datetile-year">{{ .Date.Format "2006" }}</span></div>
+  {{- end }}
+  {{ with index (.Params.photos | default slice) 0 }}{{ with .image }}<a class="thumb" href="{{ $.RelPermalink }}" tabindex="-1" aria-hidden="true"><img src="{{ . }}" alt="" loading="lazy"></a>{{ end }}{{ end }}
+  <div class="item-body">
+    <h3><a href="{{ .RelPermalink }}">{{ .Title }}</a>{{ if $past }} <span class="badge">Past</span>{{ end }}</h3>
+    <p class="meta when">{{ partial "events/date.html" . }}</p>
+    {{ with .Params.location }}<p class="meta where">{{ if $.Params.map_url }}<a href="{{ $.Params.map_url }}">{{ . }}</a>{{ else }}{{ . }}{{ end }}</p>{{ end }}
+    {{ with .Params.summary }}<p class="summary">{{ . }}</p>{{ end }}
+  </div>
+</article>

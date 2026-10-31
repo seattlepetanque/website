@@ -1,0 +1,52 @@
+baseURL = "https://seattlepetanque.org/"
+locale = "en-us"
+title = "Seattle Pétanque Club"
+timeZone = "America/Los_Angeles"
+uglyURLs = true
+enableRobotsTXT = true
+disableKinds = ["taxonomy", "term"]
+# Events are dated in the future; without this Hugo would drop them.
+buildFuture = true
+
+# events/ and blog/ have no _index.md (Decap would list it as an entry), so set
+# the section URLs here to keep the old Publii addresses.
+[[cascade]]
+  url = "/events.html"
+  [cascade.target]
+    kind = "section"
+    path = "/events"
+[[cascade]]
+  url = "/blog.html"
+  title = "Blog"
+  [cascade.target]
+    kind = "section"
+    path = "/blog"
+
+[outputs]
+  home = ["HTML", "RSS"]
+  section = ["HTML"]
+
+[outputFormats.RSS]
+  baseName = "feed"
+
+[markup.goldmark.renderer]
+  # Editors' rich-text widget may emit raw HTML (e.g. YouTube embeds).
+  unsafe = true
+
+[menus]
+  [[menus.main]]
+    name = "Home"
+    pageRef = "/"
+    weight = 10
+  [[menus.main]]
+    name = "Events"
+    pageRef = "/events"
+    weight = 20
+  [[menus.main]]
+    name = "Blog"
+    pageRef = "/blog"
+    weight = 30
+  [[menus.main]]
+    name = "Links"
+    pageRef = "/links"
+    weight = 40

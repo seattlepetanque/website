@@ -1,0 +1,13 @@
+{{ define "main" }}
+<h1>{{ .Title }}</h1>
+{{ with hugo.Data.settings.blog_intro }}<div class="intro">{{ . | markdownify }}</div>{{ end }}
+{{ range .Pages.ByDate.Reverse }}
+<article class="item blog-item">
+  <div>
+    <h2><a href="{{ .RelPermalink }}">{{ .Title }}</a></h2>
+    <p class="meta"><time datetime="{{ .Date.Format "2006-01-02" }}">{{ .Date.Format "January 2, 2006" }}</time>{{ with .Params.author }} &middot; {{ . }}{{ end }}</p>
+    {{ with .Params.summary }}<p>{{ . }}</p>{{ end }}
+  </div>
+</article>
+{{ else }}<p>No blog posts yet.</p>{{ end }}
+{{ end }}

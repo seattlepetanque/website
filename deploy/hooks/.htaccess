@@ -1,0 +1,6 @@
+# Only deploy.php and oauth.php are reachable from this docroot. Everything else is denied.
+Require all denied
+
+<FilesMatch "^(deploy|oauth)\.php$">
+    Require all granted
+</FilesMatch>

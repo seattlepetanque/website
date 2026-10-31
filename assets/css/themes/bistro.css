@@ -1,0 +1,97 @@
+/* Bistro: Parisian cafe meets vintage travel poster. Navy, cream, bordeaux.
+   Decorative ::after text (French subtitles, footer flourish) may be read by screen readers; kept short. */
+.theme-bistro {
+  --bg: #f7f0e0; --paper: #fffaf0; --fg: #1d2233; --navy: #14284b; --navy2: #1f3a6b; --red: #8a1c2b; --cream: #f7f0e0;
+  --muted: #4d5468; --line: #d9ccb0; --focus: #8a1c2b;
+  --head: "DM Serif Display", "Playfair Display", Didot, Georgia, "Times New Roman", serif;
+  --body: Charter, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --tricolore: linear-gradient(90deg, #14284b 0 33.33%, #fffaf0 33.33% 66.66%, #b3263a 66.66%);
+  background: var(--bg); color: var(--fg); font: 1.125rem/1.7 var(--body);
+}
+.theme-bistro a { color: var(--navy2); text-underline-offset: .2em; text-decoration-thickness: 1px; }
+.theme-bistro a:hover { color: var(--red); text-decoration-thickness: 2px; }
+.theme-bistro h1, .theme-bistro h2, .theme-bistro h3 { font-family: var(--head); font-weight: 400; color: var(--navy); line-height: 1.15; }
+.theme-bistro h1 { font-size: clamp(2.2rem, 7vw, 3.4rem); margin: 2rem 0 1rem; }
+.theme-bistro h2 { font-size: clamp(1.6rem, 5vw, 2.2rem); margin: 2.5rem 0 1rem; }
+.theme-bistro h3 { font-size: 1.4rem; margin: 0 0 .25rem; }
+/* header: navy with striped awning */
+.theme-bistro .site-header { position: relative; background: var(--navy); border-top: 6px solid transparent; border-image: var(--tricolore) 1; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1.5rem; padding: 2.9rem max(1rem, calc((100% - 66rem) / 2)) 1rem; }
+.theme-bistro .site-header::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 1.9rem;
+  background: repeating-linear-gradient(90deg, var(--red) 0 2.25rem, var(--cream) 2.25rem 4.5rem);
+  -webkit-mask: linear-gradient(#000, #000) top / 100% 1rem no-repeat, radial-gradient(circle 1.125rem at 1.125rem 0, #000 98%, transparent 100%) bottom left / 2.25rem .9rem repeat-x;
+  mask: linear-gradient(#000, #000) top / 100% 1rem no-repeat, radial-gradient(circle 1.125rem at 1.125rem 0, #000 98%, transparent 100%) bottom left / 2.25rem .9rem repeat-x; }
+.theme-bistro .brand { display: flex; align-items: center; gap: .75rem; text-decoration: none; color: var(--cream); font: 400 1.6rem/1.1 var(--head); }
+.theme-bistro .brand img { width: 52px; height: 52px; background: var(--paper); border: 2px solid var(--cream); border-radius: 50%; padding: 2px; }
+.theme-bistro .brand:hover { color: #fff; text-decoration: underline; text-decoration-thickness: 1px; }
+.theme-bistro nav ul { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; }
+.theme-bistro nav a { display: block; color: var(--cream); text-decoration: none; font: italic 400 1.2rem/1.2 var(--head); padding: .3rem .1rem; border-bottom: 2px solid transparent; }
+.theme-bistro nav a:hover { color: #fff; border-bottom-color: #e0a0a9; }
+.theme-bistro nav a.current { border-bottom-color: var(--cream); }
+.theme-bistro .site-header :focus-visible, .theme-bistro .site-footer :focus-visible { outline-color: #fff; }
+.theme-bistro main { max-width: 66rem; margin: 0 auto; padding: 0 1rem 3rem; }
+.theme-bistro .content, .theme-bistro .intro { max-width: 42rem; margin-inline: auto; }
+.theme-bistro .content img, .theme-bistro .figure { border: 8px solid var(--paper); outline: 1px solid var(--line); box-shadow: 0 6px 18px rgba(20,40,75,.2); margin: 1.75rem 0; }
+.theme-bistro .content h2 { padding-bottom: .35rem; border-bottom: 3px double var(--red); }
+.theme-bistro .content blockquote { margin: 1.5rem 0; padding: .25rem 0 .25rem 1.25rem; border-left: 4px solid var(--red); font-style: italic; color: var(--navy); }
+/* hero as a travel poster */
+.theme-bistro .hero { position: relative; margin: 1.75rem 0 2.5rem; border: 10px solid var(--paper); outline: 2px solid var(--navy); box-shadow: 0 10px 28px rgba(20,40,75,.28); background: var(--navy); }
+.theme-bistro .hero img { display: block; width: 100%; height: clamp(14rem, 42vw, 27rem); object-fit: cover; }
+.theme-bistro .hero h1 { position: absolute; left: 0; right: 0; bottom: 0; margin: 0; padding: 1.5rem 1.25rem 1rem; text-align: center; color: #fff; font-size: clamp(1.5rem, 5.5vw, 2.8rem); text-shadow: 0 2px 8px rgba(0,0,0,.6); background: linear-gradient(transparent, rgba(20,40,75,.92) 70%); }
+.theme-bistro .hero h1::after { content: ""; display: block; height: 5px; width: 7rem; margin: .6rem auto 0; background: var(--tricolore); border: 1px solid rgba(255,255,255,.4); }
+/* section headings with French subtitles */
+.theme-bistro .events-list h2 { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem 1rem; border-bottom: 1px solid var(--navy); padding-bottom: .4rem; }
+.theme-bistro .events-list h2::after { content: "À venir"; font: italic 400 1.1rem/1 var(--head); color: var(--red); }
+.theme-bistro .events-past h2::after { content: "Passés"; }
+/* events: enamel plaque + menu card */
+.theme-bistro .item { display: flex; align-items: center; gap: 1.25rem; padding: 1rem 1.25rem; margin: 0 0 1rem; background: var(--paper); border: 1px solid var(--line); border-left: 6px solid var(--red); box-shadow: 0 2px 0 var(--line); }
+.theme-bistro .item p { margin: .15rem 0; }
+.theme-bistro .datetile { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: none; width: 5.5rem; padding: .4rem .3rem .5rem; text-align: center; line-height: 1; color: #fff; background: var(--navy2); border: 3px solid #fff; border-radius: 12px; box-shadow: 0 0 0 2px var(--navy2), 0 3px 6px rgba(20,40,75,.3); }
+.theme-bistro .datetile-top { font: 400 .95rem/1 var(--head); letter-spacing: .18em; text-transform: uppercase; padding-bottom: .3rem; border-bottom: 1px solid rgba(255,255,255,.55); width: 100%; }
+.theme-bistro .datetile-big { font: 400 2.6rem/1 var(--head); padding: .3rem 0 .15rem; }
+.theme-bistro .datetile-year { font: 400 .8rem/1 var(--body); letter-spacing: .1em; }
+.theme-bistro .datetile--recurring .datetile-big { font-size: 2.2rem; padding-top: .45rem; }
+.theme-bistro .item .thumb { display: none; }
+.theme-bistro .item-body { min-width: 0; flex: 1; }
+.theme-bistro .event-item h3 a { color: var(--navy); text-decoration: none; }
+.theme-bistro .event-item h3 a:hover { color: var(--red); text-decoration: underline; }
+.theme-bistro .meta { color: var(--muted); font-size: 1rem; }
+.theme-bistro .event-item .when { color: var(--red); font-style: italic; font-weight: 600; }
+.theme-bistro .event-item.is-past { background: #efe8d6; border-left-color: #8d8a82; box-shadow: none; }
+.theme-bistro .event-item.is-past .datetile { background: #5b6272; box-shadow: 0 0 0 2px #5b6272; border-color: #efe8d6; }
+.theme-bistro .event-item.is-past h3 a { color: #454b5c; }
+.theme-bistro .event-item.is-past .when { color: #4d5468; font-weight: 400; }
+.theme-bistro .badge { display: inline-block; font: 400 .75rem/1 var(--body); letter-spacing: .12em; text-transform: uppercase; color: #454b5c; border: 1px solid #454b5c; padding: .25rem .45rem; border-radius: 3px; vertical-align: middle; margin-left: .4rem; }
+.theme-bistro .more a { display: inline-block; text-decoration: none; background: var(--red); color: #fff; padding: .6rem 1.6rem; border: 2px solid var(--red); border-radius: 3px; font: italic 400 1.2rem/1.2 var(--head); box-shadow: inset 0 0 0 2px var(--red), inset 0 0 0 3px rgba(255,255,255,.7); }
+.theme-bistro .more a:hover { background: var(--navy); border-color: var(--navy); color: #fff; box-shadow: inset 0 0 0 2px var(--navy), inset 0 0 0 3px rgba(255,255,255,.7); }
+.theme-bistro .event-detail, .theme-bistro .blog-post { max-width: 46rem; margin-inline: auto; }
+.theme-bistro .event-detail .when { display: inline-block; background: var(--navy2); color: #fff; border: 3px solid #fff; border-radius: 10px; box-shadow: 0 0 0 2px var(--navy2); padding: .35rem .9rem; margin: .25rem 2px; font-style: normal; font-size: 1.05rem; }
+.theme-bistro .event-detail.is-past .when { background: #5b6272; box-shadow: 0 0 0 2px #5b6272; }
+.theme-bistro .blog-item { display: block; }
+.theme-bistro .blog-item h2 { font-size: 1.6rem; margin: 0 0 .3rem; }
+.theme-bistro .blog-item h2 a { color: var(--navy); text-decoration: none; }
+.theme-bistro .blog-item h2 a:hover { color: var(--red); text-decoration: underline; }
+/* footer */
+.theme-bistro .site-footer { background: var(--navy); color: var(--cream); border-top: 6px solid transparent; border-image: var(--tricolore) 1; padding: 2rem max(1rem, calc((100% - 66rem) / 2)) 2.25rem; text-align: center; }
+.theme-bistro .site-footer p { margin: .3rem 0; }
+.theme-bistro .site-footer a { color: #fff; margin: 0 .75rem; }
+.theme-bistro .site-footer a:hover { color: #f0b8c0; }
+.theme-bistro .site-footer::after { content: "Allez, on joue !"; display: block; margin-top: .75rem; font: italic 400 1.5rem/1.2 var(--head); color: #f0b8c0; }
+@media (max-width: 34rem) {
+  .theme-bistro { font-size: 1.0625rem; }
+  .theme-bistro .site-header { flex-direction: column; align-items: flex-start; }
+  .theme-bistro .brand { font-size: 1.35rem; }
+  .theme-bistro .item { gap: .85rem; padding: .8rem; }
+  .theme-bistro .datetile { width: 4.4rem; }
+  .theme-bistro .datetile-big { font-size: 2rem; }
+  .theme-bistro .datetile-top { font-size: .8rem; }
+  .theme-bistro h3 { font-size: 1.2rem; }
+  .theme-bistro .hero { border-width: 6px; }
+}
+.theme-bistro .datetile--recurring .datetile-top { font-size: .68rem; letter-spacing: .03em; white-space: nowrap; }
+/* event photo gallery: cream mat, thin navy frame, italic serif captions */
+.theme-bistro .gallery { display: grid; grid-template-columns: 1fr; gap: 1.5rem; margin: 2rem 0; }
+.theme-bistro .gallery figure { margin: 0; padding: 8px; background: var(--paper); border: 1px solid var(--navy); box-shadow: 0 6px 18px rgba(20,40,75,.2); }
+.theme-bistro .gallery a { display: block; }
+.theme-bistro .gallery img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; margin: 0; border: 0; outline: 1px solid var(--line); box-shadow: none; }
+.theme-bistro .gallery figcaption { padding: .5rem .25rem .1rem; font: italic 400 1rem/1.35 var(--head); color: var(--navy); text-align: center; }
+@media (min-width: 40rem) { .theme-bistro .gallery:not(.gallery-1) { grid-template-columns: repeat(2, 1fr); } }

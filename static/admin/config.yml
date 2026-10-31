@@ -1,0 +1,120 @@
+# Decap CMS configuration for the Seattle Pétanque Club website.
+# Editors reach this at /admin/. Schema source: PLAN.md ("Content schema").
+
+backend:
+  name: github
+  # GitHub repo (owner/name). Confirm this matches the repo the site deploys from.
+  repo: seattlepetanque/website
+  branch: main
+  # GitHub OAuth helper (deploy/hooks/oauth.php) on the hooks subdomain.
+  base_url: https://hooks.seattlepetanque.org
+  auth_endpoint: oauth.php
+  auth_scope: public_repo
+
+# Lets editors run `npx decap-server` and edit the local working copy without GitHub login.
+local_backend: true
+
+# Simple publishing: "Publish" puts changes live right away (no draft/review board).
+# To add a review step later: publish_mode: editorial_workflow
+
+media_folder: static/images
+public_folder: /images
+
+site_url: https://seattlepetanque.org
+
+collections:
+  - name: events
+    label: "Events"
+    label_singular: "Event"
+    description: "Tournaments, socials and other club events. Past events move to the Past list automatically after their date."
+    folder: content/events
+    create: true
+    # No _index.md here on purpose: Decap would list it as an event. The intro text
+    # lives in data/settings.yaml (events_intro).
+    slug: "{{year}}-{{slug}}"
+    sortable_fields: ["date", "title"]
+    fields:
+      - { label: "Event title", name: "title", widget: "string" }
+      - { label: "Start date and time", name: "date", widget: "datetime", hint: "When the event starts." }
+      - { label: "End date and time", name: "end_date", widget: "datetime", required: false, hint: "Optional. Set this for multi-day events so they stay on the Upcoming list until they finish." }
+      - { label: "Location", name: "location", widget: "string", required: false, hint: "Venue or park name, e.g. Green Lake Park." }
+      - { label: "Map link", name: "map_url", widget: "string", required: false, hint: "Optional. Paste a Google Maps link." }
+      - label: "Photos"
+        name: "photos"
+        widget: "list"
+        required: false
+        collapsed: false
+        label_singular: "photo"
+        summary: "{{fields.alt}}"
+        hint: "Optional. Add as many photos as you like. The first one is used as the thumbnail in event lists."
+        fields:
+          - { label: "Photo", name: "image", widget: "image", choose_url: false, hint: "Click 'Choose an image', then 'Upload' to add a photo from your computer." }
+          - { label: "Description", name: "alt", widget: "string", hint: "Describe the photo for people using screen readers, e.g. 'Players lined up at Lake Union Park'." }
+          - { label: "Caption", name: "caption", widget: "string", required: false, hint: "Optional. Shown under the photo, e.g. 'Photo by Jeff Brann'." }
+      - { label: "Short summary", name: "summary", widget: "string", required: false, hint: "Optional. One line shown in event listings." }
+      - { label: "Recurring schedule", name: "recurring", widget: "string", required: false, hint: "Leave blank for one-time events. For repeating events, describe the schedule, e.g. Every Saturday 10am." }
+      - { label: "Details", name: "body", widget: "markdown" }
+
+  - name: blog
+    label: "Blog"
+    label_singular: "Blog post"
+    description: "Club news and blog posts."
+    folder: content/blog
+    create: true
+    slug: "{{slug}}"
+    sortable_fields: ["date", "title"]
+    fields:
+      - { label: "Title", name: "title", widget: "string" }
+      - { label: "Date", name: "date", widget: "datetime", hint: "The date the post is published." }
+      - { label: "Author", name: "author", widget: "string", required: false, hint: "Optional. Your name, if you want it shown on the post." }
+      - { label: "Image", name: "image", widget: "image", required: false, hint: "Optional. A photo or graphic for the post." }
+      - { label: "Image description", name: "image_alt", widget: "string", required: false, hint: "Short description of the image for people using screen readers." }
+      - { label: "Short summary", name: "summary", widget: "string", required: false, hint: "Optional. One or two sentences shown in the blog list." }
+      - { label: "Post", name: "body", widget: "markdown" }
+      - label: "Old web addresses"
+        name: "aliases"
+        widget: "list"
+        required: false
+        allow_add: true
+        hint: "Only needed when a post is moved from an old address. Leave blank otherwise."
+        field: { label: "Old address", name: "alias", widget: "string" }
+
+  - name: pages
+    label: "Pages"
+    label_singular: "Page"
+    description: "Text on the home page and the links page."
+    files:
+      - label: "Home page"
+        name: "home"
+        file: content/_index.md
+        fields:
+          - { label: "Page title", name: "title", widget: "string" }
+          - { label: "Large heading", name: "hero_heading", widget: "string", hint: "The big heading at the top of the home page." }
+          - { label: "Large background image", name: "hero_image", widget: "image", required: false, hint: "Optional. The wide photo behind the heading." }
+          - { label: "Image description", name: "hero_image_alt", widget: "string", required: false, hint: "Short description of the photo for people using screen readers." }
+          - { label: "Text", name: "body", widget: "markdown" }
+
+      - label: "Links page"
+        name: "links"
+        file: content/links.md
+        fields:
+          - { label: "Page title", name: "title", widget: "string" }
+          - { label: "Text", name: "body", widget: "markdown" }
+
+
+  - name: settings
+    label: "Site settings"
+    label_singular: "Settings"
+    description: "Site-wide details: name, tagline, social links, contact email and footer text."
+    files:
+      - label: "Site settings"
+        name: "settings"
+        file: data/settings.yaml
+        fields:
+          - { label: "Site name", name: "site_title", widget: "string" }
+          - { label: "Tagline", name: "tagline", widget: "string", hint: "A short phrase shown under the site name." }
+          - { label: "Facebook page link", name: "facebook_url", widget: "string", required: false, hint: "Optional. Full address of the club's Facebook page." }
+          - { label: "Contact email", name: "contact_email", widget: "string", required: false, hint: "Optional. Address shown for people who want to get in touch." }
+          - { label: "Footer text", name: "footer_text", widget: "string", hint: "Text shown at the bottom of every page." }
+          - { label: "Events page introduction", name: "events_intro", widget: "markdown", required: false, hint: "Optional. Shown above the list of events." }
+          - { label: "Blog page introduction", name: "blog_intro", widget: "markdown", required: false, hint: "Optional. Shown above the list of blog posts." }

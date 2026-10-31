@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="{{ site.Language.Locale | default "en-us" }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {{- $s := hugo.Data.settings }}
+  {{- $title := cond .IsHome $s.site_title (printf "%s | %s" .Title $s.site_title) }}
+  {{- $desc := .Params.summary | default (.Summary | plainify | truncate 160) | default $s.tagline }}
+  {{- if .IsHome }}{{ $desc = $s.tagline }}{{ end }}
+  <title>{{ $title }}</title>
+  <meta name="description" content="{{ $desc }}">
+  <link rel="canonical" href="{{ cond .IsHome site.BaseURL .Permalink }}">
+  <meta property="og:title" content="{{ .Title }}">
+  <meta property="og:description" content="{{ $desc }}">
+  <meta property="og:type" content="{{ if eq .Section "blog" }}article{{ else }}website{{ end }}">
+  <meta property="og:url" content="{{ cond .IsHome site.BaseURL .Permalink }}">
+  <meta property="og:site_name" content="{{ $s.site_title }}">
+  {{- $img := .Params.image | default .Params.hero_image }}
+  {{- with .Params.photos }}{{ with index . 0 }}{{ $img = .image }}{{ end }}{{ end }}
+  {{- with $img }}<meta property="og:image" content="{{ . | absURL }}">{{ end }}
+  {{- with site.Home.OutputFormats.Get "RSS" }}
+  <link rel="alternate" type="application/rss+xml" title="{{ $s.site_title }}" href="{{ .Permalink }}">{{ end }}
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" href="/images/logo.svg" type="image/svg+xml">
+  {{- $theme := site.Params.theme | default "bistro" }}
+  {{- $fonts := dict "bistro" "family=DM+Serif+Display:ital@0;1" }}
+  {{- with index $fonts $theme }}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="{{ printf "https://fonts.googleapis.com/css2?%s&display=swap" . | safeURL }}">{{ end }}
+  {{- $tc := resources.Get (printf "css/themes/%s.css" $theme) }}
+  {{- if not $tc }}{{ errorf "unknown theme %q: no assets/css/themes/%s.css" $theme $theme }}{{ end }}
+  {{- with resources.Get "css/main.css" | minify | fingerprint }}
+  <link rel="stylesheet" href="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}">{{ end }}
+  {{- with $tc | minify | fingerprint }}
+  <link rel="stylesheet" href="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}">{{ end }}
+{{- /* Publish a stable, unfingerprinted /admin/preview.css (main + theme) for the Decap preview pane. */ -}}
+{{- with resources.Get "css/main.css" }}{{ with slice (. | minify) ($tc | minify) | resources.Concat "admin/preview.css" }}{{ .Publish }}{{ end }}{{ end -}}
+</head>
+<body class="theme-{{ $theme }}">
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="{{ "/" | relURL }}"><img src="/images/logo.svg" alt="" width="48" height="48"><span>{{ $s.site_title }}</span></a>
+    <nav aria-label="Main">
+      <ul>
+        {{- $cur := . }}
+        {{- range site.Menus.main }}
+        <li><a href="{{ .URL }}"{{ if or ($cur.IsMenuCurrent "main" .) ($cur.HasMenuCurrent "main" .) }} class="current" aria-current="page"{{ end }}>{{ .Name }}</a></li>
+        {{- end }}
+      </ul>
+    </nav>
+  </header>
+  <main id="main">
+    {{- block "main" . }}{{ end }}
+  </main>
+  <footer class="site-footer">
+    {{ with $s.footer_text }}<p>{{ . }}</p>{{ end }}
+    <p>
+      {{ with $s.facebook_url }}<a href="{{ . }}">Visit our Facebook Page</a>{{ end }}
+      {{ with $s.contact_email }}<a href="mailto:{{ . }}">{{ . }}</a>{{ end }}
+    </p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,22 @@
+{{- $s := hugo.Data.settings -}}
+{{- $pages := where site.RegularPages "Section" "blog" -}}
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>{{ $s.site_title }}</title>
+    <link>{{ site.Home.Permalink }}</link>
+    <description>{{ $s.tagline }}</description>
+    <language>{{ site.Language.Locale }}</language>
+    {{- with site.Home.OutputFormats.Get "RSS" }}
+    <atom:link href="{{ .Permalink }}" rel="self" type="application/rss+xml"/>{{ end }}
+    {{- range $pages.ByDate.Reverse }}
+    <item>
+      <title>{{ .Title }}</title>
+      <link>{{ .Permalink }}</link>
+      <pubDate>{{ .Date.Format "Mon, 02 Jan 2006 15:04:05 -0700" }}</pubDate>
+      <guid>{{ .Permalink }}</guid>
+      <description>{{ (.Params.summary | default .Summary) | plainify | transform.XMLEscape }}</description>
+    </item>
+    {{- end }}
+  </channel>
+</rss>

@@ -1,0 +1,21 @@
+{{- /* Classify events. Input: a page collection. Returns dict with "upcoming" and "past". */ -}}
+{{- /* An offset-less timestamp parses in the site timeZone, so this yields that location. */ -}}
+{{- $loc := (time.AsTime "2000-01-01").Location -}}
+{{- $today := (now.In $loc).Format "2006-01-02" -}}
+{{- $recurring := slice -}}
+{{- $dated := slice -}}
+{{- $past := slice -}}
+{{- range . -}}
+  {{- $end := .Date -}}
+  {{- with .Params.end_date -}}{{- $end = . | time.AsTime -}}{{- end -}}
+  {{- $endDay := ($end.In $loc).Format "2006-01-02" -}}
+  {{- if .Params.recurring -}}
+    {{- $recurring = $recurring | append . -}}
+  {{- else if lt $endDay $today -}}
+    {{- $past = $past | append . -}}
+  {{- else -}}
+    {{- $dated = $dated | append . -}}
+  {{- end -}}
+{{- end -}}
+{{- $upcoming := (sort $recurring "Title" "asc") | append (sort $dated "Date" "asc") -}}
+{{- return (dict "upcoming" $upcoming "past" (sort $past "Date" "desc")) -}}

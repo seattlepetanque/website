@@ -1,0 +1,14 @@
+{{ define "main" }}
+{{- $s := hugo.Data.settings }}
+<section class="hero">
+  {{ with .Params.hero_image }}<img src="{{ . }}" alt="{{ $.Params.hero_image_alt }}">{{ end }}
+  {{ with .Params.hero_heading }}<h1>{{ . }}</h1>{{ end }}
+</section>
+<div class="content">{{ .Content }}</div>
+<section class="home-events events-list">
+  <h2>Upcoming events</h2>
+  {{- $split := partial "events/split.html" (where site.RegularPages "Section" "events") }}
+  {{ partial "events/upcoming-list.html" (dict "upcoming" (first 3 $split.upcoming)) }}
+  <p class="more"><a href="{{ "events.html" | relURL }}">All events</a></p>
+</section>
+{{ end }}

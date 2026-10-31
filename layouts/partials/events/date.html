@@ -1,0 +1,7 @@
+{{- /* Friendly date for an event page. */ -}}
+{{- if .Params.recurring -}}
+  {{ .Params.recurring }}
+{{- else -}}
+  {{- $d := .Date -}}
+  <time datetime="{{ $d.Format "2006-01-02T15:04:05Z07:00" }}">{{ $d.Format "Monday, January 2, 2006" }}{{ if not (and (eq $d.Hour 0) (eq $d.Minute 0)) }} at {{ $d.Format "3:04 PM" }}{{ end }}</time>
+{{- end -}}
