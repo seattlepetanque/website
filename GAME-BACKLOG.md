@@ -35,7 +35,7 @@ Status values: `todo`, `in-progress`, `done`, `blocked` (with a note).
 | B02 | done | haiku | — | Page scaffold and build pipeline |
 | B03 | in-progress | sonnet | B02 | Constants, RNG and terrain |
 | B04 | todo | sonnet | B03 | Physics engine |
-| B05 | in-progress | sonnet | B02 | Rules and scoring |
+| B05 | done | sonnet | B02 | Rules and scoring |
 | B06 | todo | sonnet | B01, B03 | Renderer and cameras |
 | B07 | todo | sonnet | B04, B06 | Game loop and precise-mode throws |
 | B08 | todo | sonnet | B07 | Swing gesture input and gauge |
