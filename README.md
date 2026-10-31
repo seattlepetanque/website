@@ -38,22 +38,75 @@ You need [Homebrew](https://brew.sh) and Node.js (for `npx`).
 
 Edits made through the local CMS write straight to your working copy. Review them with `git diff` before you commit.
 
+## Pétanque game
+
+The game is at `/game.html`. Its page is `content/game.md`, its template is `layouts/_default/game.html`, and its styles are in `assets/css/game.css`. The code is in `assets/js/petanque/`, bundled by Hugo's built-in `js.Build`, so building the site needs no `npm install`.
+
+three.js 0.170.0 is vendored in `assets/js/vendor/` (see the README there for its source and licence). Nothing is loaded from a CDN at runtime.
+
+The modules in `assets/js/petanque/`:
+
+- `main.js`: boot, game loop, and wiring
+- `rng.js`: seeded random numbers and noise
+- `terrain.js`: gravel heightfield, looseness, stones and divots
+- `physics.js`: boule and jack bodies, flight, impact and rolling
+- `rules.js`: mène state, turn order, scoring, dead boules
+- `ai.js`: Monte Carlo AI
+- `input.js`: swing gesture to throw parameters, and the swing gauge
+- `render.js`: three.js scene and cameras
+- `hud.js`: DOM HUD (setup, score, who throws, mène and game-over panels)
+- `audio.js`: synthesized sounds (Web Audio)
+- `constants.js`: tuning values
+
+Run the tests with Node (no dependencies to install):
+
+```sh
+npm test
+```
+
+The tests are in `tests/petanque/`. Physics, rules, terrain and AI have no DOM or three.js dependency, so they run under Node.
+
+To tune the game:
+
+- Physics and terrain numbers: `constants.js`.
+- Swing feel (speed, loft and backspin mapping): `SWING` in `input.js`.
+- AI strength: `AI` in `ai.js`.
+
+Debug URLs (add the query to `/game.html`):
+
+- `?debug`: turns on debug hooks.
+- `?debug&autotest`: AI-only quick match, with no delays.
+- `?debug&humanturn`: stops at your first boule. Use `?debug&humanturn=chooser` to stop at the who-throws chooser.
+- `?seed=N`: fixes the court and random numbers, so the same N gives the same game.
+
+`GAME-PLAN.md` describes the design. `GAME-BACKLOG.md` lists the work items and their history.
+
 ## Repo layout
 
 ```
 hugo.toml                 Hugo settings (URLs, menus, output formats)
+package.json              npm test script (no dependencies)
 content/
   _index.md               home page
   links.md                links page
+  game.md                 game page (/game.html)
   events/<slug>.md        one file per event
   blog/<slug>.md          one file per blog post
 data/settings.yaml        site-wide settings (name, tagline, footer, etc.)
+assets/
+  css/game.css            game styles
+  js/petanque/            game code (ES modules, bundled by Hugo)
+  js/vendor/              vendored three.js 0.170.0
 layouts/                  page templates (Go templates)
+  _default/game.html      game page template
 static/
   images/                 uploaded images (Decap media folder)
   admin/                  Decap CMS admin page and config.yml
 deploy/                   scripts for building the site on the host
 backups/                  old Publii backups, kept for history
+tests/petanque/           Node tests for the game
+GAME-PLAN.md              game design
+GAME-BACKLOG.md           game work items and history
 ```
 
 The `events/` and `blog/` folders have no `_index.md` file on purpose. Decap would list it as an entry.

@@ -44,7 +44,7 @@ Status values: `todo`, `in-progress`, `done`, `blocked` (with a note).
 | B11 | done | sonnet | B08, B09, B10 | AI integration, personalities, team choice |
 | B12 | done | haiku | B07 | Synthesized audio |
 | B13 | in-progress | sonnet | B11 | Polish: divots, measuring, commentary, fallbacks |
-| B14 | in-progress | haiku | B11 | README and docs |
+| B14 | done | haiku | B11 | README and docs |
 | B15 | todo | sonnet | B12, B13, B14, B16 | Final review, tuning, bug fixes |
 | B16 | in-progress | sonnet | B10 | Physics realism: stones, shots, spin |
 
