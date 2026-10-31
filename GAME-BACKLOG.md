@@ -39,7 +39,7 @@ Status values: `todo`, `in-progress`, `done`, `blocked` (with a note).
 | B06 | done | sonnet | B01, B03 | Renderer and cameras |
 | B07 | done | sonnet | B04, B06 | Game loop and precise-mode throws |
 | B08 | done | sonnet | B07 | Swing gesture input and gauge |
-| B09 | in-progress | sonnet | B05, B07 | HUD and full game flow (placeholder AI) |
+| B09 | done | sonnet | B05, B07 | HUD and full game flow (placeholder AI) |
 | B10 | in-progress | sonnet | B04, B05 | Monte Carlo AI |
 | B11 | todo | sonnet | B08, B09, B10 | AI integration, personalities, team choice |
 | B12 | done | haiku | B07 | Synthesized audio |
@@ -107,3 +107,4 @@ Run `npm test` and the build check; play-test through debug hooks (simulate a fu
 - From B07 screenshot: the 'head' camera sits too high, so boules look tiny. Frame the jack and nearby boules tighter (~2.5–3 m across).
 - Integration owed by B11: wire input.js (B08 swing gesture + gauge) and audio.js (B12) into main.js; B08 and B12 deliberately did not touch main.js.
 - From B08: swing tuning lives in `SWING` in input.js (speed 12 m/s at 5 screen-heights/s; backswing < 0.2 height caps speed; loft 5° at 0.1 → 75° at 0.6 release height). Tune by feel once integrated.
+- From B09: slider defaults are not tuned for the jack throw (a default human jack may land outside 6–10 m); game-over camera shows bare ground instead of the final head; `ownerName` in main.js has a leftover no-op `.replace`.

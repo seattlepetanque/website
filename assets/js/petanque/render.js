@@ -313,7 +313,7 @@ export function createRenderer(canvas, terrain) {
     } else if (mode === 'head') {
       const t = opts.target || { x: 2, y: 8 };
       goal.tgt.set(t.x, t.y, groundZ(t));
-      goal.pos.set(t.x, t.y - (opts.dist || 1.8), (opts.height || 3));
+      goal.pos.set(t.x, t.y - (opts.dist || 1.0), (opts.height || 1.7));
     } else if (mode === 'inspect') {
       const t = opts.target || { x: 2, y: 8 };
       goal.tgt.set(t.x, t.y, groundZ(t) + 0.03);
