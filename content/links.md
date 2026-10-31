@@ -1,7 +1,6 @@
 ---
-title: "Links"
+title: Links
 ---
-
 ## Seattle Petanque Club Links
 
 [Seattle Petanque Club - This site](https://seattlepetanque.org)
@@ -29,6 +28,10 @@ title: "Links"
 [Official International Rules of Petanque (pdf)](https://fipjp.org/images/2021/reglements/Official_Rules_Petanque-En.pdf)
 
 [FPUSA Tournament Rules (pdf)](https://usapetanque.org/uploads/3/4/9/7/34979601/2019_tournament_regulations_2_-_jmb_nw.pdf)
+
+## Fun
+
+[Celebrating Pétanque (Google Web Game)](https://doodles.google/doodle/celebrating-petanque/)
 
 ## Where To Buy Petanque Boules
 
