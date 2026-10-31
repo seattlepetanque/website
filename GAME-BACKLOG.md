@@ -36,7 +36,7 @@ Status values: `todo`, `in-progress`, `done`, `blocked` (with a note).
 | B03 | done | sonnet | B02 | Constants, RNG and terrain |
 | B04 | in-progress | sonnet | B03 | Physics engine |
 | B05 | done | sonnet | B02 | Rules and scoring |
-| B06 | todo | sonnet | B01, B03 | Renderer and cameras |
+| B06 | done | sonnet | B01, B03 | Renderer and cameras |
 | B07 | todo | sonnet | B04, B06 | Game loop and precise-mode throws |
 | B08 | todo | sonnet | B07 | Swing gesture input and gauge |
 | B09 | todo | sonnet | B05, B07 | HUD and full game flow (placeholder AI) |
