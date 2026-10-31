@@ -37,12 +37,12 @@ Status values: `todo`, `in-progress`, `done`, `blocked` (with a note).
 | B04 | done | sonnet | B03 | Physics engine |
 | B05 | done | sonnet | B02 | Rules and scoring |
 | B06 | done | sonnet | B01, B03 | Renderer and cameras |
-| B07 | in-progress | sonnet | B04, B06 | Game loop and precise-mode throws |
-| B08 | todo | sonnet | B07 | Swing gesture input and gauge |
-| B09 | todo | sonnet | B05, B07 | HUD and full game flow (placeholder AI) |
+| B07 | done | sonnet | B04, B06 | Game loop and precise-mode throws |
+| B08 | in-progress | sonnet | B07 | Swing gesture input and gauge |
+| B09 | in-progress | sonnet | B05, B07 | HUD and full game flow (placeholder AI) |
 | B10 | in-progress | sonnet | B04, B05 | Monte Carlo AI |
 | B11 | todo | sonnet | B08, B09, B10 | AI integration, personalities, team choice |
-| B12 | todo | haiku | B07 | Synthesized audio |
+| B12 | in-progress | haiku | B07 | Synthesized audio |
 | B13 | todo | sonnet | B11 | Polish: divots, measuring, commentary, fallbacks |
 | B14 | todo | haiku | B11 | README and docs |
 | B15 | todo | sonnet | B12, B13, B14 | Final review, tuning, bug fixes |
@@ -104,3 +104,5 @@ Run `npm test` and the build check; play-test through debug hooks (simulate a fu
 
 - From B04: very heavy backspin (~60 rad/s at speed 9, loft 1.0) can make a boule roll backwards several metres. Real boules check up and stop; cap the reverse roll (e.g. damp spin hard on landing in loose gravel).
 - From B04: a shooter with no backspin keeps rolling after a hit; carreau needs strong backspin. Check this feels right with the gesture input.
+- From B07 screenshot: the 'head' camera sits too high, so boules look tiny. Frame the jack and nearby boules tighter (~2.5–3 m across).
+- Integration owed by B11: wire input.js (B08 swing gesture + gauge) and audio.js (B12) into main.js; B08 and B12 deliberately did not touch main.js.

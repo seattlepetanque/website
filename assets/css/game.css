@@ -26,3 +26,24 @@
   .petanque { padding: .5rem; border-width: 6px; }
   .petanque canvas { aspect-ratio: 3 / 4; }
 }
+
+/* Precise-mode controls */
+.petanque-controls { display: grid; gap: .75rem; }
+.pc-grid { display: grid; gap: .4rem 1.5rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+.pc-row { display: grid; grid-template-columns: 5.5rem 1fr 5.5rem; align-items: center; gap: .6rem; }
+.pc-row label { font-weight: 600; }
+.pc-row input[type="range"] { width: 100%; min-height: 2rem; accent-color: var(--red, #8a1c2b); }
+.pc-row output { font-variant-numeric: tabular-nums; text-align: right; }
+.pc-buttons { display: flex; flex-wrap: wrap; gap: .6rem; }
+.pc-buttons button {
+  min-height: 2.75rem; padding: .4rem 1.2rem; font: inherit; font-weight: 700; cursor: pointer;
+  color: var(--paper, #fffaf0); background: var(--red, #8a1c2b);
+  border: 2px solid var(--red, #8a1c2b); border-radius: 4px;
+}
+.pc-buttons .pc-reset { color: var(--red, #8a1c2b); background: transparent; }
+.pc-buttons button:disabled { opacity: .5; cursor: default; }
+.pc-buttons button:focus-visible, .pc-row input:focus-visible { outline: 3px solid var(--navy, #14284b); outline-offset: 2px; }
+@media (max-width: 34rem) {
+  .pc-row { grid-template-columns: 4.8rem 1fr 4.6rem; gap: .4rem; }
+  .pc-buttons button { flex: 1; }
+}
