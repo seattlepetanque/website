@@ -77,14 +77,18 @@ function render_result(bool $ok, array $payload, array $allowedOrigins, string $
 (function () {
   var ALLOWED_ORIGINS = $jsOrigins;
   var MESSAGE = $jsMessage;
-  function receive(e) {
-    if (ALLOWED_ORIGINS.indexOf(e.origin) === -1) { return; }
-    window.removeEventListener("message", receive, false);
-    e.source.postMessage(MESSAGE, e.origin);
-    window.close();
-  }
-  window.addEventListener("message", receive, false);
-  if (window.opener) { window.opener.postMessage("authorizing:github", "*"); }
+  var opener = window.opener;
+  if (!opener) { return; }
+  // Talk to the opener directly instead of waiting for Decap to echo the handshake
+  // back: Safari can lose the opener's reference to this popup after it visits
+  // github.com. Each postMessage names an exact target origin, so the browser only
+  // delivers the token if the opener really is one of our sites.
+  ALLOWED_ORIGINS.forEach(function (origin) {
+    opener.postMessage("authorizing:github", origin);
+    opener.postMessage(MESSAGE, origin);
+  });
+  // Decap closes this window when it gets the message; close it ourselves as a fallback.
+  setTimeout(function () { window.close(); }, 1500);
 })();
 </script>
 </body></html>
