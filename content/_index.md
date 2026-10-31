@@ -6,7 +6,7 @@ hero_heading: Welcome to the Seattle Pétanque Club
 hero_image: /images/hero.jpg
 hero_image_alt: Pétanque players on a gravel court
 ---
-2026 is our 21th year as a member of the Federation of Pétanque USA.
+2026 is our 21st year as a member of the Federation of Pétanque USA.
 
 ![A player throwing a boule during a pétanque game](/images/petanque-throw-out-oil.jpg)
 
