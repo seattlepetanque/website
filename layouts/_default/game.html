@@ -12,7 +12,7 @@
   <h1>{{ .Title }}</h1>
   {{ .Content }}
 </article>
-<div id="petanque" class="petanque">
+<div id="petanque" class="petanque"{{ with site.GetPage "/links" }} data-links-url="{{ .RelPermalink }}"{{ end }}>
   <canvas role="img" aria-label="Pétanque court with boules and jack"></canvas>
   <div class="petanque-hud"></div>
   <div class="petanque-controls"></div>

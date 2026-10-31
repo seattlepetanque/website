@@ -43,7 +43,7 @@ Status values: `todo`, `in-progress`, `done`, `blocked` (with a note).
 | B10 | done | sonnet | B04, B05 | Monte Carlo AI |
 | B11 | done | sonnet | B08, B09, B10 | AI integration, personalities, team choice |
 | B12 | done | haiku | B07 | Synthesized audio |
-| B13 | in-progress | sonnet | B11 | Polish: divots, measuring, commentary, fallbacks |
+| B13 | done | sonnet | B11 | Polish: divots, measuring, commentary, fallbacks |
 | B14 | done | haiku | B11 | README and docs |
 | B15 | todo | sonnet | B12, B13, B14, B16 | Final review, tuning, bug fixes |
 | B16 | in-progress | sonnet | B10 | Physics realism: stones, shots, spin |
@@ -113,3 +113,5 @@ Run `npm test` and the build check; play-test through debug hooks (simulate a fu
 - From B08: swing tuning lives in `SWING` in input.js (speed 12 m/s at 5 screen-heights/s; backswing < 0.2 height caps speed; loft 5° at 0.1 → 75° at 0.6 release height). Tune by feel once integrated.
 - From B09: slider defaults are not tuned for the jack throw (a default human jack may land outside 6–10 m); game-over camera shows bare ground instead of the final head; `ownerName` in main.js has a leftover no-op `.replace`.
 - From B11 screenshots: the swing gauge arc and labels are oversized and cover the court; the head camera centres on the jack and can cut off boules near the edge (frame the jack plus nearby live boules); the human jack throw has no special mapping and depends on a legal 6–10 m swing.
+- From B13 screenshot: the mène-end card said "Odette's boule is 1.64 m from the jack" while the measuring labels showed 37 cm and 52 cm for the scoring boules; check which distance the card reports.
+- From B13: the phone gauge CSS was edited after the last 390 px screenshot; re-check it, and capture the setup overlay on a phone.

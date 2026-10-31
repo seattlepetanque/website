@@ -274,6 +274,81 @@ export function createRenderer(canvas, terrain) {
     }
   }
 
+  // Divot decals: a pool of soft dark discs just above the ground, reused in a ring
+  const DIVOTS = 48;
+  const divotTex = (() => {
+    const cv = makeCanvas(64, 64), g = cv.getContext('2d');
+    const gr = g.createRadialGradient(32, 32, 4, 32, 32, 31);
+    gr.addColorStop(0, 'rgba(60,44,24,0.55)');
+    gr.addColorStop(0.65, 'rgba(60,44,24,0.3)');
+    gr.addColorStop(1, 'rgba(60,44,24,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(cv);
+  })();
+  const divotGeo = new THREE.PlaneGeometry(2, 2);
+  const divotMat = new THREE.MeshBasicMaterial({
+    map: divotTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+  });
+  const divotMeshes = [];
+  for (let i = 0; i < DIVOTS; i++) {
+    const m = new THREE.Mesh(divotGeo, divotMat);
+    m.visible = false;
+    m.renderOrder = 1;
+    scene.add(m);
+    divotMeshes.push(m);
+  }
+  let divotNext = 0;
+  function addDivot(x, y, r = 0.06) {
+    const m = divotMeshes[divotNext++ % DIVOTS];
+    m.position.set(x, y, terrain.sample(x, y).h + 0.004);
+    m.scale.setScalar(Math.max(0.03, r * 1.6));
+    m.rotation.z = (x * 977 + y * 331) % 6.283;
+    m.visible = true;
+  }
+  function clearDivots() { for (const m of divotMeshes) m.visible = false; divotNext = 0; }
+
+  // Measuring tape: lines from the jack to each measured boule, with cm labels
+  const measure = new THREE.Group();
+  scene.add(measure);
+  function clearMeasure() {
+    for (const o of [...measure.children]) {
+      measure.remove(o);
+      if (o.material && o.material.map) o.material.map.dispose();
+      if (o.material) o.material.dispose();
+      if (o.geometry && o.geometry !== divotGeo) o.geometry.dispose();
+    }
+  }
+  function labelSprite(text, color) {
+    const cv = makeCanvas(160, 64), g = cv.getContext('2d');
+    g.font = '700 38px system-ui, sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = 'rgba(20,40,75,0.82)';
+    g.beginPath(); g.roundRect(6, 8, 148, 48, 12); g.fill();
+    g.fillStyle = color;
+    g.fillText(text, 80, 33);
+    const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthTest: false, transparent: true, fog: false }));
+    spr.renderOrder = 5;
+    spr.scale.set(0.34, 0.136, 1);
+    return spr;
+  }
+  // items: [{ x, y, label, scored }]; jack: { x, y }
+  function showMeasure(jack, items) {
+    clearMeasure();
+    const jz = terrain.sample(jack.x, jack.y).h + 0.012;
+    for (const it of items) {
+      const color = it.scored ? '#ffd24a' : '#c9d2e6';
+      const iz = terrain.sample(it.x, it.y).h + 0.012;
+      const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(jack.x, jack.y, jz), new THREE.Vector3(it.x, it.y, iz)]);
+      const line = new THREE.Line(geo, new THREE.LineDashedMaterial({ color, dashSize: 0.04, gapSize: it.scored ? 0.0 : 0.03, depthTest: false, transparent: true, opacity: 0.95 }));
+      line.computeLineDistances();
+      line.renderOrder = 4;
+      measure.add(line);
+      const spr = labelSprite(it.label, color);
+      spr.position.set((jack.x + it.x) / 2, (jack.y + it.y) / 2, Math.max(jz, iz) + 0.1);
+      measure.add(spr);
+    }
+  }
+
   // Camera state
   const reduce = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const cur = { pos: new THREE.Vector3(2, -2, 2), tgt: new THREE.Vector3(2, 8, 0) };
@@ -312,8 +387,19 @@ export function createRenderer(canvas, terrain) {
       goal.tgt.set(b.x + heading.x * 2.5, b.y + heading.y * 2.5, Math.max(0, b.z * 0.4));
     } else if (mode === 'head') {
       const t = opts.target || { x: 2, y: 8 };
-      goal.tgt.set(t.x, t.y, groundZ(t));
-      goal.pos.set(t.x, t.y - (opts.dist || 1.0), (opts.height || 1.7));
+      // frame the target plus any listed points (nearby live boules) with a margin
+      let x0 = t.x, x1 = t.x, y0 = t.y, y1 = t.y;
+      for (const p of opts.points || []) {
+        x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+      }
+      const margin = 0.3, el = 0.95; // rad of elevation
+      const hx = Math.max(0.45, (x1 - x0) / 2 + margin), hy = Math.max(0.45, (y1 - y0) / 2 + margin);
+      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+      const vf = camera.fov * Math.PI / 180, hf = 2 * Math.atan(Math.tan(vf / 2) * camera.aspect);
+      const dist = Math.max(opts.dist || 1.4, hx / Math.tan(hf / 2), (hy * Math.sin(el) + 0.1) / Math.tan(vf / 2) + hy * Math.cos(el)) * 1.05;
+      const ly = cy - (opts.lift || 0) * dist; // look nearer so the subject sits higher on screen
+      goal.tgt.set(cx, ly, groundZ({ x: cx, y: cy }));
+      goal.pos.set(cx, ly - Math.cos(el) * dist, goal.tgt.z + Math.sin(el) * dist);
     } else if (mode === 'inspect') {
       const t = opts.target || { x: 2, y: 8 };
       goal.tgt.set(t.x, t.y, groundZ(t) + 0.03);
@@ -329,7 +415,7 @@ export function createRenderer(canvas, terrain) {
       const k = smooth(trans);
       cur.pos.lerpVectors(from.pos, goal.pos, k);
       cur.tgt.lerpVectors(from.tgt, goal.tgt, k);
-    } else if (mode === 'flight') {
+    } else if (mode === 'flight' && !reduce()) {
       const k = 1 - Math.exp(-dt * 8);
       cur.pos.lerp(goal.pos, k);
       cur.tgt.lerp(goal.tgt, k);
@@ -432,5 +518,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { sync, setCamera, render, pick, resize, dispose };
+  return { sync, setCamera, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, clearMeasure };
 }

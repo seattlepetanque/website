@@ -62,6 +62,8 @@ function boot() {
   let instant = false; // autotest: no delays, simulate to rest synchronously
   let token = 0; // bumped on each new game so stale timers are ignored
   let flying = null; // body being tracked
+  let throwEvents = []; // physics events of the current throw (hits, for commentary)
+  let preThrow = new Map(); // id -> { x, y } of boules before the current throw
   let pending = null; // { kind, playerId } while waiting for the human to throw
   let aimYaw = 0;
   const aimCam = { yaw: 0 }; // shared with the renderer so dragging moves the camera without restarting its transition
@@ -181,6 +183,20 @@ function boot() {
   });
   const say2 = hud.say;
 
+  // Head camera framing the jack and live boules within 2 m of it
+  function headView(jack, extra, lift) {
+    const pts = world.bodies
+      .filter((b) => b.kind === 'boule' && !b.dead && Math.hypot(b.x - jack.x, b.y - jack.y) < 2)
+      .map((b) => ({ x: b.x, y: b.y }));
+    renderer.setCamera('head', { target: { x: jack.x, y: jack.y }, points: pts.concat(extra || []), lift });
+  }
+  // Landing marks from physics 'land' events
+  function markLandings(events) {
+    for (const ev of events) {
+      if (ev.type === 'land' && ev.speed > 1.5) renderer.addDivot(ev.x, ev.y, 0.035 + 0.05 * Math.min(1, ev.speed / 8));
+    }
+  }
+
   const jackBody = () => world.bodies.find((b) => b.kind === 'jack');
   const later = (fn, ms) => {
     const t = token;
@@ -191,6 +207,9 @@ function boot() {
     world.bodies.length = 0;
     world.events.length = 0;
     terrain.resetDivots();
+    renderer.clearDivots();
+    renderer.clearMeasure();
+    throwEvents = [];
     flying = null;
     renderer.sync(world);
   }
@@ -201,6 +220,8 @@ function boot() {
       const old = jackBody();
       if (old) world.bodies.splice(world.bodies.indexOf(old), 1);
     }
+    preThrow = new Map(world.bodies.map((b) => [b.id, { x: b.x, y: b.y }]));
+    throwEvents = [];
     const body = createBody(kind, { team: kind === 'jack' ? -1 : team, owner });
     world.add(body);
     launch(body, p);
@@ -210,8 +231,8 @@ function boot() {
     if (instant) {
       let guard = 0;
       while (!world.settled() && guard++ < 240 * 20) world.step();
-      world.events.length = 0;
       onSettled();
+      world.events.length = 0;
     }
     return body;
   }
@@ -355,7 +376,7 @@ function boot() {
     if (avail.length > 1 && avail.some((p) => p.isHuman)) {
       refreshHud({ team, playerId: null, text: 'Your team throws next' });
       say2('Your team to play. Who throws?');
-      renderer.setCamera('head', { target: match.jack });
+      headView(match.jack);
       hud.showChooser(avail, 'Pierre is sizing up the court…');
       const pierre = avail.find((p) => !p.isHuman);
       if (pierre) suggest(pierre);
@@ -387,12 +408,27 @@ function boot() {
     };
   }
 
-  function describe(was) {
+  // Commentary for the throw that just settled; evs = its physics events
+  function describe(was, evs) {
     const j = jackBody();
     if (j && j.dead) return 'The jack is out: dead jack.';
     if (was.kind === 'jack') return `Jack is ${Math.hypot(was.x - C.circle.x, was.y - C.circle.y).toFixed(1)} m out.`;
     if (was.dead) return `${ownerName(was)} boule is out: dead boule.`;
-    return `${ownerName(was)} boule is ${Math.hypot(was.x - j.x, was.y - j.y).toFixed(2)} m from the jack.`;
+    const gap = Math.hypot(was.x - j.x, was.y - j.y) - was.r - j.r;
+    const base = `${ownerName(was)} boule is ${Math.hypot(was.x - j.x, was.y - j.y).toFixed(2)} m from the jack.`;
+    // carreau: the shooter hit an opposing boule, knocked it away and took its place
+    for (const ev of evs) {
+      if (ev.type !== 'hit' || (ev.a !== was.id && ev.b !== was.id)) continue;
+      const tid = ev.a === was.id ? ev.b : ev.a;
+      const t = world.bodies.find((b) => b.id === tid), from = preThrow.get(tid);
+      if (!t || t.kind !== 'boule' || t.team === was.team || !from) continue;
+      const moved = t.dead || Math.hypot(t.x - from.x, t.y - from.y) > 0.15;
+      if (moved && Math.hypot(was.x - from.x, was.y - from.y) < 0.3) {
+        return `Carreau! ${ownerName(was)} boule replaces the target.`;
+      }
+    }
+    if (gap < 0.02) return `Biberon! ${ownerName(was)} boule is touching the jack.`;
+    return base;
   }
   const ownerName = (b) => {
     const p = match && match.players.find((q) => q.id === b.owner);
@@ -404,12 +440,14 @@ function boot() {
     flying = null;
     if (!match) { // debug throws outside a game
       const j = jackBody();
-      if (j && !j.dead) renderer.setCamera('head', { target: { x: j.x, y: j.y } });
+      if (j && !j.dead) headView(j);
       else aimView();
       return;
     }
+    const evs = throwEvents.concat(world.events);
+    if (instant) markLandings(world.events);
     const snap = snapshot();
-    const note = describe(was);
+    const note = describe(was, evs);
     if (was.kind === 'jack') {
       const team = match.jackTeam;
       match = apply(match, { type: 'jackThrown', team, jack: snap.jack });
@@ -419,7 +457,7 @@ function boot() {
         later(() => beginMene(false), 1500);
         return;
       }
-      renderer.setCamera('head', { target: snap.jack });
+      headView(snap.jack);
       say2(note + ' Play begins.');
       later(nextTurn, 1400);
       return;
@@ -429,7 +467,7 @@ function boot() {
       endOfMene(note);
       return;
     }
-    renderer.setCamera('head', { target: snap.jack });
+    headView(snap.jack);
     say2(note);
     refreshHud(null);
     later(nextTurn, 1500);
@@ -438,8 +476,27 @@ function boot() {
   function endOfMene(note) {
     const r = match.result;
     const j = jackBody();
-    if (j && !j.dead) renderer.setCamera('head', { target: { x: j.x, y: j.y } });
-    else aimView();
+    const jackOut = !j || j.dead;
+    if (!jackOut) {
+      // measuring tape to every boule that scored, plus the best losing boule
+      const items = [];
+      if (!r.void && r.measured) {
+        const byId = new Map(world.bodies.map((b) => [b.id, b]));
+        const best = r.measured.find((m) => byId.get(m.id) && byId.get(m.id).team !== r.team);
+        let shown = 0;
+        for (const m of r.measured) {
+          const b = byId.get(m.id);
+          if (!b) continue;
+          const scored = b.team === r.team && (!best || m.dist < best.dist);
+          if (!scored && m !== best) continue;
+          items.push({ x: b.x, y: b.y, scored, label: `${Math.max(0, Math.round((m.dist - b.r - j.r) * 100))} cm` });
+          shown++;
+        }
+        if (shown) renderer.showMeasure(j, items);
+      }
+      headView(j, items, 0.4); // subject high in the view, clear of the result card
+    } else aimView();
+    if (r.void && jackOut) note = 'The jack is out: mène void.';
     refreshHud(null);
     let text, detail = note;
     if (r.void) text = 'Void mène: no points';
@@ -457,7 +514,7 @@ function boot() {
       return;
     }
     hud.showMeneEnd({ text, detail: `${detail} Score: ${match.scores[0]} to ${match.scores[1]}.` });
-    if (instant) later(() => nextMene(), 0);
+    if (instant && !params.has('meneend')) later(() => nextMene(), 0);
   }
 
   function nextMene() {
@@ -480,6 +537,8 @@ function boot() {
     }
     if (n === MAX_STEPS) acc = 0; // drop backlog rather than spiral
     if (world.events.length) {
+      markLandings(world.events);
+      if (flying) throwEvents.push(...world.events.filter((e) => e.type === 'hit'));
       audio.handleEvents(world.events, new Map(world.bodies.map((b) => [b.id, b])));
       world.events.length = 0;
     }
@@ -511,9 +570,31 @@ function boot() {
   }
 }
 
+// Friendly message in the game area when the game cannot start (no WebGL, etc.)
+function showFallback(err) {
+  const msg = err && err.message ? err.message : String(err);
+  say('Sorry, the game could not start: ' + msg);
+  if (!root) return;
+  for (const el of root.querySelectorAll('canvas, .petanque-hud, .petanque-controls, .swing-gauge')) el.hidden = true;
+  const box = document.createElement('div');
+  box.className = 'petanque-fallback';
+  const h = document.createElement('p');
+  h.className = 'petanque-fallback-title';
+  h.textContent = 'The pétanque court is closed for now';
+  const p = document.createElement('p');
+  p.textContent = 'This game needs WebGL 3D graphics, and your browser or device could not start them. ' +
+    'Try another browser or turn on hardware acceleration. In the meantime, ';
+  const a = document.createElement('a');
+  a.href = root.dataset.linksUrl || '/links/';
+  a.textContent = 'read up on pétanque and find a real court on our Links page';
+  p.append(a, '.');
+  box.append(h, p);
+  root.insertBefore(box, root.firstChild);
+}
+
 try {
   boot();
 } catch (err) {
-  say('Sorry, the game could not start: ' + (err && err.message ? err.message : err));
+  showFallback(err);
   console.error(err);
 }
