@@ -11,17 +11,17 @@ title: Links
 
 ## PNW Regional and National Pétanque Sites
 
-[FPUSA - Federation of PÃ©tanque USA](https://www.usapetanque.org/index.html/)
+[FPUSA - Federation of Pétanque USA](https://www.usapetanque.org/index.html/)
 
-[Edmonds PÃ©tanque Club](https://www.edmondspetanqueclub.org/)
+[Edmonds Pétanque Club](https://www.edmondspetanqueclub.org/)
 
-[Port Townsend PÃ©tanque Alliance](https://www.porttownsendpetanque.com/)
+[Port Townsend Pétanque Alliance](https://www.porttownsendpetanque.com/)
 
-[Eugene PÃ©tanque International Club](https://eugenepetanque.weebly.com/)
+[Eugene Pétanque International Club](https://eugenepetanque.weebly.com/)
 
-[Portland PÃ©tanque Club](http://www.pdxpetanque.org/)
+[Portland Pétanque Club](http://www.pdxpetanque.org/)
 
-[Walla Walla PÃ©tanque Club](https://www.wallawallapetanqueclub.com/)
+[Walla Walla Pétanque Club](https://www.wallawallapetanqueclub.com/)
 
 ## Rules
 
@@ -35,8 +35,8 @@ title: Links
 
 ## Where To Buy Pétanque Boules
 
-[PÃ©tanque America](https://petanque-america.com/)
+[Pétanque America](https://petanque-america.com/)
 
 [Obut (France)](https://www.obut.com/en)
 
-[PÃ©tanque Shop (France)](https://en.petanqueshop.com/)
+[Pétanque Shop (France)](https://en.petanqueshop.com/)
