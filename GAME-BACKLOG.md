@@ -42,7 +42,7 @@ Status values: `todo`, `in-progress`, `done`, `blocked` (with a note).
 | B09 | in-progress | sonnet | B05, B07 | HUD and full game flow (placeholder AI) |
 | B10 | in-progress | sonnet | B04, B05 | Monte Carlo AI |
 | B11 | todo | sonnet | B08, B09, B10 | AI integration, personalities, team choice |
-| B12 | in-progress | haiku | B07 | Synthesized audio |
+| B12 | done | haiku | B07 | Synthesized audio |
 | B13 | todo | sonnet | B11 | Polish: divots, measuring, commentary, fallbacks |
 | B14 | todo | haiku | B11 | README and docs |
 | B15 | todo | sonnet | B12, B13, B14 | Final review, tuning, bug fixes |
