@@ -486,24 +486,25 @@ export function createRenderer(canvas, terrain) {
   const DOTS = 90;
   const dots = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 6),
     new THREE.MeshBasicMaterial({ color: '#fff7dc', fog: false, transparent: true, opacity: 0.95 }), DOTS);
-  dots.frustumCulled = false; dots.count = 0; dots.renderOrder = 9; dots.visible = false;
+  dots.frustumCulled = false; dots.count = 0; dots.renderOrder = 14; // above the arc ribbons so a steep arc does not hide the guide dots.visible = false;
   scene.add(dots);
   const dotM = new THREE.Matrix4(), dotP = new THREE.Vector3(), dotS = new THREE.Vector3(), dotQ = new THREE.Quaternion();
   function setRoll(pts) {
     let n = 0;
     if (pts && pts.length > 1) {
-      let carry = 0.0; const gap = 0.14;
+      let carry = 0.0; const gap = 0.32;
       for (let i = 1; i < pts.length && n < DOTS; i++) {
         const a = pts[i - 1], b = pts[i], seg = Math.hypot(b.x - a.x, b.y - a.y);
         if (seg < 1e-6) continue;
-        for (let d = carry; d <= seg && n < DOTS; d += gap) {
-          const t = d / seg, x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+        // carry = distance along this segment to the next dot
+        for (; carry <= seg && n < DOTS; carry += gap) {
+          const t = carry / seg, x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
           dotP.set(x, y, terrain.sample(x, y).h + 0.012);
-          dotS.set(0.032, 0.032, 0.01);
+          dotS.set(0.1, 0.1, 0.015);
           dotM.compose(dotP, dotQ, dotS);
           dots.setMatrixAt(n++, dotM);
-          carry = d + gap - seg;
         }
+        carry -= seg;
       }
     }
     dots.count = n;
@@ -623,11 +624,11 @@ export function createRenderer(canvas, terrain) {
       goal.tgt.set(cx, ly, groundZ({ x: cx, y: cy }));
       goal.pos.set(cx, ly - Math.cos(el) * dist, goal.tgt.z + Math.sin(el) * dist);
     } else if (mode === 'shoulder') {
-      // behind and to the right of the player, ~1.7 m up at zoom 1, looking ~7 m ahead and a little down
+      // behind and to the right of the player, ~2.1 m up at zoom 1, looking ~7 m ahead and a little down
       const p = opts.player || C.circle, yaw = opts.yaw || 0;
       const fx = Math.sin(yaw), fy = Math.cos(yaw), rx = Math.cos(yaw), ry = -Math.sin(yaw);
       const gz = groundZ(p);
-      goal.pos.set(p.x - fx * 2.2 * zoom + rx * 1.1 * zoom, p.y - fy * 2.2 * zoom + ry * 1.1 * zoom, gz + 1.2 + 0.6 * zoom);
+      goal.pos.set(p.x - fx * 2.2 * zoom + rx * 1.1 * zoom, p.y - fy * 2.2 * zoom + ry * 1.1 * zoom, gz + 1.5 + 0.6 * zoom);
       goal.tgt.set(p.x + fx * 7 - rx * 0.5, p.y + fy * 7 - ry * 0.5, gz - 0.7);
     } else if (mode === 'inspect') {
       const t = opts.target || { x: 2, y: 8 };

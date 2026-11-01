@@ -159,9 +159,9 @@ Design: GAME-PLAN.md §9–11. Round 1 contracts above still apply (units, axes,
 | C01 | done | sonnet | — | Throw model: solver, backspin, cone (`donnee.js`) |
 | C02 | done | sonnet | — | Over-the-shoulder camera, placeholder players, preview drawing |
 | C03 | done | sonnet | C01, C02 | Toss input: aim, donnée, pull for loft |
-| C04 | in-progress | sonnet | C03, C05 | Integrate the donnée throw into the game |
+| C04 | done | sonnet | C03, C05 | Integrate the donnée throw into the game |
 | C05 | done | sonnet | C01 | AI on the donnée model |
-| C06 | todo | haiku | C04 | Remove the old swing code; update README |
+| C06 | in-progress | haiku | C04 | Remove the old swing code; update README |
 | C07 | todo | sonnet | C04, C05, C06 | Review and tune throw feel |
 | C08 | done | sonnet | C02 | Stick-figure skeleton and procedural animation |
 | C09 | todo | sonnet | C07, C08 | Characters in the game: positions, throw sync, reactions |
@@ -218,6 +218,7 @@ Give Marcel, Odette, Pierre and You distinct looks (model choice, colours, hats/
 - From C01: plombée stops within 0.4 m up to ~7 m; at 8–10 m it ends 0.5–0.9 m past (backspin depends only on loft). Acceptable; revisit in C07 if it feels off.
 - From C10: the vendored models are Kenney "Mini Characters" (CC0, ~250 KB each): stylised chibi figures ~0.7 units tall (scale ≈ 2.4 for 1.7 m), T-pose, a 7-bone rig (root, leg-left, leg-right, torso, arm-left, arm-right, head) with no elbows or knees, 32 short clips (idle, walk, crouch, pick-up, emote-yes/no, holding-right…), no throw or celebrate clip, no hats. Throws must be procedural on arm-right/torso; hats as meshes on the head bone. A richer human rig (Quaternius Universal Base Characters / Modular Women, CC0) needs a manual download (122 MB zip / Drive quota). The user chose the Kenney chibis (2026-10-31). C11: drive the 7 bones from character.js's skeleton (shoulder → arm-right/arm-left, hips → legs, spine lean → torso, pelvis height → root), use Kenney clips (walk, idle, crouch) where they fit, and keep the stick figure selectable (e.g. `?figures=stick`) and as the load-failure fallback.
 - From C05: AI now picks plombée for ~85–90% of points (roulette rarely wins); tireur shoot bonus raised to 0.4; on flat terrain many shots run past the target to the end of the lane. Pointing accuracy improved a lot (medium mean 0.47 m, hard 0.40 m) because the skill cones are tighter than the old noise — C07 should check whether the AI is now too strong against a human using the same cones.
+- From C04 screenshots: the cone is hard to see — at 8 m the ±1σ edge arcs (~±10 cm) merge with the centre arc and the 1σ ellipse is a small ring. C07: make the cone read as a cone (e.g. a translucent filled surface between the edge arcs, widening toward the landing; make the ellipses filled and more visible; consider drawing 2σ as the outer edge). Also the roll guide sits behind the descending arc along the camera's line of sight; dashes or a ribbon would read better. Waiting players' shadows show at the left edge of the shoulder view.
 
 ## Later (not scheduled)
 

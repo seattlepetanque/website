@@ -1,4 +1,4 @@
-// Game loop: terrain, world, renderer, rules, AI, swing input, audio and HUD wired together.
+// Game loop: terrain, world, renderer, rules, AI, toss input (donnée throw), audio and HUD wired together.
 import { C } from './constants.js';
 import { mulberry32 } from './rng.js';
 import { createTerrain } from './terrain.js';
@@ -8,8 +8,11 @@ import {
   createMatch, defaultPlayers, apply, nextTeam, playersWithBoules,
 } from './rules.js';
 import { createHud } from './hud.js';
-import { chooseThrowAsync, chooseJackThrow, assistJackThrow, idealJackSpeed } from './ai.js';
-import { createSwingInput, createSwingGauge } from './input.js';
+import { chooseThrowAsync, chooseJackThrow } from './ai.js';
+import { createTossInput } from './toss.js';
+import {
+  SKILL, scaledSkill, coneFor, coneEnvelope, executeThrow, solveLaunch, predictRoll, styleForLoft,
+} from './donnee.js';
 import { createAudio } from './audio.js';
 import * as THREE from '../vendor/three.module.js';
 import { createCharacter } from './character.js';
@@ -22,9 +25,14 @@ const params = new URLSearchParams(location.search);
 const debug = params.has('debug');
 const AI_MIN_THINK = 800; // ms: the AI never answers faster than this
 const HINT_KEY = 'petanque-hint-seen';
-const PRECISE_KEY = 'petanque-precise';
-const HINT_TEXT = 'Drag sideways to aim. Swipe down then up in the lower part of the court to throw. ' +
-  'Let go higher for a lob, stop sharply before letting go for backspin.';
+const ROLL_KEY = 'petanque-roll-guide';
+const HINT_TEXT = 'Drag sideways to turn. Press on the court where you want the boule to land, pull down to throw ' +
+  'higher, release to throw; drag back up to cancel. Press near a boule to shoot it.';
+const VIEWS = ['shoulder', 'head', 'inspect'];
+const VIEW_LABELS = { shoulder: 'Shoulder', head: 'Head', inspect: 'Inspect' };
+const ROLL_DEFAULT = { easy: true, medium: false, hard: false };
+// Where waiting players stand: behind the circle and beside the court, out of the shoulder camera's view
+const WAIT_SPOTS = [{ x: -0.8, y: -0.7 }, { x: -1.4, y: 0.5 }, { x: 5.2, y: 0.1 }];
 
 function store(key, value) { // localStorage that never throws
   try {
@@ -68,113 +76,211 @@ function boot() {
   let preThrow = new Map(); // id -> { x, y } of boules before the current throw
   let pending = null; // { kind, playerId } while waiting for the human to throw
   let aimYaw = 0;
-  const aimCam = { yaw: 0 }; // shared with the renderer so dragging moves the camera without restarting its transition
-  const aimView = () => renderer.setCamera('aim', aimCam);
+  let throwerYaw = 0; // yaw of whoever stands in the circle
+  const throwRand = mulberry32(seed ^ 0x2545f491);
+  // shared with the renderer so turning moves the camera without restarting its transition
+  const shoulderCam = { player: { x: C.circle.x, y: C.circle.y }, yaw: 0 };
+  const shoulderView = () => renderer.setCamera('shoulder', shoulderCam);
+  const aimView = shoulderView;
   const audio = createAudio();
   let thinkToken = 0; // bumped to drop stale partner-suggestion results
   let pierreChoice = null; // cached AI choice for Pierre while the chooser is open
   const pickHuman = params.get('humanturn'); // debug: stop at the human's first boule (or 'chooser')
 
-  // Controls
+  // Controls: [Re-aim] [Roll guide] [View] [mute] [New game] bar; raw sliders only with ?debug
   const inputs = {};
   const outputs = {};
   controls.textContent = '';
-  const grid = document.createElement('div');
-  grid.className = 'pc-grid';
-  for (const [key, label, min, max, step, def, unit] of SLIDERS) {
-    const row = document.createElement('div');
-    row.className = 'pc-row';
-    const lab = document.createElement('label');
-    lab.htmlFor = 'pc-' + key;
-    lab.textContent = label;
-    const input = document.createElement('input');
-    input.type = 'range';
-    input.id = 'pc-' + key;
-    Object.assign(input, { min, max, step, value: def });
-    const out = document.createElement('output');
-    out.htmlFor = input.id;
-    const show = () => { out.textContent = input.value + unit; };
-    input.addEventListener('input', () => {
-      show();
-      if (key === 'yaw') setAim(+input.value * DEG, true);
-    });
-    show();
-    row.append(lab, input, out);
-    grid.append(row);
-    inputs[key] = input;
-    outputs[key] = show;
-  }
-  // Layout: [Precise controls] [mute] [New game] bar, then the optional slider panel
-  const bar = document.createElement('div');
-  bar.className = 'pc-bar';
   const mkBtn = (parent, text, cls) => {
     const b = document.createElement('button');
     b.type = 'button'; b.textContent = text; b.className = cls;
     parent.append(b);
     return b;
   };
-  const toggleBtn = mkBtn(bar, 'Precise controls', 'pc-toggle');
-  toggleBtn.setAttribute('aria-controls', 'pc-panel');
+  const bar = document.createElement('div');
+  bar.className = 'pc-bar';
+  const reaimBtn = mkBtn(bar, 'Re-aim', 'pc-reaim');
+  const rollBtn = mkBtn(bar, 'Roll guide', 'pc-roll');
+  const viewBtn = mkBtn(bar, 'View: Shoulder', 'pc-view');
   bar.append(audio.createMuteButton());
   const newBtn = mkBtn(bar, 'New game', 'pc-reset');
-  const panel = document.createElement('div');
-  panel.className = 'pc-panel';
-  panel.id = 'pc-panel';
-  const buttons = document.createElement('div');
-  buttons.className = 'pc-buttons';
-  const throwBtn = mkBtn(buttons, 'Throw jack', 'pc-throw');
-  panel.append(grid, buttons);
-  controls.append(bar, panel);
-
-  function setPrecise(on, remember) {
-    panel.hidden = !on;
-    toggleBtn.setAttribute('aria-expanded', String(on));
-    toggleBtn.classList.toggle('is-on', on);
-    if (remember) store(PRECISE_KEY, on ? '1' : '0');
+  controls.append(bar);
+  let throwBtn = null;
+  if (debug) {
+    const grid = document.createElement('div');
+    grid.className = 'pc-grid';
+    for (const [key, label, min, max, step, def, unit] of SLIDERS) {
+      const row = document.createElement('div');
+      row.className = 'pc-row';
+      const lab = document.createElement('label');
+      lab.htmlFor = 'pc-' + key;
+      lab.textContent = label;
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.id = 'pc-' + key;
+      Object.assign(input, { min, max, step, value: def });
+      const out = document.createElement('output');
+      out.htmlFor = input.id;
+      const show = () => { out.textContent = input.value + unit; };
+      input.addEventListener('input', () => {
+        show();
+        if (key === 'yaw') setAim(+input.value * DEG, true);
+      });
+      show();
+      row.append(lab, input, out);
+      grid.append(row);
+      inputs[key] = input;
+      outputs[key] = show;
+    }
+    const panel = document.createElement('div');
+    panel.className = 'pc-panel';
+    const buttons = document.createElement('div');
+    buttons.className = 'pc-buttons';
+    throwBtn = mkBtn(buttons, 'Throw (raw)', 'pc-throw');
+    panel.append(grid, buttons);
+    controls.append(panel);
   }
-  setPrecise(store(PRECISE_KEY) === '1', false);
-  toggleBtn.addEventListener('click', () => setPrecise(panel.hidden, true));
 
-  // Aim from swing drag or slider; the yaw slider mirrors it
+  // Aim: toss turns the shared camera options; the debug yaw slider mirrors it
   function setAim(yaw, fromSlider) {
     aimYaw = Math.max(-AIM_MAX, Math.min(AIM_MAX, yaw));
-    aimCam.yaw = aimYaw;
-    if (!fromSlider) {
+    shoulderCam.yaw = aimYaw;
+    throwerYaw = aimYaw;
+    if (!fromSlider && inputs.yaw) {
       inputs.yaw.value = (Math.round(aimYaw / DEG * 2) / 2).toString();
       outputs.yaw();
     }
+    if (pending) placePlayers(pending.playerId, aimYaw);
   }
 
-  // Swing input and gauge sit over the canvas
-  const gauge = createSwingGauge(root);
-  const swing = createSwingInput(canvas, {
-    getAimYaw: () => aimYaw,
-    onAim: (dyaw) => setAim(aimYaw + dyaw, false),
-    onSwingStart: () => audio.unlock(),
-    onSwingUpdate: (state) => { if (pending) gauge.update(state); },
-    onThrow: (tp) => {
-      gauge.hide();
-      if (!pending || flying) return;
-      gauge.showGhost(tp);
-      humanThrow(pending.kind === 'jack' ? assistJackThrow(tp) : tp);
-    },
-    onCancel: () => gauge.hide(),
-  });
+  // Release point of a player's boule; C09 will return the character's hand here
+  function releasePoint(player) { // eslint-disable-line no-unused-vars
+    return { x: 2, y: 1, z: 0.9 };
+  }
 
-  const readParams = () => ({
+  const readParams = () => inputs.yaw ? ({
     yaw: +inputs.yaw.value * DEG,
     speed: +inputs.speed.value,
     loft: +inputs.loft.value * DEG,
     backspin: +inputs.backspin.value,
     sidespin: +inputs.sidespin.value,
+  }) : { yaw: aimYaw, speed: 7, loft: 0.9, backspin: 30, sidespin: 0 };
+
+  // ---- Throw preview and toss input ----
+  let rollGuide = false;
+  let rollOverride = store(ROLL_KEY); // '1' | '0' | null
+  let lastToss = null; // last onPreview payload, to redraw when the roll guide toggles
+  const roll = { key: '', path: null, t: 0, timer: 0 };
+  const demo = debug && params.has('demo');
+
+  function applyRollDefault() {
+    rollGuide = rollOverride === '1' ? true : rollOverride === '0' ? false : !!ROLL_DEFAULT[difficulty];
+    rollBtn.classList.toggle('is-on', rollGuide);
+    rollBtn.setAttribute('aria-pressed', String(rollGuide));
+  }
+
+  // Draw the preview for a toss state { donnee, loft, snappedTo }
+  function showToss(t, kind) {
+    const from = releasePoint(null);
+    const cone = coneFor({ skill: SKILL.human, from, landing: t.donnee, loft: t.loft });
+    const env = coneEnvelope({ from, landing: t.donnee, loft: t.loft, cone, terrain: world.terrain });
+    let path = null;
+    if (rollGuide) {
+      const key = `${t.donnee.x.toFixed(3)},${t.donnee.y.toFixed(3)},${t.loft.toFixed(4)},${kind}`;
+      const now = performance.now();
+      if (key === roll.key) path = roll.path;
+      else if (now - roll.t >= 100) {
+        const throwParams = solveLaunch({ from, landing: t.donnee, loft: t.loft, terrain: world.terrain });
+        const full = predictRoll({ world, terrain, throwParams, from, kind: kind === 'jack' ? 'jack' : 'boule' });
+        // the guide starts where the boule first touches down, not in the air
+        const hit = full.findIndex((q) => q.z <= terrain.sample(q.x, q.y).h + 0.1);
+        path = hit < 0 ? [] : full.slice(hit);
+        roll.key = key; roll.path = path; roll.t = now;
+        clearTimeout(roll.timer); roll.timer = 0;
+      } else { // throttled: keep the last guide and refresh shortly
+        path = roll.path;
+        clearTimeout(roll.timer);
+        roll.timer = setTimeout(() => { roll.timer = 0; if (lastToss === t) showToss(t, kind); }, 110);
+      }
+    }
+    renderer.setThrowPreview({
+      ...env, roll: path, donnee: t.donnee, style: styleForLoft(t.loft, !!t.snappedTo),
+      snapped: !!t.snappedTo, legalZone: kind === 'jack',
+    });
+  }
+  function clearToss() {
+    lastToss = null;
+    clearTimeout(roll.timer); roll.timer = 0;
+    renderer.setThrowPreview(null);
+    renderer.showJackZone(!!pending && pending.kind === 'jack' && !flying);
+  }
+
+  const toss = createTossInput(canvas, {
+    pick: (x, y) => renderer.pick(x, y),
+    getYaw: () => aimYaw,
+    getOrigin: () => releasePoint(null),
+    onTurn: (dyaw) => setAim(aimYaw + dyaw, false),
+    onPreview: (t) => {
+      if (!pending || flying) return;
+      audio.unlock();
+      if (t.cancel) { lastToss = null; clearToss(); return; }
+      lastToss = t;
+      showToss(t, pending.kind);
+    },
+    onThrow: (t) => {
+      if (!pending || flying) { toss.setPhase('off'); return; }
+      const { kind, playerId } = pending;
+      const from = releasePoint(null);
+      const cone = coneFor({ skill: SKILL.human, from, landing: t.donnee, loft: t.loft });
+      const res = executeThrow({ from, landing: t.donnee, loft: t.loft, cone, terrain: world.terrain, rand: throwRand });
+      clearToss();
+      humanThrow(res.throwParams, from);
+      void kind; void playerId;
+    },
+    onCancel: () => clearToss(),
+    targets: () => world.bodies.filter((b) => !b.dead).map((b) => ({ id: b.id, x: b.x, y: b.y, r: b.r })),
   });
 
   function enableControls(on) {
     for (const k in inputs) inputs[k].disabled = !on;
-    throwBtn.disabled = !on;
-    if (on) swing.enable(); else { swing.disable(); gauge.hide(); }
+    if (throwBtn) throwBtn.disabled = !on;
+    toss.setPhase(on ? 'aim' : 'off');
+    reaimBtn.hidden = !on;
+    rollBtn.hidden = !on;
+    viewBtn.hidden = !on;
+    if (!on) clearToss();
   }
   enableControls(false);
+
+  // View cycling: shoulder, head, inspect
+  let view = 'shoulder';
+  function setView(v) {
+    view = v;
+    viewBtn.textContent = 'View: ' + VIEW_LABELS[v];
+    const j = jackBody();
+    const target = j && !j.dead ? { x: j.x, y: j.y } : { x: 2, y: 8 };
+    if (v === 'shoulder') shoulderView();
+    else if (v === 'head') headView(j && !j.dead ? j : { x: 2, y: 8 });
+    else renderer.setCamera('inspect', { target, dist: 3, az: 0, el: 0.6 });
+    if (pending && !flying) toss.setPhase(v === 'inspect' ? 'off' : 'aim');
+  }
+  viewBtn.addEventListener('click', () => setView(VIEWS[(VIEWS.indexOf(view) + 1) % VIEWS.length]));
+  reaimBtn.addEventListener('click', () => {
+    if (!pending || flying) return;
+    clearToss();
+    if (view !== 'shoulder') setView('shoulder');
+    toss.setPhase('aim');
+  });
+  rollBtn.addEventListener('click', () => {
+    rollGuide = !rollGuide;
+    rollOverride = rollGuide ? '1' : '0';
+    store(ROLL_KEY, rollOverride);
+    rollBtn.classList.toggle('is-on', rollGuide);
+    rollBtn.setAttribute('aria-pressed', String(rollGuide));
+    roll.key = '';
+    if (lastToss && pending) showToss(lastToss, pending.kind);
+  });
+  rollBtn.setAttribute('aria-pressed', 'false');
 
   const hud = createHud(root, document.querySelector('.petanque-hud'), {
     onStart: (opts) => { audio.unlock(); startGame(opts); },
@@ -184,6 +290,17 @@ function boot() {
     onHintDismiss: () => store(HINT_KEY, '1'),
   });
   const say2 = hud.say;
+
+  // Placeholder players: the thrower in the circle, everyone else out of the shoulder camera's view
+  function placePlayers(throwerId, yaw) {
+    const list = match ? match.players : defaultPlayers();
+    let w = 0;
+    renderer.setPlayers(list.map((p) => {
+      if (p.id === throwerId) return { id: p.id, x: C.circle.x, y: C.circle.y, yaw, team: p.team };
+      const spot = WAIT_SPOTS[w++ % WAIT_SPOTS.length];
+      return { id: p.id, x: spot.x, y: spot.y, yaw: 0, team: p.team };
+    }));
+  }
 
   // Head camera framing the jack and live boules within 2 m of it
   function headView(jack, extra, lift) {
@@ -218,7 +335,7 @@ function boot() {
   }
 
   // Launch a body; the frame loop reports when the world settles
-  function launchBody(kind, team, owner, p) {
+  function launchBody(kind, team, owner, p, from) {
     if (kind === 'jack') {
       const old = jackBody();
       if (old) world.bodies.splice(world.bodies.indexOf(old), 1);
@@ -228,8 +345,9 @@ function boot() {
     renderer.showJackZone(false);
     const body = createBody(kind, { team: kind === 'jack' ? -1 : team, owner });
     world.add(body);
-    launch(body, p);
+    launch(body, p, from || C.throwFrom);
     flying = body;
+    clearToss();
     renderer.setCamera('flight', { body });
     enableControls(false);
     if (instant) {
@@ -248,6 +366,7 @@ function boot() {
     enableControls(false);
     clearWorld();
     setAim(0, false);
+    placePlayers('you', 0);
     aimView();
     hud.hideChooser();
     hud.hideHint();
@@ -257,6 +376,7 @@ function boot() {
   function startGame(opts) {
     token++; thinkToken++; pierreChoice = null;
     difficulty = opts.difficulty || 'medium';
+    applyRollDefault();
     instant = !!opts.instant;
     const players = defaultPlayers();
     if (opts.allAI) for (const p of players) p.isHuman = false;
@@ -276,7 +396,7 @@ function boot() {
     refreshHud({ team, playerId: thrower.id, text: `${thrower.isHuman ? 'You' : thrower.name} throw${thrower.isHuman ? '' : 's'} the jack` });
     aimView();
     if (thrower.isHuman) {
-      humanTurn('jack', thrower.id, lead + 'Your jack. Aim, then swing to throw it between the two yellow lines (6 to 10 metres out). A medium swing works best.');
+      humanTurn('jack', thrower.id, lead + 'Your jack. Aim, then toss it onto the court between the two yellow lines (6 to 10 metres out).');
     } else {
       aiJack(thrower, lead);
     }
@@ -284,49 +404,45 @@ function boot() {
 
   function refreshHud(turn) { hud.update(match, turn); }
 
-  let slidersFor = 'boule';
   function humanTurn(kind, playerId, text) {
     pending = { kind, playerId };
     renderer.showJackZone(kind === 'jack');
-    if (kind !== slidersFor) { // slider defaults that suit the jack (light, short) or a boule
-      const d = kind === 'jack'
-        ? { speed: idealJackSpeed(35 * DEG, 10).toFixed(1), loft: 35, backspin: 10, sidespin: 0 }
-        : { speed: 7, loft: 50, backspin: 30, sidespin: 0 };
-      for (const k in d) { inputs[k].value = d[k]; outputs[k](); }
-      slidersFor = kind;
-    }
-    throwBtn.textContent = kind === 'jack' ? 'Throw jack' : 'Throw boule';
+    placePlayers(playerId, aimYaw);
     enableControls(true);
-    aimView();
+    setView('shoulder');
     say2(text);
     if (pickHuman !== null || store(HINT_KEY) !== '1') hud.showHint(HINT_TEXT);
-    if (pickHuman !== null) gauge.update({ height: 0.35, power: 0.6, ceiling: 0.8, phase: 'forward' });
-    if (!instant && !panel.hidden) setTimeout(() => throwBtn.focus({ preventScroll: true }), 0);
+    if (demo) { // ?debug&humanturn&demo: a scripted toss preview for screenshots
+      rollGuide = true;
+      rollBtn.classList.add('is-on');
+      lastToss = { donnee: { x: 2.9, y: 8 }, loft: 40 * DEG, snappedTo: null };
+      showToss(lastToss, kind);
+    }
   }
 
-  function humanThrow(p) {
+  function humanThrow(p, from) {
     if (!pending || flying) return;
     const { kind, playerId } = pending;
     pending = null;
     audio.unlock();
     store(HINT_KEY, '1');
     hud.hideHint();
-    doThrow(kind, playerId, p);
+    doThrow(kind, playerId, p, undefined, from);
   }
 
-  throwBtn.addEventListener('click', () => humanThrow(readParams()));
+  if (throwBtn) throwBtn.addEventListener('click', () => humanThrow(readParams()));
   newBtn.addEventListener('click', () => {
     if (match) toSetup();
   });
 
-  function doThrow(kind, playerId, p, comment) {
+  function doThrow(kind, playerId, p, comment, from) {
     pierreChoice = null; thinkToken++;
     hud.hideChooser();
     const player = match.players.find((q) => q.id === playerId);
     if (kind === 'boule') match = apply(match, { type: 'bouleThrown', playerId });
     refreshHud({ team: player.team, playerId, text: `${player.isHuman ? 'You are' : player.name + ' is'} throwing…` });
     say2(comment || 'Rolling…');
-    launchBody(kind, player.team, playerId, p);
+    launchBody(kind, player.team, playerId, p, from);
   }
 
   const sleep = (ms) => new Promise((res) => setTimeout(res, instant ? 0 : ms));
@@ -337,20 +453,49 @@ function boot() {
     const t = token;
     await sleep(AI_MIN_THINK + 100);
     if (t !== token) return;
-    const { throwParams, label } = chooseJackThrow({ world, difficulty, rand: aiRand, player });
+    const from = releasePoint(player);
+    placePlayers(player.id, 0);
+    const choice = chooseJackThrow({ world, difficulty, rand: aiRand, player, from });
     pending = null;
-    doThrow('jack', player.id, throwParams, label);
+    await showAiSpot(player, choice, 'jack', from);
+    if (t !== token) return;
+    doThrow('jack', player.id, choice.throwParams, choice.label, from);
+  }
+
+  // Show the AI's donnée and arc for a moment before it throws
+  async function showAiSpot(player, choice, kind, from) {
+    if (instant || !choice.donnee) return;
+    const t = token;
+    const yaw = Math.atan2(choice.donnee.x - from.x, choice.donnee.y - from.y);
+    throwerYaw = yaw;
+    placePlayers(player.id, yaw);
+    shoulderCam.yaw = yaw;
+    shoulderView();
+    const skill = scaledSkill(SKILL[player.id] || SKILL.human, difficulty);
+    const cone = coneFor({ skill, from, landing: choice.donnee, loft: choice.loft });
+    const env = coneEnvelope({ from, landing: choice.donnee, loft: choice.loft, cone, terrain: world.terrain });
+    const snapped = choice.style === 'tir';
+    renderer.setThrowPreview({
+      ...env, roll: null, donnee: choice.donnee, style: choice.style || styleForLoft(choice.loft, snapped),
+      snapped, legalZone: kind === 'jack',
+    });
+    say2(`${player.name} picks ${player.id === 'odette' ? 'her' : 'his'} spot…`);
+    await sleep(debug && params.has('aispot') ? 1e8 : 1100); // ?debug&aispot holds the view for screenshots
+    if (t === token) { renderer.setThrowPreview(null); renderer.showJackZone(false); }
+    shoulderCam.yaw = aimYaw;
   }
 
   async function aiBoule(player) {
     say2(`${player.name} is aiming…`);
     const t = token;
+    const from = releasePoint(player);
+    placePlayers(player.id, 0);
     const cached = pierreChoice && pierreChoice.id === player.id ? pierreChoice.choice : null;
     pierreChoice = null;
     let choice;
     try {
       [choice] = await Promise.all([
-        cached || chooseThrowAsync({ world, match, player, difficulty, rand: aiRand }),
+        cached || chooseThrowAsync({ world, match, player, difficulty, rand: aiRand, from }),
         sleep(AI_MIN_THINK),
       ]);
     } catch (err) {
@@ -363,9 +508,10 @@ function boot() {
     }
     if (t !== token) return;
     say2(choice.label);
-    await sleep(700);
+    if (!instant) await showAiSpot(player, choice, 'boule', from);
+    else await sleep(700);
     if (t !== token) return;
-    doThrow('boule', player.id, choice.throwParams, choice.label);
+    doThrow('boule', player.id, choice.throwParams, choice.label, from);
   }
 
   // Pierre looks at the court and tells you what he would do
@@ -416,7 +562,7 @@ function boot() {
     const player = match.players.find((p) => p.id === playerId);
     refreshHud({ team: player.team, playerId, text: `${player.isHuman ? 'Your throw' : player.name + ' to throw'}` });
     if (player.isHuman) {
-      humanTurn('boule', playerId, 'Your turn. Aim with a sideways drag, then swing to throw.');
+      humanTurn('boule', playerId, 'Your turn. Turn with a sideways drag, then press where you want the boule to land.');
     } else {
       aiBoule(player);
     }
@@ -598,6 +744,9 @@ function boot() {
   if (debug && params.has('autotest')) {
     // AI-only quick match, every throw simulated to rest instantly
     startGame({ target: 7, difficulty: 'medium', allAI: true, instant: true });
+  } else if (debug && params.has('aispot')) {
+    // Real-time game where Marcel throws the jack first: screenshot while he shows his spot
+    startGame({ target: 7, difficulty: 'medium', firstJackTeam: 1 });
   } else if (debug && pickHuman !== null) {
     // Stop at the human's first boule (or at the chooser with ?humanturn=chooser)
     startGame({ target: 7, difficulty: 'medium', instant: true, firstJackTeam: pickHuman === 'jack' ? 0 : 1 });
@@ -650,12 +799,7 @@ function boot() {
     put('boule', 0, 1.9, 8.3);
     put('boule', 1, 2.3, 8.6);
     renderer.sync(world);
-    renderer.setPlayers([
-      { id: 'p-you', x: 2, y: 1, yaw: 0, team: 0 },
-      { id: 'p-partner', x: 2.6, y: 0.2, yaw: 0, team: 0 },
-      { id: 'p-opp1', x: 3.4, y: 1.2, yaw: -0.5, team: 1 },
-      { id: 'p-opp2', x: 3.6, y: 0.6, yaw: -0.5, team: 1 },
-    ]);
+    placePlayers('you', 0);
     renderer.setCamera('shoulder', { player: { x: 2, y: 1 }, yaw: 0, zoom: 1 });
     const arc = (x1, y1, peak, n = 40) => {
       const pts = [];
@@ -687,7 +831,7 @@ function showFallback(err) {
   const msg = err && err.message ? err.message : String(err);
   say('Sorry, the game could not start: ' + msg);
   if (!root) return;
-  for (const el of root.querySelectorAll('canvas, .petanque-hud, .petanque-controls, .swing-gauge')) el.hidden = true;
+  for (const el of root.querySelectorAll('canvas, .petanque-hud, .petanque-controls')) el.hidden = true;
   const box = document.createElement('div');
   box.className = 'petanque-fallback';
   const h = document.createElement('p');

@@ -34,12 +34,13 @@
   .petanque canvas { aspect-ratio: 3 / 4; }
 }
 
-/* Controls bar and optional precise-mode panel */
+/* Controls bar and the ?debug slider panel */
 .pc-bar { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
 .pc-bar button, .pc-reset {
   min-height: 2.75rem; padding: .4rem 1.1rem; font: inherit; font-weight: 700; cursor: pointer;
   color: var(--red, #8a1c2b); background: transparent; border: 2px solid var(--red, #8a1c2b); border-radius: 4px;
 }
+.pc-bar button[hidden] { display: none; }
 .pc-bar button.is-on { color: var(--paper, #fffaf0); background: var(--red, #8a1c2b); }
 .pc-bar button:focus-visible { outline: 3px solid var(--navy, #14284b); outline-offset: 2px; }
 .pc-panel { display: grid; gap: .75rem; }
@@ -64,41 +65,6 @@
   .pc-row { grid-template-columns: 4.8rem 1fr 4.6rem; gap: .4rem; }
   .pc-buttons button { flex: 1; }
 }
-
-/* swing gauge */
-.swing-gauge {
-  position: absolute; top: .75rem; left: .75rem; right: .75rem; aspect-ratio: 16 / 10; /* matches the canvas */
-  pointer-events: none; opacity: 0; transition: opacity .25s; z-index: 1;
-  color: var(--paper, #fffaf0);
-}
-.swing-gauge.is-active { opacity: .78; }
-.swing-gauge.is-ghost { opacity: .4; transition-duration: 1.2s; }
-.sg-svg { position: absolute; right: 9%; bottom: 2%; height: 36%; width: auto; max-width: 30%; overflow: visible; }
-.sg-arc { fill: none; stroke-width: 3; stroke-linecap: butt; }
-.sg-roulette { stroke: var(--paper, #fffaf0); opacity: .45; }
-.sg-demi { stroke: var(--paper, #fffaf0); opacity: .8; }
-.sg-plombee { stroke: var(--red, #8a1c2b); opacity: .9; }
-.sg-label { font: 600 4px system-ui, sans-serif; fill: var(--paper, #fffaf0); paint-order: stroke; stroke: var(--navy, #14284b); stroke-width: 1.2px; }
-.sg-start { fill: var(--paper, #fffaf0); }
-.sg-marker { fill: var(--red, #8a1c2b); stroke: var(--paper, #fffaf0); stroke-width: 1; }
-.sg-ghost { fill: none; stroke: var(--paper, #fffaf0); stroke-width: 1; stroke-dasharray: 2 1.5; opacity: .6; }
-.is-ghost .sg-marker { opacity: 0; }
-.sg-ghost-text {
-  position: absolute; right: 4%; bottom: 40%; padding: .1rem .4rem; font-size: .65rem; font-variant-numeric: tabular-nums;
-  background: var(--navy, #14284b); border-radius: 3px; opacity: .85;
-}
-.sg-ghost-text:empty { display: none; }
-.sg-bar { position: absolute; right: 27%; bottom: 3%; width: .5rem; height: 30%; background: rgba(20, 40, 75, .55); border: 2px solid var(--paper, #fffaf0); border-radius: 4px; }
-.sg-bar-fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--red, #8a1c2b); }
-.sg-bar-ceiling { position: absolute; left: -4px; right: -4px; height: 3px; background: var(--paper, #fffaf0); }
-.swing-gauge:not(.is-active) .sg-bar { display: none; }
-@media (max-width: 34rem) {
-  .swing-gauge { top: .5rem; left: .5rem; right: .5rem; aspect-ratio: 3 / 4; }
-  .sg-svg { height: 22%; max-width: 30%; right: 14%; }
-  .sg-ghost-text { bottom: 26%; font-size: .55rem; }
-  .sg-bar { right: 40%; height: 20%; }
-}
-@media (prefers-reduced-motion: reduce) { .swing-gauge { transition: none; } }
 
 /* HUD: scoreboard, overlay panels */
 .petanque { position: relative; }
