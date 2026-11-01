@@ -13,12 +13,12 @@
 // play(name, params) triggers one sound directly (used by the ?debug&sounds audition panel).
 //
 // Sound recipes:
-//   land      thud (pitch-dropped sine/triangle ~60-120 Hz) + gravel crunch (random noise grains 1-4 kHz)
-//   jackLand  wooden tick + tiny crunch
-//   jackHit   wooden tick (louder with speed)
-//   clack     glancing boule-boule: 1.5-3 kHz noise transient + short damped 700-1400 Hz partials
-//   thunk     direct boule-boule: firm transient + damped 150-400 Hz partials, decay ~150 ms
-//   roll      per rolling body: band-passed noise + crackle grains, gain follows horizontal speed
+//   land      soft thud (slow-attack, pitch-dropped sine ~55-110 Hz) + faint gravel crunch
+//   jackLand  light wooden tick + tiny crunch
+//   jackHit   light wooden tick (louder with speed)
+//   click     boule-boule, billiard-ball style: short bright transient + quickly damped 2-5 kHz
+//             partials. Direct hits are louder, slightly lower and longer; grazes quieter and shorter.
+//   roll      per rolling body: barely audible band-passed noise + crackle, gain follows speed
 
 // All tuning numbers live here. Gains are linear (0..1 before the compressor).
 export const SOUND = {
@@ -32,52 +32,48 @@ export const SOUND = {
   limiter: { threshold: -10, knee: 6, ratio: 8, attack: 0.003, release: 0.15 }, // dB / seconds
 
   thud: {
-    gain: 1.3,
-    freqHi: 125, freqLo: 55, // Hz: sine starts at freqHi, drops to freqLo
-    drop: 0.05, // s: pitch-drop time constant
-    decay: 0.12, // s: body decay (80-150 ms)
-    triGain: 0.35, // extra triangle layer, one octave-ish above for definition
-    thumpCut: 260, // Hz: low-passed noise "thump" cutoff
-    thumpGain: 0.5,
+    gain: 0.9,
+    attack: 0.012, // s: soft onset (no sharp attack)
+    freqHi: 110, freqLo: 55, // Hz: sine starts at freqHi, drops to freqLo
+    drop: 0.06, // s: pitch-drop time constant
+    decay: 0.16, // s: body decay
+    triGain: 0.12, // faint triangle layer for a little definition
+    thumpCut: 180, // Hz: low-passed noise "thump" cutoff
+    thumpGain: 0.15,
   },
   crunch: {
-    gain: 0.2,
-    grainsMin: 3, grainsMax: 14, // number of grains (scales with speed)
-    span: 0.1, // s: grains scattered over this window
-    freqLo: 1000, freqHi: 4000, // Hz: random band-pass centre per grain
-    q: 1.4,
-    grainMin: 0.004, grainMax: 0.014, // s: grain length
+    gain: 0.06,
+    attack: 0.003, // s: grains fade in rather than click
+    grainsMin: 2, grainsMax: 9, // number of grains (scales with speed)
+    span: 0.12, // s: grains scattered over this window
+    freqLo: 800, freqHi: 2600, // Hz: random band-pass centre per grain
+    q: 1.2,
+    grainMin: 0.006, grainMax: 0.016, // s: grain length
   },
   jack: {
-    tickFreq: 2300, tickQ: 7, tickGain: 0.7, tickDecay: 0.022, // band-passed noise impulse
-    sineFreq: 1000, sineGain: 0.18, sineDecay: 0.03, // tiny woody tone
-    landCrunch: 0.2, // fraction of boule crunch added to the jack landing
-    quiet: 0.7, // overall level of jack sounds
+    tickFreq: 2600, tickQ: 2.5, tickGain: 0.5, tickDecay: 0.018, // band-passed noise impulse
+    attack: 0.003, // s: light onset
+    sineFreq: 1300, sineGain: 0.06, sineDecay: 0.025, // faint woody tone
+    landCrunch: 0.15, // fraction of boule crunch added to the jack landing
+    quiet: 0.4, // overall level of jack sounds
   },
-  clack: {
-    gain: 1.0,
-    noiseFreq: 2300, noiseQ: 1.6, noiseDecay: 0.014, noiseGain: 1,
-    partials: [[760, 0.35], [1050, 0.3], [1380, 0.2]], // [Hz, relative gain]
-    decay: 0.05, // s: little ring
+  click: { // boule on boule, billiard-ball style
+    gain: 0.8,
+    noiseFreq: 3800, noiseQ: 0.9, noiseDecay: 0.005, noiseGain: 1.2, // bright snap
+    partials: [[2100, 0.5], [3150, 0.35], [4600, 0.2]], // [Hz, relative gain], inharmonic
+    decayGraze: 0.014, decayDirect: 0.04, // s: partial ring, graze to head-on
+    pitchGraze: 1.15, pitchDirect: 0.85, // partial pitch factor, graze to head-on
+    gainGraze: 0.45, gainDirect: 1, // level factor, graze to head-on
   },
-  thunk: {
-    gain: 0.95,
-    transientCut: 1600, transientDecay: 0.012, transientGain: 0.8, // firm lowpassed noise click
-    partials: [[170, 0.9], [265, 0.55], [390, 0.3]], // [Hz, relative gain]
-    drop: 0.92, // partial pitch ends at this fraction of start
-    decay: 0.16, // s (120-200 ms)
-    subFreq: 85, subGain: 0.6, // sub body
-  },
-  blend: { from: 0.45, to: 0.9 }, // directness at which sound is 0% / 100% thunk
-  carreauAccent: 0.8, // extra low thunk gain for accent('carreau')
+  carreauAccent: 0.5, // extra click level for accent('carreau')
   roll: {
     minSpeed: 0.05, // m/s: silent below this
     fullSpeed: 3, // m/s at which scrape reaches full gain
-    gain: 0.09, // boule scrape level
+    gain: 0.012, // boule scrape level: barely audible
     freq: 1700, q: 0.9, // band-pass centre/Q for boule
     modDepth: 0.35, // slow random modulation of centre freq (fraction)
     modRate: 1.5, // modulation speed (higher = more restless)
-    crackleGain: 0.5, // relative level of the crackle (pebble clicks) layer
+    crackleGain: 0.25, // relative level of the crackle (pebble clicks) layer
     jackGain: 0.35, jackFreq: 4200, // jack: much lighter and higher
     fade: 0.06, // s: gain smoothing time constant (no clicks)
   },
@@ -182,12 +178,12 @@ export function createAudio(opts = {}) {
     return s;
   }
 
-  // Fast attack, exponential decay to silence over `decay` s.
-  function envGain(t, peak, decay) {
+  // Attack over `attack` s, then exponential decay to silence by `decay` s after the start.
+  function envGain(t, peak, decay, attack = 0.0015) {
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0002), t + 0.0015);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + Math.max(decay, 0.004));
+    g.gain.linearRampToValueAtTime(Math.max(peak, 0.0002), t + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + Math.max(decay, attack + 0.004));
     return g;
   }
 
@@ -209,12 +205,12 @@ export function createAudio(opts = {}) {
   }
 
   // Sine/triangle with an exponential pitch glide and a decay envelope.
-  function tone(t, type, f0, f1, tau, g, decay) {
+  function tone(t, type, f0, f1, tau, g, decay, attack) {
     const o = ctx.createOscillator();
     o.type = type;
     o.frequency.setValueAtTime(f0, t);
     o.frequency.exponentialRampToValueAtTime(Math.max(f1, 20), t + tau);
-    o.connect(envGain(t, g, decay)).connect(master);
+    o.connect(envGain(t, g, decay, attack)).connect(master);
     o.start(t);
     o.stop(t + decay + 0.02);
   }
@@ -230,18 +226,18 @@ export function createAudio(opts = {}) {
       const len = rnd(K.grainMin, K.grainMax);
       const src = noiseSrc(gt, len);
       const bp = filt('bandpass', rnd(K.freqLo, K.freqHi), K.q);
-      src.connect(bp).connect(envGain(gt, K.gain * amount * rnd(0.3, 1), len)).connect(master);
+      src.connect(bp).connect(envGain(gt, K.gain * amount * rnd(0.3, 1), len, K.attack)).connect(master);
     }
   }
 
-  // Boule on gravel: dull low thud + crunch. No ringing tone.
+  // Boule on gravel: soft low thud + faint crunch. No ringing tone, no sharp attack.
   function land(t, speed) {
     const v = volumeFor(speed), T = SOUND.thud;
     startVoice(t, T.decay + SOUND.crunch.span + 0.05);
-    tone(t, 'sine', T.freqHi, T.freqLo, T.drop, (T.gain * v), T.decay);
-    tone(t, 'triangle', T.freqHi * 1.5, T.freqLo * 1.4, T.drop, (T.gain * v) * T.triGain, T.decay * 0.7);
+    tone(t, 'sine', T.freqHi, T.freqLo, T.drop, (T.gain * v), T.decay, T.attack);
+    tone(t, 'triangle', T.freqHi * 1.5, T.freqLo * 1.4, T.drop, (T.gain * v) * T.triGain, T.decay * 0.7, T.attack);
     const n = noiseSrc(t, T.decay);
-    n.connect(filt('lowpass', T.thumpCut, 0.7)).connect(envGain(t, T.gain * v * T.thumpGain, T.decay * 0.8)).connect(master);
+    n.connect(filt('lowpass', T.thumpCut, 0.7)).connect(envGain(t, T.gain * v * T.thumpGain, T.decay * 0.8, T.attack)).connect(master);
     crunch(t, v);
   }
 
@@ -252,11 +248,11 @@ export function createAudio(opts = {}) {
     const f = rnd(0.94, 1.06);
     startVoice(t, 0.06);
     const n = noiseSrc(t, J.tickDecay * 2);
-    n.connect(filt('bandpass', J.tickFreq * f, J.tickQ)).connect(envGain(t, J.tickGain * v * 2.5, J.tickDecay)).connect(master);
+    n.connect(filt('bandpass', J.tickFreq * f, J.tickQ)).connect(envGain(t, J.tickGain * v, J.tickDecay, J.attack)).connect(master);
     const o = ctx.createOscillator();
     o.type = 'sine';
     o.frequency.value = J.sineFreq * f;
-    o.connect(envGain(t, J.sineGain * v, J.sineDecay)).connect(master);
+    o.connect(envGain(t, J.sineGain * v, J.sineDecay, J.attack)).connect(master);
     o.start(t);
     o.stop(t + J.sineDecay + 0.02);
   }
@@ -266,43 +262,30 @@ export function createAudio(opts = {}) {
     crunch(t, volumeFor(speed) * SOUND.jack.landCrunch);
   }
 
-  // Glancing boule hit: crisp clack.
-  function clack(t, g) {
-    const C = SOUND.clack;
-    startVoice(t, C.decay + 0.03);
-    const f = rnd(0.95, 1.05);
-    const n = noiseSrc(t, C.noiseDecay * 3);
-    n.connect(filt('bandpass', C.noiseFreq * f, C.noiseQ)).connect(envGain(t, C.gain * g * C.noiseGain * 2, C.noiseDecay)).connect(master);
-    for (const [pf, a] of C.partials) {
+  // Boule on boule, billiard-ball style. d = directness: 0 graze .. 1 head-on.
+  function click(t, g, d) {
+    const K = SOUND.click;
+    const lerp = (a, b) => a + (b - a) * d;
+    const decay = lerp(K.decayGraze, K.decayDirect);
+    const pitch = lerp(K.pitchGraze, K.pitchDirect) * rnd(0.96, 1.04);
+    const level = K.gain * g * lerp(K.gainGraze, K.gainDirect);
+    startVoice(t, decay + 0.03);
+    const n = noiseSrc(t, K.noiseDecay * 3);
+    n.connect(filt('bandpass', K.noiseFreq * pitch, K.noiseQ)).connect(envGain(t, level * K.noiseGain, K.noiseDecay, 0.0008)).connect(master);
+    for (const [pf, a] of K.partials) {
       const o = ctx.createOscillator();
       o.type = 'sine';
-      o.frequency.value = pf * f * rnd(0.98, 1.02);
-      o.connect(envGain(t, C.gain * g * a, C.decay)).connect(master);
+      o.frequency.value = pf * pitch * rnd(0.98, 1.02);
+      o.connect(envGain(t, level * a, decay * rnd(0.8, 1.1), 0.0008)).connect(master);
       o.start(t);
-      o.stop(t + C.decay + 0.02);
+      o.stop(t + decay + 0.02);
     }
   }
 
-  // Direct boule hit: deep thunk.
-  function thunk(t, g) {
-    const H = SOUND.thunk;
-    startVoice(t, H.decay + 0.05);
-    const f = rnd(0.96, 1.04);
-    const n = noiseSrc(t, H.transientDecay * 3);
-    n.connect(filt('lowpass', H.transientCut, 0.7)).connect(envGain(t, H.gain * g * H.transientGain, H.transientDecay)).connect(master);
-    for (const [pf, a] of H.partials) {
-      tone(t, 'sine', pf * f, pf * f * H.drop, H.decay, H.gain * g * a, H.decay);
-    }
-    tone(t, 'sine', H.subFreq * 1.3, H.subFreq, 0.04, H.gain * g * H.subGain, H.decay * 1.1);
-  }
-
-  // Boule on boule: blend between clack (graze) and thunk (head-on).
   function hit(t, speed, rel) {
     const g = volumeFor(Math.max(speed, 0));
     const d = rel > 1e-6 ? clamp01(speed / rel) : 1;
-    const w = clamp01((d - SOUND.blend.from) / (SOUND.blend.to - SOUND.blend.from));
-    if (w < 0.97) clack(t, g * (1 - w * 0.8));
-    if (w > 0.03) thunk(t, g * (0.25 + 0.75 * w));
+    click(t, g, d);
   }
 
   // ---------- rolling / scraping ----------
@@ -430,10 +413,10 @@ export function createAudio(opts = {}) {
     }
   }
 
-  // Extra low accent, e.g. accent('carreau').
+  // Extra click accent, e.g. accent('carreau').
   function accent(name) {
     if (!ctx || muted || ctx.state !== 'running' || name !== 'carreau') return;
-    try { thunk(ctx.currentTime + 0.005, SOUND.carreauAccent); } catch (e) { /* ignore */ }
+    try { click(ctx.currentTime + 0.005, SOUND.carreauAccent, 1); } catch (e) { /* ignore */ }
   }
 
   // Audition entry point. Ignores mute (explicit user action) but needs unlock().
@@ -450,7 +433,7 @@ export function createAudio(opts = {}) {
         case 'jackHit': tick(t, p.speed ?? 4); break;
         case 'graze': hit(t, p.speed ?? 2.5, p.rel ?? 8); break;
         case 'direct': hit(t, p.speed ?? 4, p.rel ?? 4.2); break;
-        case 'carreau': hit(t, p.speed ?? 9, p.rel ?? 9.2); thunk(t + 0.002, SOUND.carreauAccent); break;
+        case 'carreau': hit(t, p.speed ?? 9, p.rel ?? 9.2); break;
         case 'hit': hit(t, p.speed ?? 4, p.rel ?? p.speed ?? 4); break;
         case 'roll': {
           const key = 'aud:' + (p.kind || 'boule') + Math.random();
