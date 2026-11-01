@@ -161,8 +161,8 @@ Design: GAME-PLAN.md §9–11. Round 1 contracts above still apply (units, axes,
 | C03 | done | sonnet | C01, C02 | Toss input: aim, donnée, pull for loft |
 | C04 | done | sonnet | C03, C05 | Integrate the donnée throw into the game |
 | C05 | done | sonnet | C01 | AI on the donnée model |
-| C06 | in-progress | haiku | C04 | Remove the old swing code; update README |
-| C07 | todo | sonnet | C04, C05, C06 | Review and tune throw feel |
+| C06 | done | haiku | C04 | Remove the old swing code; update README |
+| C07 | in-progress | sonnet | C04, C05, C06 | Review and tune throw feel |
 | C08 | done | sonnet | C02 | Stick-figure skeleton and procedural animation |
 | C09 | todo | sonnet | C07, C08 | Characters in the game: positions, throw sync, reactions |
 | C10 | done | sonnet | — | Find and vendor CC0 rigged human models |
