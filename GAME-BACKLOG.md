@@ -129,3 +129,86 @@ Worth a human play-test or not done:
 - In `?debug&autotest` (all players AI) the human player's name "You" gives odd commentary ("You is aiming...").
 - The head camera at game over is dimmed by the overlay and loose boules spread over 2 m make labels small.
 - The AI launch table is built on the first AI turn (a short pause on slow devices).
+
+---
+
+# Round 2 backlog
+
+Design: GAME-PLAN.md §9–11. Round 1 contracts above still apply (units, axes, `constants.js`, tests, build check, agents do not commit, don't edit files owned by another in-progress item). Order of importance: throwing (C01–C07), stick figures (C08–C09), meshes (C10–C12).
+
+## Round 2 contracts
+
+- **`donnee.js`** (pure, no DOM/three.js), shared by human and AI:
+  - `LOFT_MIN` (8°), `LOFT_MAX` (75°) in radians; `styleForLoft(loft, snapped) → 'roulette' | 'demi-portee' | 'plombee' | 'tir'`.
+  - `backspinForLoft(loft) → rad/s`.
+  - `solveLaunch({ from, landing: { x, y }, loft, terrain }) → { yaw, speed, loft, backspin, sidespin: 0 }`. Numeric, using the same gravity and drag as `physics.js`; lands within 2 cm of the donnée (including its terrain height).
+  - `SKILL`: `{ human, marcel, odette, pierre }`, each `{ lat, long, loft }` base sigmas, plus `difficultyScale` for AI players.
+  - `coneFor({ skill, from, landing, loft }) → { sigmaLat, sigmaLong, sigmaLoft }` (metres, metres, radians), growing with distance and loft.
+  - `executeThrow({ from, landing, loft, cone, terrain, rand }) → { throwParams, actualLanding, lateralError }`: samples the cone, solves the launch, sets sidespin from the lateral error.
+  - `arcPath(from, throwParams, n = 40) → [{ x, y, z }]` (flight only, no collisions).
+  - `coneEnvelope({ from, landing, loft, cone, terrain }) → { center, edges: [4 paths], ellipse1, ellipse2 }`, paths as `[{ x, y, z }]`.
+  - `predictRoll({ world, terrain, throwParams }) → [{ x, y, z }]`: noiseless sim on `terrain.perceived()` via `world.clone`, path of the thrown body.
+- **`render.js` additions:** `setCamera('shoulder', { player: { x, y }, yaw, zoom })`; `setThrowPreview({ center, edges, ellipse1, ellipse2, roll, donnee, style, legalZone } | null)`; `setPlayers([{ id, x, y, yaw }])` (placeholder capsules until C09 replaces them with characters).
+- **`toss.js`** (DOM input, replaces the swing in `input.js`): `createTossInput(canvas, { pick(clientX, clientY) → {x,y}|null, getYaw, onTurn(dyaw), onPreview({ donnee, loft, snappedTo }), onThrow({ donnee, loft, snappedTo }), onCancel(), targets() → [{ id, x, y, r }] }) → { setPhase('aim' | 'toss' | 'off'), destroy() }`.
+- **`character.js`** (C08): `createCharacter(THREE, spec) → { root, update(dt), setStance('idle' | 'aim' | 'crouch' | 'stand' | 'watch' | 'celebrate' | 'dismay'), walkTo({ x, y, yaw }) → Promise, playThrow({ loft, onRelease(handWorldPos) }) → Promise, handWorldPosition(), dispose() }`. `spec = { name, height, build, colors, stance: 'crouch' | 'stand', quirks }`. C11 swaps the visual for a skinned mesh behind the same API.
+
+## Round 2 items
+
+| ID | Status | Model | Deps | Title |
+|---|---|---|---|---|
+| C01 | todo | sonnet | — | Throw model: solver, backspin, cone (`donnee.js`) |
+| C02 | todo | sonnet | — | Over-the-shoulder camera, placeholder players, preview drawing |
+| C03 | todo | sonnet | C01, C02 | Toss input: aim, donnée, pull for loft |
+| C04 | todo | sonnet | C03, C05 | Integrate the donnée throw into the game |
+| C05 | todo | sonnet | C01 | AI on the donnée model |
+| C06 | todo | haiku | C04 | Remove the old swing code; update README |
+| C07 | todo | sonnet | C04, C05, C06 | Review and tune throw feel |
+| C08 | todo | sonnet | C02 | Stick-figure skeleton and procedural animation |
+| C09 | todo | sonnet | C07, C08 | Characters in the game: positions, throw sync, reactions |
+| C10 | todo | sonnet | — | Find and vendor CC0 rigged human models |
+| C11 | todo | sonnet | C09, C10 | Skinned meshes on the skeleton |
+| C12 | todo | sonnet | C11 | Personalities: looks, quirks, reactions, commentary |
+| C13 | todo | sonnet | C12 | Round 2 final review |
+
+### C01 Throw model (sonnet)
+Implement `donnee.js` per the contracts and GAME-PLAN §9, with `tests/petanque/donnee.test.js`. Read `physics.js` for the exact flight integration (gravity, drag, dt) and make `solveLaunch` match it (e.g. bisection on speed using a tiny flight-only integrator that mirrors physics, or launching a body in a bare world). Tune `backspinForLoft` with the physics: a 60° plombée should stop within ~0.4 m of its donnée on flat terrain, a 12° roulette should run well past it, a 35° demi-portée in between. Cone defaults: human lateral ≈ 1.2% of distance, longitudinal ≈ 3% at low loft rising to ≈ 5% at 75°, loft sigma ≈ 1.5°. Tests: landing error < 2 cm across distances 3–12 m and lofts 8–75° on flat and seeded terrain; backspin monotonic in loft; sampled landings match the cone's sigmas statistically; envelope paths finite; `predictRoll` ends near a real noiseless sim.
+
+### C02 Over-the-shoulder camera, placeholder players, preview drawing (sonnet)
+In `render.js` only: the `'shoulder'` camera (behind and right of the player at ~1.7 m, looking at a point ~7 m ahead along `yaw`, smooth, wheel/pinch zoom), `setPlayers` with simple capsule placeholders (team colours), and `setThrowPreview` drawing: nominal arc as a ribbon or tube, four faint edge arcs, 1σ (solid) and 2σ (faint) ellipses on the terrain, dotted roll guide, donnée marker (ring on the ground, distinct when snapped to a target), optional legal-zone arcs. Add a `?debug&preview` path in `main.js` (only that block) that shows a static preview with made-up paths for screenshots. Verify with headless Chrome screenshots.
+
+### C03 Toss input (sonnet)
+Implement `toss.js` per contracts and GAME-PLAN §9 (aim drag/arrow turning, press to place the donnée, pull down for loft, release to throw, cancel above press point or Esc, snapping to targets within ~0.25 m, keyboard path), with `tests/petanque/toss.test.js` for the pure parts (drag → loft mapping, snapping, cancel rule). Pull distance for full loft ≈ 35% of canvas height; loft changes smoothly. Does not edit `main.js`.
+
+### C04 Integrate the donnée throw (sonnet)
+In `main.js`, `hud.js`, CSS, `content/game.md`: replace the swing and the precise sliders (keep raw sliders only behind `?debug`) with `toss.js` + `donnee.js` + the shoulder camera and preview. HUD: loft readout with style name, "Re-aim" button, "Roll guide" toggle (default by difficulty), "View" button cycling shoulder / head / inspect. Human jack throw uses the same flow with the legal zone. AI turns: show the AI's donnée and arc for ~1 s before it throws. Update the intro text and first-time hint. Debug paths keep working.
+
+### C05 AI on the donnée model (sonnet)
+Refactor `ai.js` to plan candidates as (donnée, loft) and throw through `donnee.js` (`executeThrow` with the player's `SKILL` scaled by difficulty). Keep the Monte Carlo evaluation and the `chooseThrow` / `chooseThrowAsync` / `chooseJackThrow` signatures, adding `{ donnee, loft }` to the result so the game can show it. Remove the old launch table if no longer needed. Update `ai.test.js` and `match.test.js`; report accuracy per difficulty with `measure-ai.js`.
+
+### C06 Remove the old swing code (haiku)
+Delete the swing gesture and gauge (`input.js`, its tests, gauge CSS) once nothing imports them; update README.md's game section (controls, modules, tuning locations). `npm test` and the build must pass.
+
+### C07 Review and tune throw feel (sonnet)
+Play through the new flow (scripted via debug hooks and headless screenshots): check the cone sizes feel fair at 6–10 m, the loft → backspin curve gives distinct roulette / demi-portée / plombée behaviour, tir by snapping works and sometimes carreaus, AI shows its spot, jack throws are easy to make legal. Fix bugs, tune, and add a short human play-test checklist to the end of this file.
+
+### C08 Stick-figure skeleton and animation (sonnet)
+Implement `character.js` per contracts and GAME-PLAN §10, stage 1: joint hierarchy with fixed bone lengths scaled by `spec.height` and `build`, drawn with capsules and a sphere head; procedural animations with smooth blending; `playThrow` with backswing → release (calls `onRelease` with the hand's world position at the release frame; arm angle at release follows loft) → follow-through; crouch for `stance: 'crouch'`. Tests for pose math (no NaN, bone lengths constant, release fires once). A `?debug&characters` path in `main.js` (only that block) shows all stances for screenshots.
+
+### C09 Characters in the game (sonnet)
+Replace placeholder capsules with four `character.js` characters: thrower in the circle, partner behind, opponents to the side; walk in and out of the circle between turns; the throw animation drives the launch (boule leaves from the hand at release; `from` = hand position) and the shoulder camera follows the current thrower; reactions after each throw (celebrate / dismay / watch) from the outcome.
+
+### C10 Find and vendor CC0 rigged human models (sonnet)
+Find rigged, animated or animatable human models in glTF/GLB under CC0 (first choice: Quaternius, Kenney) or CC-BY (attribution required). Verify each licence on the source page; exclude Mixamo, Ready Player Me and anything with unclear terms. Pick enough to give four distinct players (separate models, or one base plus variants for hats, colours and proportions), keep the total download small (target < 3 MB), put them in `static/models/` with `static/models/CREDITS.md` (source URL, author, licence, date checked). Also vendor three.js r170's `GLTFLoader.js` and its imports into `assets/js/vendor/`. Report bone names, scale, triangle counts and any included animations.
+
+### C11 Skinned meshes on the skeleton (sonnet)
+Load the C10 models with GLTFLoader, map `character.js`'s skeleton onto the model bones (retarget or drive the model bones directly), keep the same API, fall back to the stick figure if loading fails, keep phones smooth.
+
+### C12 Personalities (sonnet)
+Give Marcel, Odette, Pierre and You distinct looks (model choice, colours, hats/accessories), stances, idle quirks, reactions and commentary lines, tied to their `SKILL` profiles, per GAME-PLAN §10.
+
+### C13 Round 2 final review (sonnet)
+`npm test`, build check, full-match test, screenshots on desktop and phone, bug review, and a "Round 2 remaining issues" list at the end of this file.
+
+## Later (not scheduled)
+
+- T01 Terrain style presets (GAME-PLAN §11): sandy, sandy with rocks, gravel on hard pack, gravel on soft pack, each dry or wet; picker on the setup screen.
