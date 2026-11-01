@@ -165,7 +165,7 @@ Design: GAME-PLAN.md §9–11. Round 1 contracts above still apply (units, axes,
 | C07 | todo | sonnet | C04, C05, C06 | Review and tune throw feel |
 | C08 | in-progress | sonnet | C02 | Stick-figure skeleton and procedural animation |
 | C09 | todo | sonnet | C07, C08 | Characters in the game: positions, throw sync, reactions |
-| C10 | in-progress | sonnet | — | Find and vendor CC0 rigged human models |
+| C10 | done | sonnet | — | Find and vendor CC0 rigged human models |
 | C11 | todo | sonnet | C09, C10 | Skinned meshes on the skeleton |
 | C12 | todo | sonnet | C11 | Personalities: looks, quirks, reactions, commentary |
 | C13 | todo | sonnet | C12 | Round 2 final review |
@@ -216,6 +216,7 @@ Give Marcel, Odette, Pierre and You distinct looks (model choice, colours, hats/
 - From C01: with release at z = 0.9 m, a 12° roulette to a 4 m donnée lands fast and runs ~10 m past (off the court). Real roulettes are released low from a crouch and land 1–2 m out. C07/C09: take the release point from the character's hand (crouched pointer ≈ 0.4–0.5 m), and check roulettes then behave; consider capping roulette donnée distance or showing the roll guide by default for low lofts.
 - From C01: sidespin from lateral error (≈ 20 rad/s at 2σ) moves a ball only ~3 mm; the lateral error itself carries the off-axis effect. Fine for now.
 - From C01: plombée stops within 0.4 m up to ~7 m; at 8–10 m it ends 0.5–0.9 m past (backspin depends only on loft). Acceptable; revisit in C07 if it feels off.
+- From C10: the vendored models are Kenney "Mini Characters" (CC0, ~250 KB each): stylised chibi figures ~0.7 units tall (scale ≈ 2.4 for 1.7 m), T-pose, a 7-bone rig (root, leg-left, leg-right, torso, arm-left, arm-right, head) with no elbows or knees, 32 short clips (idle, walk, crouch, pick-up, emote-yes/no, holding-right…), no throw or celebrate clip, no hats. Throws must be procedural on arm-right/torso; hats as meshes on the head bone. A richer human rig (Quaternius Universal Base Characters / Modular Women, CC0) needs a manual download (122 MB zip / Drive quota). Awaiting the user's choice before C11.
 
 ## Later (not scheduled)
 
