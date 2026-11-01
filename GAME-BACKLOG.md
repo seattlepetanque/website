@@ -156,8 +156,8 @@ Design: GAME-PLAN.md §9–11. Round 1 contracts above still apply (units, axes,
 
 | ID | Status | Model | Deps | Title |
 |---|---|---|---|---|
-| C01 | todo | sonnet | — | Throw model: solver, backspin, cone (`donnee.js`) |
-| C02 | todo | sonnet | — | Over-the-shoulder camera, placeholder players, preview drawing |
+| C01 | in-progress | sonnet | — | Throw model: solver, backspin, cone (`donnee.js`) |
+| C02 | done | sonnet | — | Over-the-shoulder camera, placeholder players, preview drawing |
 | C03 | todo | sonnet | C01, C02 | Toss input: aim, donnée, pull for loft |
 | C04 | todo | sonnet | C03, C05 | Integrate the donnée throw into the game |
 | C05 | todo | sonnet | C01 | AI on the donnée model |
@@ -165,7 +165,7 @@ Design: GAME-PLAN.md §9–11. Round 1 contracts above still apply (units, axes,
 | C07 | todo | sonnet | C04, C05, C06 | Review and tune throw feel |
 | C08 | todo | sonnet | C02 | Stick-figure skeleton and procedural animation |
 | C09 | todo | sonnet | C07, C08 | Characters in the game: positions, throw sync, reactions |
-| C10 | todo | sonnet | — | Find and vendor CC0 rigged human models |
+| C10 | in-progress | sonnet | — | Find and vendor CC0 rigged human models |
 | C11 | todo | sonnet | C09, C10 | Skinned meshes on the skeleton |
 | C12 | todo | sonnet | C11 | Personalities: looks, quirks, reactions, commentary |
 | C13 | todo | sonnet | C12 | Round 2 final review |
@@ -208,6 +208,11 @@ Give Marcel, Odette, Pierre and You distinct looks (model choice, colours, hats/
 
 ### C13 Round 2 final review (sonnet)
 `npm test`, build check, full-match test, screenshots on desktop and phone, bug review, and a "Round 2 remaining issues" list at the end of this file.
+
+## Round 2 notes
+
+- From C02 screenshot: waiting players placed near the circle (partner behind at (2.6, 0.2), opponents at x ≈ 3.5) stand between the shoulder camera and the court and block much of the view. C04/C09: put waiting players out of shot (behind the camera, or beside the court near y ≈ 0–1 at x < 0 or x > 4), and raise the shoulder camera a little (~2.1 m) so the head area shows above the thrower's shoulder.
+- From C02: the roll-guide dots are too small to see at 7–9 m; make them larger or a dashed ribbon.
 
 ## Later (not scheduled)
 

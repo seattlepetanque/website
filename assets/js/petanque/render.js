@@ -370,12 +370,212 @@ export function createRenderer(canvas, terrain) {
     }
   }
 
+  // Placeholder players: capsule body (1.7 m with the head) and a nose marking the facing direction
+  const playerMats = [
+    new THREE.MeshStandardMaterial({ color: '#46618f', metalness: 0.3, roughness: 0.55, envMapIntensity: 0.6 }), // navy-steel
+    new THREE.MeshStandardMaterial({ color: '#b8793a', metalness: 0.3, roughness: 0.55, envMapIntensity: 0.6 }), // bronze
+  ];
+  const skinMat = new THREE.MeshStandardMaterial({ color: '#d9b393', roughness: 0.8, metalness: 0 });
+  const bodyGeo = new THREE.CapsuleGeometry(0.17, 1.14, 4, 14);
+  bodyGeo.rotateX(Math.PI / 2); // capsule axis along z
+  bodyGeo.translate(0, 0, 0.74);
+  const headGeo = new THREE.SphereGeometry(0.11, 18, 12);
+  headGeo.translate(0, 0, 1.59);
+  const noseGeo = new THREE.BoxGeometry(0.05, 0.1, 0.05);
+  noseGeo.translate(0, 0.12, 1.6);
+  const playerMeshes = new Map(); // id -> { group, team }
+  function setPlayers(list = []) {
+    const seen = new Set();
+    for (const p of list) {
+      seen.add(p.id);
+      const team = p.team ? 1 : 0;
+      let e = playerMeshes.get(p.id);
+      if (e && e.team !== team) { scene.remove(e.group); playerMeshes.delete(p.id); e = null; }
+      if (!e) {
+        const g = new THREE.Group();
+        for (const [geo, mat] of [[bodyGeo, playerMats[team]], [headGeo, skinMat], [noseGeo, skinMat]]) {
+          const m = new THREE.Mesh(geo, mat);
+          m.castShadow = true; m.receiveShadow = true;
+          g.add(m);
+        }
+        scene.add(g);
+        e = { group: g, team };
+        playerMeshes.set(p.id, e);
+      }
+      e.group.position.set(p.x, p.y, terrain.sample(p.x, p.y).h);
+      e.group.rotation.z = -(p.yaw || 0); // yaw 0 faces +y, positive toward +x
+    }
+    for (const [id, e] of playerMeshes) {
+      if (seen.has(id)) continue;
+      scene.remove(e.group);
+      playerMeshes.delete(id);
+    }
+  }
+
+  // Throw preview: camera-facing ribbons (rebuilt per frame from cached points, buffers reused),
+  // dotted roll guide, donnée ring, optional legal-zone arcs
+  function makeRibbon(cap, mat, order) {
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(cap * 6), ix = new Uint16Array((cap - 1) * 6);
+    for (let i = 0; i < cap - 1; i++) ix.set([2 * i, 2 * i + 1, 2 * i + 3, 2 * i, 2 * i + 3, 2 * i + 2], i * 6);
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setIndex(new THREE.BufferAttribute(ix, 1));
+    geo.setDrawRange(0, 0);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = order;
+    mesh.visible = false;
+    scene.add(mesh);
+    return { mesh, pos, cap, n: 0, pts: new Float32Array(cap * 3), k: 0.003 };
+  }
+  // pts: [{x,y,z}], ground: drape on the terrain
+  function setRibbonPath(r, pts, ground, close) {
+    let n = 0;
+    if (pts && pts.length > 1) {
+      const m = Math.min(pts.length, r.cap - 1);
+      for (let i = 0; i < m; i++) {
+        const q = pts[i];
+        r.pts[n * 3] = q.x; r.pts[n * 3 + 1] = q.y;
+        r.pts[n * 3 + 2] = ground ? terrain.sample(q.x, q.y).h + 0.012 : q.z;
+        n++;
+      }
+      if (close && n < r.cap && Math.hypot(pts[0].x - pts[m - 1].x, pts[0].y - pts[m - 1].y) > 1e-3) {
+        r.pts.copyWithin(n * 3, 0, 3); n++;
+      }
+    }
+    r.n = n;
+    r.mesh.visible = n > 1;
+  }
+  function updateRibbon(r, cam) {
+    const n = r.n, p = r.pts, o = r.pos;
+    if (n < 2) return;
+    let sx = 0, sy = 0, sz = 1;
+    for (let i = 0; i < n; i++) {
+      const a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1);
+      const tx = p[b * 3] - p[a * 3], ty = p[b * 3 + 1] - p[a * 3 + 1], tz = p[b * 3 + 2] - p[a * 3 + 2];
+      const vx = cam.x - p[i * 3], vy = cam.y - p[i * 3 + 1], vz = cam.z - p[i * 3 + 2];
+      let cx = ty * vz - tz * vy, cy = tz * vx - tx * vz, cz = tx * vy - ty * vx;
+      const l = Math.hypot(cx, cy, cz);
+      if (l > 1e-9) { sx = cx / l; sy = cy / l; sz = cz / l; }
+      const w = r.k * Math.hypot(vx, vy, vz);
+      o[i * 6] = p[i * 3] - sx * w; o[i * 6 + 1] = p[i * 3 + 1] - sy * w; o[i * 6 + 2] = p[i * 3 + 2] - sz * w;
+      o[i * 6 + 3] = p[i * 3] + sx * w; o[i * 6 + 4] = p[i * 3 + 1] + sy * w; o[i * 6 + 5] = p[i * 3 + 2] + sz * w;
+    }
+    r.mesh.geometry.attributes.position.needsUpdate = true;
+    r.mesh.geometry.setDrawRange(0, (n - 1) * 6);
+  }
+  const ribbonMat = (color, opacity, offset = -2) => new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity, side: THREE.DoubleSide, fog: false, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: offset, polygonOffsetUnits: offset,
+  });
+  const CREAM = '#fff1c2', RED = '#c0262f';
+  const ribbons = {
+    centerOutline: makeRibbon(64, ribbonMat('#241608', 0.85, 0), 10),
+    center: makeRibbon(64, ribbonMat(CREAM, 1, -3), 11),
+    edges: [0, 1, 2, 3].map(() => makeRibbon(64, ribbonMat(CREAM, 0.55), 9)),
+    e1Outline: makeRibbon(160, ribbonMat('#241608', 0.6, 0), 8),
+    e1: makeRibbon(160, ribbonMat(CREAM, 0.95, -3), 9),
+    e2: makeRibbon(160, ribbonMat(CREAM, 0.4), 8),
+  };
+  ribbons.center.k = 0.0026; ribbons.centerOutline.k = 0.0042;
+  for (const r of ribbons.edges) r.k = 0.0018;
+  ribbons.e1.k = 0.003; ribbons.e1Outline.k = 0.0045; ribbons.e2.k = 0.002;
+  const allRibbons = [ribbons.centerOutline, ribbons.center, ...ribbons.edges, ribbons.e1Outline, ribbons.e1, ribbons.e2];
+
+  // dotted roll guide: instanced flat dots
+  const DOTS = 90;
+  const dots = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 6),
+    new THREE.MeshBasicMaterial({ color: '#fff7dc', fog: false, transparent: true, opacity: 0.95 }), DOTS);
+  dots.frustumCulled = false; dots.count = 0; dots.renderOrder = 9; dots.visible = false;
+  scene.add(dots);
+  const dotM = new THREE.Matrix4(), dotP = new THREE.Vector3(), dotS = new THREE.Vector3(), dotQ = new THREE.Quaternion();
+  function setRoll(pts) {
+    let n = 0;
+    if (pts && pts.length > 1) {
+      let carry = 0.0; const gap = 0.14;
+      for (let i = 1; i < pts.length && n < DOTS; i++) {
+        const a = pts[i - 1], b = pts[i], seg = Math.hypot(b.x - a.x, b.y - a.y);
+        if (seg < 1e-6) continue;
+        for (let d = carry; d <= seg && n < DOTS; d += gap) {
+          const t = d / seg, x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+          dotP.set(x, y, terrain.sample(x, y).h + 0.012);
+          dotS.set(0.032, 0.032, 0.01);
+          dotM.compose(dotP, dotQ, dotS);
+          dots.setMatrixAt(n++, dotM);
+          carry = d + gap - seg;
+        }
+      }
+    }
+    dots.count = n;
+    dots.instanceMatrix.needsUpdate = true;
+    dots.visible = n > 0;
+  }
+
+  // donnée marker: ring on the ground; snapped adds a bold red ring and ticks
+  const marker = new THREE.Group();
+  marker.visible = false;
+  const mkMat = (color, op = 1) => new THREE.MeshBasicMaterial({ color, transparent: op < 1, opacity: op, side: THREE.DoubleSide, fog: false, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+  const plainRing = new THREE.Group();
+  const snapRing = new THREE.Group();
+  {
+    const add = (g, geo, mat, order) => { const m = new THREE.Mesh(geo, mat); m.renderOrder = order; g.add(m); return m; };
+    add(plainRing, new THREE.RingGeometry(0.12, 0.26, 40), mkMat('#241608', 0.8), 12);
+    add(plainRing, new THREE.RingGeometry(0.15, 0.23, 40), mkMat(CREAM), 13);
+    add(plainRing, new THREE.CircleGeometry(0.035, 16), mkMat(CREAM), 13);
+    add(snapRing, new THREE.RingGeometry(0.17, 0.3, 40), mkMat('#241608', 0.8), 12);
+    add(snapRing, new THREE.RingGeometry(0.2, 0.27, 40), mkMat(RED), 13);
+    for (let k = 0; k < 4; k++) {
+      const t = add(snapRing, new THREE.PlaneGeometry(0.06, 0.2), mkMat(RED), 13);
+      const a = k * Math.PI / 2;
+      t.position.set(Math.sin(a) * 0.27, Math.cos(a) * 0.27, 0);
+      t.rotation.z = -a;
+    }
+    marker.add(plainRing, snapRing);
+  }
+  scene.add(marker);
+  const upZ = new THREE.Vector3(0, 0, 1), nrm = new THREE.Vector3();
+
+  let preview = null;
+  function setThrowPreview(p) {
+    preview = p || null;
+    if (!p) {
+      for (const r of allRibbons) { r.n = 0; r.mesh.visible = false; }
+      dots.visible = false; dots.count = 0;
+      marker.visible = false;
+      jackZone.visible = false;
+      return;
+    }
+    setRibbonPath(ribbons.center, p.center, false);
+    setRibbonPath(ribbons.centerOutline, p.center, false);
+    ribbons.edges.forEach((r, i) => setRibbonPath(r, p.edges && p.edges[i], false));
+    setRibbonPath(ribbons.e1, p.ellipse1, true, true);
+    setRibbonPath(ribbons.e1Outline, p.ellipse1, true, true);
+    setRibbonPath(ribbons.e2, p.ellipse2, true, true);
+    setRoll(p.roll);
+    if (p.donnee) {
+      const s = terrain.sample(p.donnee.x, p.donnee.y);
+      marker.position.set(p.donnee.x, p.donnee.y, s.h + 0.014);
+      nrm.set(s.nx || 0, s.ny || 0, s.nz || 1).normalize();
+      marker.quaternion.setFromUnitVectors(upZ, nrm);
+      plainRing.visible = !p.snapped;
+      snapRing.visible = !!p.snapped;
+      marker.visible = true;
+    } else marker.visible = false;
+    if (p.legalZone) jackZone.visible = true;
+  }
+  function updatePreview() {
+    if (!preview) return;
+    for (const r of allRibbons) updateRibbon(r, camera.position);
+  }
+
   // Camera state
   const reduce = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const cur = { pos: new THREE.Vector3(2, -2, 2), tgt: new THREE.Vector3(2, 8, 0) };
   const from = { pos: new THREE.Vector3(), tgt: new THREE.Vector3() };
   const goal = { pos: new THREE.Vector3(), tgt: new THREE.Vector3() };
-  let mode = 'aim', opts = {}, trans = 1;
+  let mode = 'aim', opts = {}, trans = 1, zoom = 1;
+  const ZOOM_MIN = 0.6, ZOOM_MAX = 1.6;
+  const clampZoom = (z) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
   const orbit = { az: 0, el: 0.6, dist: 3 };
   let heading = new THREE.Vector3(0, 1, 0);
 
@@ -387,6 +587,7 @@ export function createRenderer(canvas, terrain) {
       orbit.el = o.el !== undefined ? o.el : 0.6;
       void t;
     }
+    if (m === 'shoulder' && o.zoom !== undefined) zoom = clampZoom(o.zoom);
     mode = m; opts = o;
     from.pos.copy(cur.pos); from.tgt.copy(cur.tgt);
     trans = reduce() ? 1 : 0;
@@ -421,6 +622,13 @@ export function createRenderer(canvas, terrain) {
       const ly = cy - (opts.lift || 0) * dist; // look nearer so the subject sits higher on screen
       goal.tgt.set(cx, ly, groundZ({ x: cx, y: cy }));
       goal.pos.set(cx, ly - Math.cos(el) * dist, goal.tgt.z + Math.sin(el) * dist);
+    } else if (mode === 'shoulder') {
+      // behind and to the right of the player, ~1.7 m up at zoom 1, looking ~7 m ahead and a little down
+      const p = opts.player || C.circle, yaw = opts.yaw || 0;
+      const fx = Math.sin(yaw), fy = Math.cos(yaw), rx = Math.cos(yaw), ry = -Math.sin(yaw);
+      const gz = groundZ(p);
+      goal.pos.set(p.x - fx * 2.2 * zoom + rx * 1.1 * zoom, p.y - fy * 2.2 * zoom + ry * 1.1 * zoom, gz + 1.2 + 0.6 * zoom);
+      goal.tgt.set(p.x + fx * 7 - rx * 0.5, p.y + fy * 7 - ry * 0.5, gz - 0.7);
     } else if (mode === 'inspect') {
       const t = opts.target || { x: 2, y: 8 };
       goal.tgt.set(t.x, t.y, groundZ(t) + 0.03);
@@ -454,14 +662,24 @@ export function createRenderer(canvas, terrain) {
   const pointers = new Map();
   let pinch = 0;
   const onDown = (e) => {
-    if (mode !== 'inspect') return;
+    if (mode !== 'inspect' && mode !== 'shoulder') return;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+    // shoulder mode only watches for a pinch; the toss input owns single-pointer gestures
+    if (mode === 'inspect' && canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
     if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch = Math.hypot(a.x - b.x, a.y - b.y); }
   };
   const onMove = (e) => {
     const p = pointers.get(e.pointerId);
-    if (!p || mode !== 'inspect') return;
+    if (!p || (mode !== 'inspect' && mode !== 'shoulder')) return;
+    if (mode === 'shoulder') {
+      p.x = e.clientX; p.y = e.clientY;
+      if (pointers.size === 2) {
+        const [a, b] = [...pointers.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (pinch > 0 && d > 0) zoom = clampZoom(zoom * pinch / d);
+        pinch = d;
+      }
+      return;
+    }
     const dx = e.clientX - p.x, dy = e.clientY - p.y;
     p.x = e.clientX; p.y = e.clientY;
     if (pointers.size === 1) {
@@ -475,6 +693,11 @@ export function createRenderer(canvas, terrain) {
   };
   const onUp = (e) => { pointers.delete(e.pointerId); pinch = 0; };
   const onWheel = (e) => {
+    if (mode === 'shoulder') {
+      e.preventDefault();
+      zoom = clampZoom(zoom * Math.exp(e.deltaY * 0.001));
+      return;
+    }
     if (mode !== 'inspect') return;
     e.preventDefault();
     orbit.dist = Math.max(0.4, Math.min(12, orbit.dist * Math.exp(e.deltaY * 0.001)));
@@ -511,6 +734,7 @@ export function createRenderer(canvas, terrain) {
       if (e.ring) e.ring.visible = mode === 'head';
     }
     updateCamera(dt);
+    updatePreview();
     renderer.render(scene, camera);
   }
 
@@ -539,5 +763,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { sync, setCamera, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, clearMeasure, showJackZone };
+  return { sync, setCamera, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, clearMeasure, showJackZone, setPlayers, setThrowPreview, getZoom: () => zoom };
 }

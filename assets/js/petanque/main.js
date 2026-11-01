@@ -599,6 +599,42 @@ function boot() {
   } else if (debug && pickHuman !== null) {
     // Stop at the human's first boule (or at the chooser with ?humanturn=chooser)
     startGame({ target: 7, difficulty: 'medium', instant: true, firstJackTeam: pickHuman === 'jack' ? 0 : 1 });
+  } else if (debug && params.has('preview')) {
+    // --- ?debug&preview: static throw preview with made-up paths (for screenshots) ---
+    clearWorld();
+    hud.hideHint();
+    const put = (kind, team, x, y) => { const b = createBody(kind, { team, x, y }); b.z = b.r; world.add(b); return b; };
+    put('jack', -1, 2.1, 8.45);
+    put('boule', 0, 1.9, 8.3);
+    put('boule', 1, 2.3, 8.6);
+    renderer.sync(world);
+    renderer.setPlayers([
+      { id: 'p-you', x: 2, y: 1, yaw: 0, team: 0 },
+      { id: 'p-partner', x: 2.6, y: 0.2, yaw: 0, team: 0 },
+      { id: 'p-opp1', x: 3.4, y: 1.2, yaw: -0.5, team: 1 },
+      { id: 'p-opp2', x: 3.6, y: 0.6, yaw: -0.5, team: 1 },
+    ]);
+    renderer.setCamera('shoulder', { player: { x: 2, y: 1 }, yaw: 0, zoom: 1 });
+    const arc = (x1, y1, peak, n = 40) => {
+      const pts = [];
+      for (let i = 0; i <= n; i++) {
+        const t = i / n;
+        pts.push({ x: 2 + (x1 - 2) * t, y: 1 + (y1 - 1) * t, z: 0.9 * (1 - t) + 4 * (peak - 0.45) * t * (1 - t) + 0.9 * 0 });
+      }
+      return pts;
+    };
+    const ell = (cx, cy, rx, ry) => Array.from({ length: 49 }, (_, i) => ({ x: cx + rx * Math.cos(i / 48 * 6.2832), y: cy + ry * Math.sin(i / 48 * 6.2832), z: 0 }));
+    renderer.setThrowPreview({
+      center: arc(2.1, 7.5, 2.5),
+      edges: [arc(2.22, 7.8, 2.6), arc(1.98, 7.8, 2.6), arc(2.22, 7.2, 2.4), arc(1.98, 7.2, 2.4)],
+      ellipse1: ell(2.1, 7.5, 0.12, 0.3),
+      ellipse2: ell(2.1, 7.5, 0.24, 0.6),
+      roll: [{ x: 2.1, y: 7.5, z: 0 }, { x: 2.13, y: 7.9, z: 0 }, { x: 2.15, y: 8.3, z: 0 }],
+      donnee: { x: 2.1, y: 7.5 },
+      style: 'demi-portee',
+      snapped: params.has('snapped'),
+      legalZone: params.has('zone'),
+    });
   } else {
     toSetup();
   }
