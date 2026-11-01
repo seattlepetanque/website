@@ -13,11 +13,11 @@
 // play(name, params) triggers one sound directly (used by the ?debug&sounds audition panel).
 //
 // Sound recipes:
-//   land      soft thud (slow-attack, pitch-dropped sine ~55-110 Hz) + faint gravel crunch
+//   land      soft low thud (slow-attack, pitch-dropped sine ~40-80 Hz) + faint dry gravel crunch
 //   jackLand  light wooden tick + tiny crunch
 //   jackHit   light wooden tick (louder with speed)
-//   click     boule-boule, billiard-ball style: short bright transient + quickly damped 2-5 kHz
-//             partials. Direct hits are louder, slightly lower and longer; grazes quieter and shorter.
+//   click     boule-boule, a lower billiard-ball knock: dry band-passed noise ~1.5 kHz + low-passed
+//             noise body, faint very short tone. Direct hits louder and lower; grazes quieter, higher.
 //   roll      per rolling body: barely audible band-passed noise + crackle, gain follows speed
 
 // All tuning numbers live here. Gains are linear (0..1 before the compressor).
@@ -32,48 +32,50 @@ export const SOUND = {
   limiter: { threshold: -10, knee: 6, ratio: 8, attack: 0.003, release: 0.15 }, // dB / seconds
 
   thud: {
-    gain: 0.9,
+    gain: 1.0,
     attack: 0.012, // s: soft onset (no sharp attack)
-    freqHi: 110, freqLo: 55, // Hz: sine starts at freqHi, drops to freqLo
-    drop: 0.06, // s: pitch-drop time constant
-    decay: 0.16, // s: body decay
-    triGain: 0.12, // faint triangle layer for a little definition
-    thumpCut: 180, // Hz: low-passed noise "thump" cutoff
-    thumpGain: 0.15,
+    freqHi: 80, freqLo: 42, // Hz: sine starts at freqHi, drops to freqLo
+    drop: 0.04, // s: pitch-drop time constant
+    decay: 0.09, // s: body decay (short = dry)
+    triGain: 0, // triangle layer (adds upper harmonics; off for a lower thud)
+    thumpCut: 120, // Hz: low-passed noise "thump" cutoff
+    thumpGain: 0.2,
   },
   crunch: {
-    gain: 0.06,
-    attack: 0.003, // s: grains fade in rather than click
-    grainsMin: 2, grainsMax: 9, // number of grains (scales with speed)
-    span: 0.12, // s: grains scattered over this window
-    freqLo: 800, freqHi: 2600, // Hz: random band-pass centre per grain
-    q: 1.2,
-    grainMin: 0.006, grainMax: 0.016, // s: grain length
+    gain: 0.05,
+    attack: 0.002, // s: grains fade in rather than click
+    grainsMin: 2, grainsMax: 7, // number of grains (scales with speed)
+    span: 0.06, // s: grains scattered over this window
+    freqLo: 500, freqHi: 1600, // Hz: random band-pass centre per grain
+    q: 0.9,
+    grainMin: 0.004, grainMax: 0.01, // s: grain length
   },
   jack: {
-    tickFreq: 2600, tickQ: 2.5, tickGain: 0.5, tickDecay: 0.018, // band-passed noise impulse
-    attack: 0.003, // s: light onset
-    sineFreq: 1300, sineGain: 0.06, sineDecay: 0.025, // faint woody tone
-    landCrunch: 0.15, // fraction of boule crunch added to the jack landing
+    tickFreq: 2200, tickQ: 1.4, tickGain: 0.5, tickDecay: 0.008, // band-passed noise impulse
+    attack: 0.002, // s: light onset
+    sineFreq: 1100, sineGain: 0.03, sineDecay: 0.012, // faint woody tone
+    landCrunch: 0.12, // fraction of boule crunch added to the jack landing
     quiet: 0.4, // overall level of jack sounds
   },
-  click: { // boule on boule, billiard-ball style
-    gain: 0.8,
-    noiseFreq: 3800, noiseQ: 0.9, noiseDecay: 0.005, noiseGain: 1.2, // bright snap
-    partials: [[2100, 0.5], [3150, 0.35], [4600, 0.2]], // [Hz, relative gain], inharmonic
-    decayGraze: 0.014, decayDirect: 0.04, // s: partial ring, graze to head-on
-    pitchGraze: 1.15, pitchDirect: 0.85, // partial pitch factor, graze to head-on
+  click: { // boule on boule: a billiard-ball knock, pitched lower
+    gain: 0.9,
+    noiseFreq: 1500, noiseQ: 0.8, noiseDecay: 0.004, noiseGain: 1.3, // main dry knock
+    bodyCut: 700, bodyDecay: 0.006, bodyGain: 0.8, // low-passed noise: weight of the knock
+    partials: [[850, 0.25], [1300, 0.12]], // [Hz, relative gain]: faint, very short tone
+    decayGraze: 0.006, decayDirect: 0.014, // s: partial ring, graze to head-on (dry)
+    pitchGraze: 1.15, pitchDirect: 0.85, // pitch factor, graze to head-on
     gainGraze: 0.45, gainDirect: 1, // level factor, graze to head-on
   },
   carreauAccent: 0.5, // extra click level for accent('carreau')
   roll: {
     minSpeed: 0.05, // m/s: silent below this
     fullSpeed: 3, // m/s at which scrape reaches full gain
-    gain: 0.012, // boule scrape level: barely audible
+    gain: 0.003, // boule scrape level: barely audible
     freq: 1700, q: 0.9, // band-pass centre/Q for boule
     modDepth: 0.35, // slow random modulation of centre freq (fraction)
     modRate: 1.5, // modulation speed (higher = more restless)
-    crackleGain: 0.25, // relative level of the crackle (pebble clicks) layer
+    crackleGain: 0.1, // relative level of the crackle (pebble clicks) layer
+    curve: 1.6, // >1 keeps slow rolls near silent
     jackGain: 0.35, jackFreq: 4200, // jack: much lighter and higher
     fade: 0.06, // s: gain smoothing time constant (no clicks)
   },
@@ -272,6 +274,8 @@ export function createAudio(opts = {}) {
     startVoice(t, decay + 0.03);
     const n = noiseSrc(t, K.noiseDecay * 3);
     n.connect(filt('bandpass', K.noiseFreq * pitch, K.noiseQ)).connect(envGain(t, level * K.noiseGain, K.noiseDecay, 0.0008)).connect(master);
+    const b = noiseSrc(t, K.bodyDecay * 3);
+    b.connect(filt('lowpass', K.bodyCut * pitch, 0.7)).connect(envGain(t, level * K.bodyGain, K.bodyDecay, 0.0008)).connect(master);
     for (const [pf, a] of K.partials) {
       const o = ctx.createOscillator();
       o.type = 'sine';
@@ -344,8 +348,8 @@ export function createAudio(opts = {}) {
     }
     v.seen = frame; v.silent = 0;
     const t = ctx.currentTime;
-    // fade in above the threshold, full at fullSpeed; sqrt-ish so slow rolls are still audible
-    const lvl = Math.pow(clamp01((speed - R.minSpeed) / (R.fullSpeed - R.minSpeed)), 0.7);
+    // fade in above the threshold, full at fullSpeed
+    const lvl = Math.pow(clamp01((speed - R.minSpeed) / (R.fullSpeed - R.minSpeed)), R.curve);
     v.out.gain.setTargetAtTime((v.jack ? R.jackGain : 1) * R.gain * lvl, t, R.fade);
     // slow random modulation of filter centre: random walk toward a drifting target
     if (Math.random() < dt * R.modRate) v.modTarget = rnd(-1, 1);
