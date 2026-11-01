@@ -17,6 +17,7 @@ import { createAudio } from './audio.js';
 import * as THREE from '../vendor/three.module.js';
 import { createCharacter, releaseOffset } from './character.js';
 import { attachModels } from './models.js';
+import { PERSONALITIES, CAST_IDS, specFor, createCommentary } from './personalities.js';
 
 const TEAM_NAMES = ['You & Pierre', 'Marcel & Odette'];
 const AIM_MAX = 0.6; // rad of aim either side of straight ahead
@@ -25,7 +26,7 @@ const DEG = Math.PI / 180;
 const params = new URLSearchParams(location.search);
 const debug = params.has('debug');
 const modelTimeout = +params.get('modeltimeout') || 5000; // ms; ?modeltimeout=600000 for virtual-time screenshots
-const useMeshes = params.get('figures') !== 'stick'; // ?figures=stick forces the stick figures
+const useMeshes = params.get('figures') === 'mesh'; // stick figures by default; ?figures=mesh loads the Kenney models (opt-in; ?figures=stick is the same as the default)
 const AI_MIN_THINK = 800; // ms: the AI never answers faster than this
 const HINT_KEY = 'petanque-hint-seen';
 const ROLL_KEY = 'petanque-roll-guide';
@@ -37,25 +38,9 @@ const ROLL_DEFAULT = { easy: true, medium: false, hard: false };
 // Where waiting players stand: behind the circle and beside the court, out of the shoulder camera's view
 const HOME = { you: { x: -0.9, y: -0.4 }, pierre: { x: -1.5, y: 0.7 }, marcel: { x: 6.0, y: 0.0 }, odette: { x: 6.8, y: 0.8 } };
 const CAST_SPEED = 2.4; // m/s: a brisk walk, so a change of thrower takes about a second
-// Looks and stances (GAME-PLAN section 10). Team colours: navy trousers for your team, bronze for the opponents.
-const SPECS = {
-  you: {
-    model: 'you', name: 'You', height: 1.76, build: 'average', stance: 'crouch',
-    colors: { shirt: '#9fb0b8', trousers: '#23396b', skin: '#d9a37c' },
-  },
-  pierre: {
-    model: 'pierre', name: 'Pierre', height: 1.82, build: 'average', stance: 'stand',
-    colors: { shirt: '#f2c230', trousers: '#23396b', skin: '#b98258' },
-  },
-  marcel: {
-    model: 'marcel', name: 'Marcel', height: 1.68, build: 'stout', stance: 'crouch',
-    colors: { shirt: '#d8d2c0', trousers: '#8a5a2b', skin: '#cf9a72', hat: '#3f3a34' }, quirks: { hat: 'cap' },
-  },
-  odette: {
-    model: 'odette', name: 'Odette', height: 1.74, build: 'slim', stance: 'stand',
-    colors: { shirt: '#e9e1d2', trousers: '#9c6a34', skin: '#efc6a4', hat: '#e9d9a0' }, quirks: { hat: 'sunhat' },
-  },
-};
+// Looks, stances, quirks and commentary live in personalities.js (GAME-PLAN section 10).
+// Team colours: navy trousers for your team, bronze for the opponents.
+const SPECS = Object.fromEntries(CAST_IDS.map((id) => [id, specFor(id)]));
 
 function store(key, value) { // localStorage that never throws
   try {
@@ -89,6 +74,8 @@ function boot() {
   const world = createWorld(terrain, mulberry32(seed ^ 0x9e3779b9));
   const renderer = createRenderer(canvas, terrain);
   const aiRand = mulberry32(seed ^ 0x51ed270b);
+  const talk = createCommentary(mulberry32(seed ^ 0x7a1c0de5)); // personality lines, seeded like everything else
+  const chance = mulberry32(seed ^ 0x3c6ef372);
 
   // ---- Characters: created once, walk between the circle and their waiting spots ----
   const reduceMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -539,11 +526,16 @@ function boot() {
     enableControls(false);
     clearWorld();
     setAim(0, false);
-    placePlayers('you');
+    placePlayers(debug && SPECS[params.get('who')] ? params.get('who') : 'you');
     aimView();
+    if (debug && params.has('topcam')) { // ?debug&topcam[&who=pierre]: top-down on the circle, for checking foot placement
+      renderer.setCamera('inspect', { target: { x: C.circle.x, y: C.circle.y }, dist: 2.2, az: 0, el: 1.5 });
+      cast.get(inCircle).setStance(SPECS[inCircle].stance);
+    }
     hud.hideChooser();
     hud.hideHint();
-    hud.showSetup({ difficulty });
+    hud.showSetup({ difficulty, cast: ['pierre', 'marcel', 'odette'].map((id) => ({ name: PERSONALITIES[id].name, bio: PERSONALITIES[id].bio, team: PERSONALITIES[id].team })) });
+    if (debug && params.has('topcam')) hud.hideOverlay();
   }
 
   function startGame(opts) {
@@ -641,13 +633,14 @@ function boot() {
     enterCircle(player.id, aiYaw);
     const choice = chooseJackThrow({ world, difficulty, rand: aiRand, player, from: base });
     pending = null;
-    await showAiSpot(player, choice, 'jack');
+    const spot = spotText(player, choice, 'jack');
+    await showAiSpot(player, choice, 'jack', spot);
     if (t !== token) return;
-    doThrow('jack', player.id, choice.throwParams, choice.label, choice.from, choice.loft);
+    doThrow('jack', player.id, choice.throwParams, spot, choice.from, choice.loft);
   }
 
   // Show the AI's donnée and arc for a moment before it throws
-  async function showAiSpot(player, choice, kind) {
+  async function showAiSpot(player, choice, kind, spot) {
     if (instant || !choice.donnee) return;
     const from = choice.from || releasePoint(player, choice.loft);
     const t = token;
@@ -663,10 +656,20 @@ function boot() {
       ...env, roll: null, donnee: choice.donnee, style: choice.style || styleForLoft(choice.loft, snapped),
       snapped, legalZone: kind === 'jack',
     });
-    say2(`${player.name} picks ${player.id === 'odette' ? 'her' : 'his'} spot…`);
+    say2(spot);
     await sleep(debug && params.has('aispot') ? 1e8 : 1100); // ?debug&aispot holds the view for screenshots
     if (t === token) { renderer.setThrowPreview(null); renderer.showJackZone(false); }
     shoulderCam.yaw = aimYaw;
+  }
+
+  // Status line while an AI shows its spot: the factual label and distance, then the player's own line
+  function spotText(player, choice, kind) {
+    const key = choice.labelKey || { event: kind === 'jack' ? 'spotJack' : 'spotPoint' };
+    const d = choice.donnee ? Math.hypot(choice.donnee.x - C.circle.x, choice.donnee.y - C.circle.y) : null;
+    const target = key.target === 'jack' ? 'the jack' : player.team === 1 ? 'your boule' : 'their boule';
+    const facts = (choice.label || `${player.name} picks ${player.id === 'odette' ? 'her' : 'his'} spot`) + (d ? ` (${d.toFixed(1)} m).` : '.');
+    const quip = talk.say(player.id, key.event, { target });
+    return quip ? `${facts} ${quip}` : facts;
   }
 
   async function aiBoule(player) {
@@ -693,11 +696,12 @@ function boot() {
       choice = { label: `${player.name} throws`, throwParams: { yaw, speed: 6.5, loft: 0.6, backspin: 40, sidespin: 0 } };
     }
     if (t !== token) return;
-    say2(choice.label);
-    if (!instant) await showAiSpot(player, choice, 'boule');
+    if (!instant) say2(choice.label);
+    const spot = instant ? choice.label : spotText(player, choice, 'boule');
+    if (!instant) await showAiSpot(player, choice, 'boule', spot);
     else await sleep(700);
     if (t !== token) return;
-    doThrow('boule', player.id, choice.throwParams, choice.label, choice.from, choice.from ? choice.loft : undefined);
+    doThrow('boule', player.id, choice.throwParams, spot, choice.from, choice.from ? choice.loft : undefined);
   }
 
   // Planning base for an AI that is not (yet) in the circle: facing the jack
@@ -717,16 +721,16 @@ function boot() {
     } catch (err) { return; }
     if (mine !== thinkToken || t !== token) return;
     pierreChoice = { id: pierre.id, choice };
-    let text = 'You point, I\'ll keep my boules for shooting.';
+    const j = jackBody();
+    const foes = world.bodies.filter((b) => b.kind === 'boule' && !b.dead && b.team === 1 && j);
+    foes.sort((a, b) => Math.hypot(a.x - j.x, a.y - j.y) - Math.hypot(b.x - j.x, b.y - j.y));
+    const mineHold = j && holdingTeam(match.jack, match.boules) === 0;
+    let event = 'suggestYou', target = 'the jack', fact = '';
     if (choice.intent === 'shoot') {
-      const j = jackBody();
-      const foes = world.bodies.filter((b) => b.kind === 'boule' && !b.dead && b.team === 1 && j);
-      foes.sort((a, b) => Math.hypot(a.x - j.x, a.y - j.y) - Math.hypot(b.x - j.x, b.y - j.y));
-      text = foes.length ? `I'd shoot ${ownerName(foes[0])} boule. Want me to?` : 'I\'d like to shoot. Want me to?';
-    } else if (choice.intent === 'point') {
-      text = 'I can see a good point from here, but you point and I\'ll keep my boules for shooting.';
-    }
-    hud.setSuggestion(`Pierre: "${text}"`);
+      event = 'suggestShoot';
+      if (foes.length) { target = `${ownerName(foes[0])} boule`; fact = ` (${target} is ${gapText(foes[0], j)} from the jack.)`; }
+    } else if (choice.intent === 'point' && !mineHold) event = 'suggestPoint';
+    hud.setSuggestion(`${talk.say('pierre', event, { target })}${fact}`);
     if (pickHuman !== null && pickHuman !== 'chooser') beginTurn('you'); // debug: go straight to the human throw
   }
 
@@ -772,10 +776,13 @@ function boot() {
   }
 
   // Commentary for the throw that just settled; evs = its physics events
+  let lastKind = null; // 'dead' | 'carreau' | 'great' | null, set by describe() for the personality lines
   function describe(was, evs) {
     const j = jackBody();
+    lastKind = null;
     if (j && j.dead) return 'The jack is out: dead jack.';
     if (was.kind === 'jack') return `Jack is ${Math.hypot(was.x - C.circle.x, was.y - C.circle.y).toFixed(1)} m out.`;
+    if (was.dead) lastKind = 'dead';
     if (was.dead) return `${ownerName(was)} boule is out: dead boule.`;
     const gap = Math.hypot(was.x - j.x, was.y - j.y) - was.r - j.r;
     const base = `${ownerName(was)} boule is ${gapText(was, j)} from the jack.`;
@@ -787,9 +794,11 @@ function boot() {
       if (!t || t.kind !== 'boule' || t.team === was.team || !from) continue;
       const moved = t.dead || Math.hypot(t.x - from.x, t.y - from.y) > 0.15;
       if (moved && Math.hypot(was.x - from.x, was.y - from.y) < 0.3) {
+        lastKind = 'carreau';
         return `Carreau! ${ownerName(was)} boule replaces the target.`;
       }
     }
+    if (gap < 0.02) lastKind = 'great';
     if (gap < 0.02) return `Biberon! ${ownerName(was)} boule is touching the jack.`;
     return base;
   }
@@ -803,6 +812,32 @@ function boot() {
     const p = match && match.players.find((q) => q.id === b.owner);
     return p ? (p.id === 'you' ? 'Your' : p.name + "'s") : 'The';
   };
+
+  // One or two personality lines for the throw that just settled (null when nothing fits)
+  const pick = (team) => {
+    const ids = match.players.filter((p) => p.team === team && !p.isHuman).map((p) => p.id);
+    return ids[Math.floor(chance() * ids.length)] || null;
+  };
+  function quip(was, prevHold) {
+    const j = jackBody(), now = holdingTeam(match.jack, match.boules);
+    const gap = j ? Math.hypot(was.x - j.x, was.y - j.y) - was.r - j.r : 9;
+    const owner = match.players.find((p) => p.id === was.owner);
+    if (!owner) return '';
+    const gained = now === was.team && prevHold !== was.team;
+    let ev = lastKind;
+    if (!ev) ev = gained || gap < 0.25 ? 'good' : now !== was.team && gap > 0.6 ? 'miss' : null;
+    if (!ev) return '';
+    const out = [];
+    if (owner.isHuman) { // you have no catchphrases: your partner cheers your points, a neutral line otherwise
+      const cheer = gained || ev === 'great' || ev === 'carreau';
+      out.push(cheer ? talk.say('pierre', 'ownScores') : talk.line('you', ev));
+    } else out.push(talk.say(owner.id, ev));
+    if (gained && chance() < 0.5) { // the other side reacts to losing the point
+      const foe = pick(1 - was.team);
+      if (foe && foe !== owner.id) out.push(talk.say(foe, 'oppScores'));
+    }
+    return out.filter(Boolean).join(' ');
+  }
 
   function onSettled() {
     const was = flying;
@@ -838,7 +873,8 @@ function boot() {
       return;
     }
     headView(snap.jack);
-    say2(note);
+    const remark = quip(was, prevHold);
+    say2(remark ? `${note} ${remark}` : note);
     refreshHud(null);
     react(was, prevHold);
     later(nextTurn, instant ? 0 : 1800);
@@ -883,15 +919,23 @@ function boot() {
       text = `${names} score ${r.points} point${r.points === 1 ? '' : 's'}`;
       if (r.team === 0) text = `You & Pierre score ${r.points} point${r.points === 1 ? '' : 's'}`;
     }
+    // the scoring side's player and one on the other side say their piece (nobody speaks for a void mène)
+    const voices = (won, lost) => {
+      if (r.void) return '';
+      const w = pick(r.team), l = pick(1 - r.team);
+      return [w && talk.say(w, won), l && talk.say(l, lost)].filter(Boolean).join(' ');
+    };
     if (match.phase === 'gameOver') {
       const win = match.winner;
+      const lines = [pick(win), pick(1 - win)];
       hud.showGameOver({
         text: win === 0 ? 'You win!' : 'Marcel & Odette win',
-        detail: `${text}. Final score ${match.scores[0]} to ${match.scores[1]}.`,
+        detail: `${text}. Final score ${match.scores[0]} to ${match.scores[1]}. ` +
+          [lines[0] && talk.say(lines[0], 'gameWon'), lines[1] && talk.say(lines[1], 'gameLost')].filter(Boolean).join(' '),
       });
       return;
     }
-    hud.showMeneEnd({ text, detail: `${detail} Score: ${match.scores[0]} to ${match.scores[1]}.` });
+    hud.showMeneEnd({ text, detail: `${detail} Score: ${match.scores[0]} to ${match.scores[1]}. ${voices('meneWon', 'meneLost')}`.trim() });
     if (instant && !params.has('meneend')) later(() => nextMene(), 0);
   }
 
@@ -953,7 +997,10 @@ function boot() {
     clearWorld();
     hud.hideHint();
     for (const ch of CAST_ALL.values()) ch.root.visible = false;
-    const specs = [
+    // &cast=quirk|celebrate|dismay: the four real players in a row (&q=N picks which idle quirk is held)
+    const castMode = params.get('cast');
+    const qi = +params.get('q') || 0;
+    const specs = castMode ? ['you', 'pierre', 'marcel', 'odette'].map((id) => [castMode === 'quirk' ? 'watch' : castMode, specFor(id)]) : [
       ['idle', { model: 'odette', name: 'Ana', height: 1.62, build: 'slim', stance: 'stand', colors: { shirt: '#c0392b', trousers: '#2c3e50', skin: '#e8b48c' } }],
       ['crouch', { model: 'marcel', name: 'Marcel', height: 1.7, build: 'stout', stance: 'crouch', colors: { shirt: '#6f8f4e', trousers: '#4b4b55', skin: '#d29b74', hat: '#2d3a55' }, quirks: { hat: 'cap' } }],
       ['stand', { model: 'odette', name: 'Odette', height: 1.65, build: 'slim', stance: 'stand', colors: { shirt: '#f2efe6', trousers: '#6b5b8c', skin: '#efc6a4', hat: '#e9d9a0' }, quirks: { hat: 'sunhat' } }],
@@ -965,7 +1012,7 @@ function boot() {
     const figures = specs.map(([stance, spec], i) => {
       const ch = createCharacter(THREE, spec);
       if (useMeshes) attachModels([{ ch, model: spec.model }], modelTimeout);
-      const x = -2.2 + i * 1.3;
+      const x = castMode ? -1.4 + i * 1.5 : -2.2 + i * 1.3;
       const y = stance === 'throw' && params.has('closeup') ? 0.5 : 3; // closeup: the thrower steps out of the line
       ch.setPlacement(x, y, Math.PI); // facing the camera (-y)
       ch.root.position.z = terrain.sample(x, y).h;
@@ -987,11 +1034,12 @@ function boot() {
         };
         loop();
       } else ch.setStance(stance);
+      if (castMode === 'quirk') { const l = spec.quirks.idle; ch.forceQuirk(l[qi % l.length]); }
       if (stance === 'watch') ch.lookAt(2, 0.5, 1.6);
       return ch;
     });
     if (params.has('closeup')) renderer.setCamera('inspect', { target: { x: 5.6, y: 0.5, }, dist: +params.get('dist') || 3.6, az: +params.get('az') || 1.2, el: +params.get('el') || 0.12 });
-    else renderer.setCamera('inspect', { target: { x: 1.7, y: 3 }, dist: 7, az: 0, el: 0.1 });
+    else renderer.setCamera('inspect', { target: { x: castMode ? 2.1 : 1.7, y: 3 }, dist: castMode ? +params.get('dist') || 5 : 7, az: +params.get('az') || 0, el: 0.1 });
     let lastC = performance.now();
     const tickC = (now) => {
       const dt = params.has('freezethrow') ? 1 / 60 : Math.min((now - lastC) / 1000, 0.1); lastC = now; // fixed step so a frozen release is exact

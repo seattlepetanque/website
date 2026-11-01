@@ -30,7 +30,7 @@ export function boneLengths(H = 1.75) {
     hipHalf: 0.055 * H, spine: 0.1 * H, chest: 0.17 * H,
     shoulderHalf: 0.115 * H, shoulderUp: 0.02 * H, neck: 0.03 * H, neckBase: 0.05 * H, head: 0.1 * H,
     upperArm: 0.186 * H, forearm: 0.146 * H, hand: 0.05 * H,
-    thigh: 0.245 * H, shin: 0.246 * H, ankleH: 0.04 * H, foot: 0.15 * H,
+    thigh: 0.245 * H, shin: 0.246 * H, ankleH: 0.04 * H, foot: 0.115 * H, heel: 0.03 * H, // toe 0.115 H ahead of the ankle, heel 0.03 H behind: 0.145 H in all
   };
 }
 
@@ -51,11 +51,22 @@ export const BONES = [
 // (p2, ab2) is the forearm's own direction. Feet: ground position, lift z and yaw.
 export function basePose() {
   return {
-    px: 0, py: 0, pz: 0.515, hop: 0, pitch: 0, twist: 0, spine: 0, spineTwist: 0,
+    px: 0, py: 0, ry: 0, pz: 0.515, hop: 0, pitch: 0, twist: 0, spine: 0, spineTwist: 0,
     neck: 0, headYaw: 0, headPitch: 0,
     armL: { p: 0.05, ab: 0.1, p2: 0.2, ab2: 0.1 }, armR: { p: 0.05, ab: 0.1, p2: 0.2, ab2: 0.1 },
     footL: { x: -0.085, y: 0, z: 0, yaw: -0.15 }, footR: { x: 0.085, y: 0, z: 0, yaw: 0.15 },
   };
+}
+
+// Root offset (fraction of height) that centres both feet's footprint (heel 0.03 behind the ankle, toe 0.115
+// ahead) on the root, so a thrower standing at the circle's centre has the feet inside it, crouched or standing.
+export function footprintShift(p) {
+  let lo = Infinity, hi = -Infinity;
+  for (const f of [p.footL, p.footR]) {
+    const c = cos(f.yaw);
+    lo = min(lo, f.y - 0.03 * c); hi = max(hi, f.y + 0.115 * c);
+  }
+  return (lo + hi) / 2;
 }
 
 export function clonePose(p) { return JSON.parse(JSON.stringify(p)); }
@@ -136,6 +147,9 @@ export function solveSkeleton(pose, H = 1.75) {
     chest: [Fc([1, 0, 0]), Fc([0, 1, 0]), Fc([0, 0, 1])],
     head: [Fh([1, 0, 0]), Fh([0, 1, 0]), Fh([0, 0, 1])],
   };
+  // keep the feet's footprint centred on the root (pose.ry, set by stancePose / walkPose)
+  const ry = (pose.ry || 0) * H;
+  if (ry) for (const k of Object.keys(j)) j[k] = [j[k][0], j[k][1] - ry, j[k][2]];
   return { joints: j, frames };
 }
 
@@ -160,7 +174,7 @@ export function stancePose(stance, t, ctx = {}) {
       break;
     case 'stand': // shooter: upright, slight forward lean, one foot ahead
       p.pz = 0.505; p.pitch = 0.06; p.spine = 0.1; p.neck = -0.12;
-      p.footL = { x: -0.08, y: 0.07, z: 0, yaw: -0.2 }; p.footR = { x: 0.1, y: -0.05, z: 0, yaw: 0.25 };
+      p.footL = { x: -0.06, y: 0.03, z: 0, yaw: -0.15 }; p.footR = { x: 0.07, y: -0.025, z: 0, yaw: 0.2 }; // narrow enough for the 0.5 m circle
       p.twist = 0.08;
       p.armR = arm(0.3, 0.1, 1.2); p.armL = arm(0.15, 0.55, 0.3);
       p.px = 0.004 * sin(t * 0.9);
@@ -173,8 +187,10 @@ export function stancePose(stance, t, ctx = {}) {
       break;
     }
     case 'celebrate': {
+      const react = ctx.react;
+      if (react === 'proud' || react === 'clap') { reactionPose(p, 'celebrate', react, t); break; }
       const w = sin(t * 9);
-      const hop = max(0, sin(t * 7)) * 0.045;
+      const hop = max(0, sin(t * 7)) * (react === 'jump' ? 0.075 : 0.045);
       p.hop = hop; p.pz = 0.505; p.pitch = -0.04; p.spine = -0.08; p.neck = -0.15;
       p.headYaw = 0.15 * sin(t * 3);
       p.armL = { p: 2.85 + 0.12 * w, ab: 0.5, p2: 3.0 + 0.1 * w, ab2: 0.45 };
@@ -183,6 +199,7 @@ export function stancePose(stance, t, ctx = {}) {
       break;
     }
     case 'dismay': // hands on head, slow shake, shoulders hunched forward
+      if (ctx.react && ctx.react !== 'head') { reactionPose(p, 'dismay', ctx.react, t); break; }
       p.pz = 0.505; p.pitch = 0.1; p.spine = 0.14; p.neck = 0.25;
       p.headYaw = 0.3 * sin(t * 2.6) * 0.6;
       p.armL = { p: 2.8, ab: 0.9, p2: 3.8, ab2: -1.4 };
@@ -199,7 +216,92 @@ export function stancePose(stance, t, ctx = {}) {
       p.armL.p = 0.05 + 0.01 * b; p.armR.p = 0.05 + 0.01 * b;
     }
   }
+  p.ry = footprintShift(p);
+  if ((stance === 'watch' || stance === 'idle') && (ctx.quirks || ctx.forceQuirk)) return withQuirk(p, t, ctx);
   return p;
+}
+
+// ---------- personality: idle quirks and reaction styles (pure) ----------
+const HIPS = { armL: { p: -0.15, ab: 0.55, p2: 0.95, ab2: -0.95 }, armR: { p: -0.15, ab: 0.55, p2: 0.95, ab2: -0.95 } };
+const setArms = (p, o) => { if (o.armL) p.armL = { ...o.armL }; if (o.armR) p.armR = { ...o.armR }; };
+const hasHips = (p) => setArms(p, HIPS);
+// Each idle quirk edits a watch/idle pose p at u seconds into the quirk (added to the base, so looking still works)
+export const QUIRKS = {
+  hips: { dur: 3.2, fn: (p, u) => { hasHips(p); p.spine += -0.05; p.pitch -= 0.02; p.headYaw += 0.15 * sin(u * 1.4); } },
+  headshake: { dur: 2.6, fn: (p, u) => { p.headYaw += 0.55 * sin(u * 5.5); p.neck += 0.15; p.spine += 0.03; } },
+  wipebrow: { dur: 2.6, fn: (p, u) => {
+    p.armR = { p: 1.05, ab: 0.45, p2: 2.85 + 0.2 * sin(u * 9), ab2: -0.45 + 0.12 * sin(u * 9) };
+    p.neck += 0.12; p.spine += 0.04;
+  } },
+  fold: { dur: 5, fn: (p, u) => {
+    setArms(p, { armL: { p: 0.5, ab: 0.1, p2: 1.75, ab2: -1.0 }, armR: { p: 0.55, ab: 0.1, p2: 1.5, ab2: -1.0 } });
+    p.headYaw += 0.1 * sin(u * 0.8); p.pitch -= 0.015;
+  } },
+  checkwatch: { dur: 3, fn: (p, u) => {
+    p.armL = { p: 0.65, ab: 0.15, p2: 2.25 + 0.05 * sin(u * 3), ab2: -0.35 };
+    p.neck += 0.4; p.headYaw -= 0.1;
+  } },
+  tilt: { dur: 3, fn: (p, u) => { p.headYaw += 0.3; p.neck += 0.1 * sin(u * 2); p.twist += 0.05; p.px += 0.015; p.armL = arm(0.2, 0.15, 0.45); } },
+  bounce: { dur: 3.4, fn: (p, u) => {
+    const h = max(0, sin(u * 9)) * 0.022;
+    p.hop = h; p.footL.z = h * 0.9; p.footR.z = h * 0.9; p.neck -= 0.04;
+    p.armL.p = 0.2 + 0.25 * sin(u * 4.5); p.armR.p = 0.2 - 0.25 * sin(u * 4.5);
+  } },
+  fidget: { dur: 3, fn: (p, u) => {
+    p.armL = { p: 0.55, ab: 0.2, p2: 1.55, ab2: -0.9 + 0.2 * sin(u * 7) }; p.armR = { p: 0.55, ab: 0.2, p2: 1.55, ab2: -0.9 - 0.2 * sin(u * 7) };
+    p.headYaw += 0.45 * sin(u * 2.2); p.px += 0.012 * sin(u * 3); p.footL.x -= 0.02 * max(0, sin(u * 3));
+  } },
+  practice: { dur: 3.2, fn: (p, u) => {
+    const sw = 0.7 + 0.9 * sin(u * 4.2); // a pretend swing of the throwing arm
+    p.armR = { p: sw, ab: 0.1, p2: sw + 0.2, ab2: 0.1 };
+    p.spineTwist += 0.25 * sin(u * 4.2 + 0.4); p.pitch += 0.04;
+  } },
+  shift: { dur: 3, fn: (p, u) => { p.px += 0.035 * sin(u * 2); p.twist += 0.06 * sin(u * 2); p.footR.x += 0.015; } },
+  lookaround: { dur: 3, fn: (p, u) => { p.headYaw += 0.55 * sin(u * 1.8); p.neck += 0.03; } },
+};
+const BLEND_IN = 0.45;
+// Which quirk (if any) is active at time t for a character: a slot every SLOT seconds, a quirk in each, with a rest first
+const SLOT = 7.5;
+export function quirkAt(list, t, offset = 0) {
+  if (!list || !list.length) return null;
+  const tt = t + offset, i = Math.floor(tt / SLOT), u = tt - i * SLOT - 1.2;
+  const name = list[(i * 5 + 3 + Math.floor(offset)) % list.length], dur = QUIRKS[name].dur;
+  if (u < 0 || u > dur) return null;
+  return { name, u, w: clamp(min(u, dur - u) / BLEND_IN, 0, 1) };
+}
+function withQuirk(p, t, ctx) {
+  let name, u, w = 1;
+  if (ctx.forceQuirk) { name = ctx.forceQuirk; u = t; } else {
+    const a = quirkAt(ctx.quirks && ctx.quirks.idle, t, ctx.offset || 0);
+    if (!a) return p;
+    ({ name, u, w } = a);
+  }
+  const q = clonePose(p);
+  QUIRKS[name].fn(q, u);
+  return blendPoses(p, q, w);
+}
+
+// Celebrate / dismay variants by personality (the default 'cheer' and 'head' live in stancePose)
+function reactionPose(p, kind, style, t) {
+  p.pz = 0.505; p.footL.x = -0.095; p.footR.x = 0.095;
+  if (kind === 'celebrate' && style === 'proud') { // Marcel: hands on hips, chest out, a slow satisfied nod
+    hasHips(p); p.spine = -0.06; p.pitch = -0.03; p.neck = 0.12 * sin(t * 2.4); p.hop = max(0, sin(t * 3.5)) * 0.008;
+  } else if (kind === 'celebrate') { // Odette: a small nod and a single clap
+    const m = t % 3, k = m < 0.55 ? 0.5 - 0.5 * cos(m / 0.55 * 2 * PI) : 0;
+    p.neck = 0.1 * max(0, sin(t * 3)); p.spine = 0.02;
+    p.armL = { p: 0.95, ab: 0.3 - 0.2 * k, p2: 1.95, ab2: -0.5 - 0.5 * k }; p.armR = { p: 0.95, ab: 0.3 - 0.2 * k, p2: 1.95, ab2: -0.5 - 0.5 * k };
+  } else if (style === 'wave') { // Marcel: a grumbling wave of the hand, head shaking
+    p.armR = { p: 1.25, ab: 0.65, p2: 2.3, ab2: 0.45 + 0.55 * sin(t * 7) };
+    p.armL = { ...HIPS.armL };
+    p.headYaw = 0.45 * sin(t * 2.6); p.neck = 0.2; p.pitch = 0.07; p.spine = 0.08;
+  } else if (style === 'sigh') { // Odette: a hand to the forehead, a slow shake of the head
+    p.armR = { p: 1.2, ab: 0.45, p2: 3.0, ab2: -0.65 }; p.armL = arm(0.1, 0.12, 0.35);
+    p.headYaw = 0.25 * sin(t * 1.6); p.neck = 0.28; p.spine = 0.12; p.pitch = 0.05;
+  } else { // shrug (You): palms up
+    const s = 0.05 * sin(t * 2);
+    p.armL = { p: 0.4, ab: 0.65 + s, p2: 0.85, ab2: 0.95 }; p.armR = { p: 0.4, ab: 0.65 + s, p2: 0.85, ab2: 0.95 };
+    p.neck = 0.12; p.headYaw = 0.2 * sin(t * 1.5);
+  }
 }
 
 // Walking gait at the given phase (radians, one full cycle = two steps)
@@ -210,6 +312,7 @@ export function walkPose(phase) {
   p.pz = 0.505 - 0.012 * abs(c); p.px = 0.012 * s; p.twist = 0.1 * s; p.spine = -0.1 * s * 0.6 + 0.04;
   p.armL = arm(-0.45 * s + 0.1, 0.08, 0.3); p.armR = arm(0.45 * s + 0.1, 0.08, 0.3);
   p.pitch = 0.05; p.neck = -0.04; p.headYaw = 0;
+  p.ry = 0.0425; // the gait's footprint is centred here at every phase
   return p;
 }
 
@@ -242,7 +345,7 @@ export function throwPose(tt, base, stance) {
   p.spineTwist += -0.3 * kBack + 0.35 * kFollow;
   p.pz -= 0.02 * kBack;
   if (stance === 'stand') {
-    p.footL.y += 0.1 * kBack; p.footR.y -= 0.02 * kBack;
+    p.footL.y += 0.04 * kBack; p.footR.y -= 0.02 * kBack;
   } else {
     p.px += 0.01 * kFollow;
   }
@@ -356,6 +459,8 @@ export function createCharacter(THREE, spec = {}) {
   const stanceKind = spec.stance === 'stand' ? 'stand' : 'crouch';
   const quirks = spec.quirks || {};
   const L = boneLengths(H);
+  let quirkOffset = 0; // desynchronises the idle quirks of different characters
+  for (const ch of String(spec.name || '')) quirkOffset += ch.charCodeAt(0) * 0.37;
 
   const root = new THREE.Group();
   root.name = spec.name || 'character';
@@ -398,8 +503,11 @@ export function createCharacter(THREE, spec = {}) {
   const hipBar = addMesh(new THREE.CapsuleGeometry(rs(0.06), L.hipHalf * 2, 4, 10), mTrousers);
   caps.push({ me: shoulderBar, a: 'shoulderL', b: 'shoulderR' }, { me: hipBar, a: 'hipL', b: 'hipR' });
   const hands = ['L', 'R'].map(() => addMesh(new THREE.SphereGeometry(rLimb(0.028), 10, 8), mSkin));
-  const feetMeshes = ['L', 'R'].map(() => addMesh(new THREE.CapsuleGeometry(rLimb(0.028), L.foot * 0.8, 4, 8), mShoe));
+  const feetMeshes = ['L', 'R'].map(() => addMesh(new THREE.CapsuleGeometry(rLimb(0.028), L.foot + L.heel - 2 * rLimb(0.028), 4, 8), mShoe));
 
+  // optional neckerchief (colors.scarf): a ring at the base of the neck, turned with the chest
+  let scarf = null;
+  if (colors.scarf) scarf = addMesh(new THREE.TorusGeometry(H * 0.05, H * 0.02, 8, 14), mat(colors.scarf));
   let belly = null;
   if (build.belly > 0) {
     belly = addMesh(new THREE.SphereGeometry(H * build.belly + H * 0.04, 14, 10), mShirt);
@@ -448,7 +556,7 @@ export function createCharacter(THREE, spec = {}) {
   const st = {
     t: 0, yaw: 0, stance: 'idle', mode: 'stance', blend: 1, snap: null, out: null,
     look: null, lookSm: { yaw: 0, pitch: 0 }, holding: false,
-    walk: null, throwing: null, solved: null, frame: null,
+    walk: null, throwing: null, solved: null, frame: null, forceQuirk: null,
   };
   let vis = null; // skinned-mesh visual: { scene, s, name, bones, hatG, mHat }
   const V = THREE;
@@ -461,7 +569,8 @@ export function createCharacter(THREE, spec = {}) {
     if (st.mode === 'throw') {
       return throwPose(st.throwing.t, stancePose(stanceKind, st.t, {}), stanceKind);
     }
-    return stancePose(st.stance, st.t, { look: st.lookSm });
+    const react = st.stance === 'celebrate' ? quirks.celebrate : st.stance === 'dismay' ? quirks.dismay : undefined;
+    return stancePose(st.stance, st.t, { look: st.lookSm, quirks, react, forceQuirk: st.forceQuirk, offset: quirkOffset });
   }
   function evalPose() {
     const target = currentTarget();
@@ -613,7 +722,9 @@ export function createCharacter(THREE, spec = {}) {
       const a = j['ankle' + n], f = j['foot' + n];
       const fm = feetMeshes[i];
       const z = a[2] - L.ankleH + H * 0.028;
-      va.set(a[0], a[1], z); vb.set(f[0], f[1], z);
+      const fx = f[0] - a[0], fy = f[1] - a[1], fl = Math.hypot(fx, fy) || 1, r = rLimb(0.028);
+      va.set(a[0] - fx / fl * (L.heel - r), a[1] - fy / fl * (L.heel - r), z);
+      vb.set(a[0] + fx / fl * (L.foot - r), a[1] + fy / fl * (L.foot - r), z);
       fm.position.copy(va).add(vb).multiplyScalar(0.5);
       vd.copy(vb).sub(va).normalize(); fm.quaternion.setFromUnitVectors(yAxis, vd);
     });
@@ -622,6 +733,11 @@ export function createCharacter(THREE, spec = {}) {
     m4.setPosition(...j.head);
     headG.matrix.copy(m4); headG.matrixWorldNeedsUpdate = true;
     headG.matrixWorld.copy(headG.matrix); // parent is root; recomputed on render
+    if (scarf) {
+      const [cx, cy, cz] = frames.chest;
+      scarf.position.set(...j.neck); scarf.position.z += H * 0.005;
+      scarf.quaternion.setFromRotationMatrix(m4.makeBasis(va.set(...cx), vb.set(...cy), vd.set(...cz)));
+    }
     if (belly) {
       const [cx, cy, cz] = frames.chest;
       const o = (cy.map((v) => v * H * 0.05));
@@ -675,6 +791,7 @@ export function createCharacter(THREE, spec = {}) {
       switchMode('throw');
     });
   }
+  function forceQuirk(name) { st.forceQuirk = name || null; st.t = 0; } // debug: hold one idle quirk
   function setHolding(on) { st.holding = !!on; holdMesh.visible = st.holding; }
   function lookAt(x, y, z) {
     st.look = x === null || x === undefined ? null : { x, y, z: z === undefined ? 1.5 : z };
@@ -698,11 +815,13 @@ export function createCharacter(THREE, spec = {}) {
     // hats ride the head bone: a head-like frame (z up, y forward) mapped into model space
     const hatG = new V.Group();
     hatG.quaternion.setFromRotationMatrix(MM);
-    hatG.position.set(0, RIG.headCentre + 0.1, 0.01);
-    if (mHat) buildHat(hatG, 0.2, 1.5, 1.5);
+    const cap = quirks.hat === 'cap';
+    hatG.position.set(0, RIG.headCentre + (cap ? 0.07 : 0.1), cap ? 0.015 : 0.01);
+    // the sun hat's dome is tall so Odette's bun stays inside it; Marcel's cap covers the flat crown
+    if (mHat) buildHat(hatG, cap ? 0.235 : 0.2, 1.5, cap ? 1.5 : 1.8);
     bones.head.add(hatG);
     // Marcel's belly: a small shirt-coloured ellipsoid on the torso bone
-    if (build.belly > 0) {
+    if (build.belly >= 0.05) {
       const bel = addMesh(new V.SphereGeometry(1, 14, 10), mShirt, bones.torso);
       bel.scale.set(0.105 + build.belly * 0.4, 0.09, 0.1 + build.belly * 0.4);
       bel.position.set(0, 0.075, 0.07);
@@ -732,7 +851,7 @@ export function createCharacter(THREE, spec = {}) {
   applyMeshes();
   return {
     root, update, setStance, walkTo, playThrow, handWorldPosition, dispose,
-    lookAt, setHolding, setPlacement, attachModel,
+    lookAt, setHolding, setPlacement, attachModel, forceQuirk,
     get isMesh() { return !!vis; },
     get yaw() { return st.yaw; },
     set yaw(v) { setYaw(v); },

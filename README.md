@@ -44,7 +44,7 @@ The game is at `/game.html`. Its page is `content/game.md`, its template is `lay
 
 three.js 0.170.0 is vendored in `assets/js/vendor/` (see the README there for its source and licence), with its `GLTFLoader.js`. Nothing is loaded from a CDN at runtime.
 
-Four player models are in `static/models/`: Marcel, Odette, Pierre and You, from the Kenney Mini Characters pack (CC0; see `static/models/CREDITS.md`). The game does not load them yet. The players are stick figures from `character.js` for now.
+Four player models are in `static/models/`: Marcel, Odette, Pierre and You, from the Kenney Mini Characters pack (CC0; see `static/models/CREDITS.md`). The players are stick figures from `character.js` by default (each with their own colours, hat, build and idle quirks, set in `personalities.js`); the models are opt-in with `?figures=mesh` and are not downloaded otherwise.
 
 The modules in `assets/js/petanque/`:
 
@@ -86,7 +86,8 @@ Debug URLs (add the query to `/game.html`):
 - `?debug&humanturn&demo`: a scripted toss preview, for screenshots.
 - `?debug&aispot`: holds the view on the AI's spot, for screenshots.
 - `?debug&preview`: static throw preview with made-up paths, for screenshots.
-- `?debug&characters`: all the stick-figure stances side by side, for screenshots.
+- `?debug&characters`: all the stick-figure stances side by side, for screenshots. Add `&cast=quirk` (with `&q=0..2` for which quirk), `&cast=celebrate` or `&cast=dismay` for the four real players. `&figures=mesh` there too for the models.
+- `?figures=mesh`: use the Kenney mesh models instead of the stick figures (`?figures=stick` is the default).
 - `?seed=N`: fixes the court and random numbers, so the same N gives the same game.
 
 `GAME-PLAN.md` describes the design. `GAME-BACKLOG.md` lists the work items and their history.

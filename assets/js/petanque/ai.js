@@ -16,10 +16,11 @@ export const AI = {
   lofts: { roulette: 14 * DEG, demi: 32 * DEG, plombee: 55 * DEG, tir: 32 * DEG, tirHigh: 42 * DEG, jackLow: 35 * DEG, jack: 55 * DEG },
   shootBonus: { pointeur: 0, tireur: 0.6 }, // tireurs like a shot: added to the score of tir candidates
   // personality: added to the score of pointing candidates of that style (Marcel the pointeur likes to roll)
+  // (Pierre likes to shoot: a small bonus on tir candidates; Odette is a tireur through her role)
   stylePref: {
     marcel: { roulette: 0.22, demi: 0.06 },
     odette: { demi: 0.02 },
-    pierre: { demi: 0.04 },
+    pierre: { demi: 0.04, tir: 0.08 },
   },
   styleNoise: 0.08, // random +- added to every candidate so equal-looking choices vary between turns
   maxSimSeconds: 14,
@@ -202,14 +203,14 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
   const perceived = world.terrain.perceived();
   const deadBefore = liveBoules(world).filter((b) => b.dead && b.team === team).length;
   const cands = buildCandidates(world, match, player);
-  const finish = (donnee, loft, intent, label, score, snapped) => {
+  const finish = (donnee, loft, intent, label, score, snapped, labelKey) => {
     const rel = releaseFrom(from, loft);
     const throwParams = throwThrough({ from: rel, donnee, loft, skill, terrain: world.terrain, rand });
-    return { throwParams, from: rel, intent, label, score, donnee, loft, style: styleForLoft(loft, snapped) };
+    return { throwParams, from: rel, intent, label, labelKey, score, donnee, loft, style: styleForLoft(loft, snapped) };
   };
   if (!cands.length) {
     // no jack to aim at: just lob towards the middle of the lane
-    return finish({ x: C.circle.x, y: 8 }, AI.lofts.demi, 'point', `${player.name} points a demi-portée`, 0, false);
+    return finish({ x: C.circle.x, y: 8 }, AI.lofts.demi, 'point', `${player.name} points a demi-portée`, 0, false, { event: 'spotPoint', style: 'demi-portee' });
   }
   const seeds = cands.map(() => seedFrom(rand));
   let best = null;
@@ -245,7 +246,7 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
     yield;
   }
   const { k, donnee } = best;
-  return finish(donnee, k.loft, k.intent, makeLabel(player, k), best.score, k.intent === 'shoot');
+  return finish(donnee, k.loft, k.intent, makeLabel(player, k), best.score, k.intent === 'shoot', labelKeyFor(k));
 }
 
 function makeLabel(player, k) {
@@ -253,6 +254,12 @@ function makeLabel(player, k) {
   if (k.intent === 'point') return `${n} ${FRENCH[styleForLoft(k.loft)]}`;
   if (k.tag === 'jack') return `${n} goes for the cochonnet!`;
   return `${n} shoots at ${player.team === 1 ? 'your' : 'their'} boule`;
+}
+
+// Personality hook: main.js turns this into a line from personalities.js (`label` stays as the plain fallback)
+function labelKeyFor(k) {
+  if (k.intent === 'point') return { event: 'spotPoint', style: styleForLoft(k.loft) };
+  return { event: 'spotShoot', target: k.tag === 'jack' ? 'jack' : 'boule' };
 }
 
 export function chooseThrow(args) {
@@ -312,6 +319,7 @@ export function chooseJackThrow({ world, difficulty = 'medium', rand, player, fr
   const throwParams = throwThrough({ from, donnee, loft: k.loft, skill, terrain: world.terrain, rand });
   return {
     throwParams, from, intent: 'jack', label: `${player ? player.name : 'The AI'} throws the cochonnet`,
+    labelKey: { event: 'spotJack' },
     donnee, loft: k.loft, style: styleForLoft(k.loft),
   };
 }

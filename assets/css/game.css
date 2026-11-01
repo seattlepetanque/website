@@ -84,6 +84,9 @@
 }
 .pt-card-title { margin: 0 0 .5rem; font-size: 1.4rem; }
 .pt-blurb { margin: 0 0 .9rem; }
+.pt-cast { margin: 0 0 .9rem; padding: 0; list-style: none; text-align: left; font-size: .9rem; line-height: 1.35; }
+.pt-cast-item { margin: 0 0 .3rem; padding-left: .6rem; border-left: 4px solid var(--navy, #14284b); }
+.pt-cast-item.pt-cast1 { border-left-color: #a8742f; }
 .pt-fieldset { margin: 0 0 .9rem; padding: 0; border: 0; display: flex; flex-wrap: wrap; gap: .4rem 1rem; justify-content: center; }
 .pt-fieldset legend { width: 100%; padding: 0; margin-bottom: .3rem; font-weight: 700; text-align: center; }
 .pt-choice { display: inline-flex; align-items: center; gap: .4rem; min-height: 2.5rem; cursor: pointer; }

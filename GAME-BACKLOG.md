@@ -167,8 +167,8 @@ Design: GAME-PLAN.md §9–11. Round 1 contracts above still apply (units, axes,
 | C09 | done | sonnet | C07, C08 | Characters in the game: positions, throw sync, reactions |
 | C10 | done | sonnet | — | Find and vendor CC0 rigged human models |
 | C11 | done | sonnet | C09, C10 | Skinned meshes on the skeleton |
-| C12 | in-progress | sonnet | C11 | Personalities: looks, quirks, reactions, commentary |
-| C13 | todo | sonnet | C12 | Round 2 final review |
+| C12 | done | sonnet | C11 | Personalities: looks, quirks, reactions, commentary |
+| C13 | in-progress | sonnet | C12 | Round 2 final review |
 
 ### C01 Throw model (sonnet)
 Implement `donnee.js` per the contracts and GAME-PLAN §9, with `tests/petanque/donnee.test.js`. Read `physics.js` for the exact flight integration (gravity, drag, dt) and make `solveLaunch` match it (e.g. bisection on speed using a tiny flight-only integrator that mirrors physics, or launching a body in a bare world). Tune `backspinForLoft` with the physics: a 60° plombée should stop within ~0.4 m of its donnée on flat terrain, a 12° roulette should run well past it, a 35° demi-portée in between. Cone defaults: human lateral ≈ 1.2% of distance, longitudinal ≈ 3% at low loft rising to ≈ 5% at 75°, loft sigma ≈ 1.5°. Tests: landing error < 2 cm across distances 3–12 m and lofts 8–75° on flat and seeded terrain; backspin monotonic in loft; sampled landings match the cone's sigmas statistically; envelope paths finite; `predictRoll` ends near a real noiseless sim.
@@ -234,6 +234,8 @@ Done by script and screenshots; a person still needs to feel it. Try each on a m
 - **Look for:** arcs leaving the top of the screen for lofts above ~60° (expected for very high lobs), the placeholder thrower hiding the start of the arc, cones that look wider or narrower than where the boules land, and any throw that leaves from a different height than the preview showed.
 - From C09: release heights now come from the character's hand (crouched ≈ 0.16–0.8 m, standing ≈ 0.7–1.4 m by loft), replacing C07's 0.5/0.9 m rule — roulette behaviour shifts; re-run the C07 checklist in C13. The mène-end/game-over gathering reads poorly from the steep head camera (only legs at the top corners); the post-throw reaction cut shows only the thrower; the first throw of a mène gets no reaction. Waiting characters cast no shadow (their shadows fell into the shoulder view).
 - From C11: meshes load in the background (stick figures until ready; `?figures=stick`; 5 s timeout → stick fallback; use `&modeltimeout=600000` for headless screenshots). Mesh release heights are lower (crouch ≈ 0.12–0.4 m, stand ≈ 0.1–0.7 m), so plombées start low — check in C13 whether standing throwers should release higher (the chibi's short arms). Shoulder camera widened (×1.45) because the big heads block the view; the thrower's head still fills the lower-left in the human view. Odette's bun pokes through her sun hat from behind. `spec.colors` is ignored in mesh mode (texture colours), and the belly ellipsoid uses the spec shirt colour, which can clash with the texture. Kenney walk clip unused (procedural gait).
+- User decision (2026-10-31, after C11): stick figures are the default — the meshes are cute but oddly scaled and can't show crouching. Kenney meshes stay opt-in behind `?figures=mesh` and are not downloaded otherwise. Folded into C12.
+- From C12: feet resized (heel-to-toe 0.145·H) and the thrower's footprint centred on the circle; worst-case reach 0.20–0.23 m of the 0.25 m radius (Pierre standing has ~2 cm margin) — checked numerically, not visually. The AI-spot status read "Odette throws the cochonnet (4.5 m)" — check whether that distance is the donnée, and whether the jack ends legal. "You points…" labels still appear in all-AI debug matches. Marcel's belly reads as a large green ball on the stick figure.
 
 ## Later (not scheduled)
 
