@@ -158,7 +158,7 @@ Design: GAME-PLAN.md §9–11. Round 1 contracts above still apply (units, axes,
 |---|---|---|---|---|
 | C01 | done | sonnet | — | Throw model: solver, backspin, cone (`donnee.js`) |
 | C02 | done | sonnet | — | Over-the-shoulder camera, placeholder players, preview drawing |
-| C03 | in-progress | sonnet | C01, C02 | Toss input: aim, donnée, pull for loft |
+| C03 | done | sonnet | C01, C02 | Toss input: aim, donnée, pull for loft |
 | C04 | todo | sonnet | C03, C05 | Integrate the donnée throw into the game |
 | C05 | in-progress | sonnet | C01 | AI on the donnée model |
 | C06 | todo | haiku | C04 | Remove the old swing code; update README |

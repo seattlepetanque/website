@@ -167,3 +167,11 @@
   color: var(--navy, #14284b); background: transparent; border: 2px solid var(--navy, #14284b); border-radius: 4px;
 }
 .pt-hint-close:focus-visible { outline: 3px solid var(--navy, #14284b); outline-offset: 2px; }
+
+/* toss */
+.toss-readout {
+  position: fixed; z-index: 5; pointer-events: none;
+  padding: .2rem .6rem; font: 700 .95rem system-ui, sans-serif; white-space: nowrap;
+  color: var(--paper, #fffaf0); background: var(--navy, #14284b); border-radius: 4px; opacity: .88;
+}
+.toss-readout.is-cancel { background: var(--red, #8a1c2b); }
