@@ -763,5 +763,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { sync, setCamera, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, clearMeasure, showJackZone, setPlayers, setThrowPreview, getZoom: () => zoom };
+  return { sync, setCamera, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, clearMeasure, showJackZone, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
 }

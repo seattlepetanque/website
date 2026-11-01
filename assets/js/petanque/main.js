@@ -11,6 +11,8 @@ import { createHud } from './hud.js';
 import { chooseThrowAsync, chooseJackThrow, assistJackThrow, idealJackSpeed } from './ai.js';
 import { createSwingInput, createSwingGauge } from './input.js';
 import { createAudio } from './audio.js';
+import * as THREE from '../vendor/three.module.js';
+import { createCharacter } from './character.js';
 
 const TEAM_NAMES = ['You & Pierre', 'Marcel & Odette'];
 const AIM_MAX = 0.6; // rad of aim either side of straight ahead
@@ -599,6 +601,46 @@ function boot() {
   } else if (debug && pickHuman !== null) {
     // Stop at the human's first boule (or at the chooser with ?humanturn=chooser)
     startGame({ target: 7, difficulty: 'medium', instant: true, firstJackTeam: pickHuman === 'jack' ? 0 : 1 });
+  } else if (debug && params.has('characters')) {
+    // --- ?debug&characters: stick figures in every stance side by side (for screenshots) ---
+    clearWorld();
+    hud.hideHint();
+    const specs = [
+      ['idle', { name: 'Ana', height: 1.62, build: 'slim', stance: 'stand', colors: { shirt: '#c0392b', trousers: '#2c3e50', skin: '#e8b48c' } }],
+      ['crouch', { name: 'Marcel', height: 1.7, build: 'stout', stance: 'crouch', colors: { shirt: '#6f8f4e', trousers: '#4b4b55', skin: '#d29b74', hat: '#2d3a55' }, quirks: { hat: 'cap' } }],
+      ['stand', { name: 'Odette', height: 1.65, build: 'slim', stance: 'stand', colors: { shirt: '#f2efe6', trousers: '#6b5b8c', skin: '#efc6a4', hat: '#e9d9a0' }, quirks: { hat: 'sunhat' } }],
+      ['celebrate', { name: 'Pierre', height: 1.82, build: 'average', stance: 'crouch', colors: { shirt: '#2f6fb5', trousers: '#2b2b2b', skin: '#a8734d' } }],
+      ['dismay', { name: 'Lou', height: 1.75, build: 'average', stance: 'stand', colors: { shirt: '#e0a526', trousers: '#4a3b2f', skin: '#c58a63' } }],
+      ['watch', { name: 'Max', height: 1.9, build: 'stout', stance: 'stand', colors: { shirt: '#7a3b8f', trousers: '#33414d', skin: '#f0c7a8' } }],
+      ['throw', { name: 'Thrower', height: 1.72, build: 'average', stance: params.get('stance') === 'stand' ? 'stand' : 'crouch', colors: { shirt: '#1f9d8b', trousers: '#3b3b3b', skin: '#dba983' } }],
+    ];
+    const cast = specs.map(([stance, spec], i) => {
+      const ch = createCharacter(THREE, spec);
+      const x = 0.15 + i * (3.7 / (specs.length - 1));
+      ch.setPlacement(x, 3, Math.PI); // facing the camera (-y)
+      ch.root.position.z = terrain.sample(x, 3).h;
+      renderer.addObject(ch.root);
+      if (stance === 'throw') {
+        ch.setStance(spec.stance);
+        const loop = () => {
+          ch.setHolding(true);
+          ch.playThrow({ loft: 0.3 + Math.random() * 0.7 }).then(() => setTimeout(loop, 800));
+        };
+        loop();
+      } else ch.setStance(stance);
+      if (stance === 'watch') ch.lookAt(2, 0.5, 1.6);
+      return ch;
+    });
+    renderer.setCamera('inspect', { target: { x: 2, y: 3 }, dist: 4.6, az: 0, el: 0.1 });
+    let lastC = performance.now();
+    const tickC = (now) => {
+      const dt = Math.min((now - lastC) / 1000, 0.1); lastC = now;
+      for (const ch of cast) ch.update(dt);
+      requestAnimationFrame(tickC);
+    };
+    for (const ch of cast) ch.update(0.5);
+    requestAnimationFrame(tickC);
+    window.__characters = cast;
   } else if (debug && params.has('preview')) {
     // --- ?debug&preview: static throw preview with made-up paths (for screenshots) ---
     clearWorld();
