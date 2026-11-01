@@ -8,10 +8,18 @@ import { createBody, launch, createWorld, simulate } from '../../assets/js/petan
 import { createMatch } from '../../assets/js/petanque/rules.js';
 import { chooseThrow, donneeDistFor } from '../../assets/js/petanque/ai.js';
 import { SKILL, coneFor, executeThrow, releaseFrom } from '../../assets/js/petanque/donnee.js';
+import { releaseOffset } from '../../assets/js/petanque/character.js';
+import { specFor } from '../../assets/js/petanque/personalities.js';
 
 const n = +process.argv[2] || 40;
 const DEG = Math.PI / 180;
-const BASE = { x: 2, y: 1 };
+const CIRC = { x: 2, y: 1 };
+// real release points: where the stick figure's hand is at the release frame (C09), facing +y
+function baseFor(id) {
+  const spec = specFor(id);
+  return { ...CIRC, release: (loft) => { const o = releaseOffset({ height: spec.height, stance: spec.stance, loft, yaw: 0 }); return { x: CIRC.x + o.x, y: CIRC.y + o.y, z: o.z }; } };
+}
+const BASE = baseFor('you');
 function scenario(i) {
   const terrain = createTerrain(100 + (i % 8));
   const world = createWorld(terrain, mulberry32(i));
@@ -53,7 +61,7 @@ for (const id of ['marcel', 'pierre']) {
     for (let i = 0; i < n; i++) {
       const s = scenario(i);
       const player = s.match.players.find((p) => p.id === id);
-      const r = chooseThrow({ world: s.world.clone(), match: s.match, player, difficulty, rand: mulberry32(500 + i), from: BASE });
+      const r = chooseThrow({ world: s.world.clone(), match: s.match, player, difficulty, rand: mulberry32(500 + i), from: baseFor(id) });
       styles[r.style] = (styles[r.style] || 0) + 1;
       ds.push(settle(s, r.throwParams, r.from));
     }

@@ -429,8 +429,10 @@ function boot() {
     const gap = j ? Math.hypot(was.x - j.x, was.y - j.y) - was.r - j.r : 9;
     let mood = 'watch';
     if (was.dead) mood = 'dismay';
-    else if (now === was.team && prevHold !== null && prevHold !== was.team) mood = 'celebrate';
+    else if (prevHold === null) mood = gap < 0.3 ? 'celebrate' : gap > 1 ? 'dismay' : 'watch'; // the first boule of a mène takes the point by default: judge it by distance
+    else if (now === was.team && prevHold !== was.team) mood = 'celebrate';
     else if (now !== was.team && gap > 0.6) mood = 'dismay';
+    const shown = [];
     for (const p of match.players) {
       const ch = cast.get(p.id);
       let m = 'watch';
@@ -438,9 +440,19 @@ function boot() {
       else if (mood === 'celebrate') m = p.team === was.team ? 'celebrate' : 'dismay';
       if (p.id === inCircle && m === 'watch') continue; // keep the thrower's follow-through
       ch.setStance(m);
+      if (m !== 'watch' && (p.id === was.owner || p.team === was.team)) shown.push(ch.root.position);
     }
-    // cut to the thrower for a moment so the reaction can be seen
-    later(() => { if (!pending && !flying) renderer.setCamera('inspect', { target: { x: C.circle.x, y: C.circle.y }, dist: 3.8, az: Math.PI, el: 0.12, height: 0.9 }); }, 800);
+    // cut to the thrower (and a reacting team-mate) for a moment so the reaction can be seen
+    later(() => {
+      if (pending || flying) return;
+      const pts = shown.length ? shown : [cast.get(inCircle || was.owner).root.position];
+      const xs = pts.map((q) => q.x), ys = pts.map((q) => q.y);
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+      renderer.setCamera('inspect', {
+        target: { x: cx, y: cy }, dist: 3.8, az: Math.PI, el: 0.12, height: 0.9, reset: true,
+        fit: (Math.max(...xs) - Math.min(...xs)) / 2 + 1.1,
+      });
+    }, 800);
   }
 
   // Mène end or game over: gather by the jack; the winners celebrate, the others are dismayed
@@ -460,6 +472,12 @@ function boot() {
       if (snapMove()) placeAt(p.id, x, y, yaw);
       else ch.walkTo({ x, y, yaw, speed: CAST_SPEED });
     }
+    // After a moment on the head view (measuring labels), a low angled shot from the circle side shows the
+    // boules by the jack with the four players gathering behind them; the steep head camera shows only legs
+    later(() => { // (instant debug matches cut straight to it)
+      if (!match || (match.phase !== 'meneEnd' && match.phase !== 'gameOver')) return;
+      renderer.setCamera('inspect', { target: { x: c.x, y: c.y - 0.2 }, dist: 5.5, az: 0, el: 0.4, height: 0.2, reset: true, fit: 3.4 });
+    }, 2200);
   }
 
   // Head camera framing the jack and live boules within 2 m of it
@@ -529,7 +547,7 @@ function boot() {
     placePlayers(debug && SPECS[params.get('who')] ? params.get('who') : 'you');
     aimView();
     if (debug && params.has('topcam')) { // ?debug&topcam[&who=pierre]: top-down on the circle, for checking foot placement
-      renderer.setCamera('inspect', { target: { x: C.circle.x, y: C.circle.y }, dist: 2.2, az: 0, el: 1.5 });
+      renderer.setCamera('inspect', { target: { x: C.circle.x, y: C.circle.y }, dist: +params.get('topdist') || 2.2, az: +params.get('topaz') || 0, el: +params.get('topel') || 1.5, height: +params.get('topheight') || 0 });
       cast.get(inCircle).setStance(SPECS[inCircle].stance);
     }
     hud.hideChooser();
@@ -544,7 +562,8 @@ function boot() {
     applyRollDefault();
     instant = !!opts.instant;
     const players = defaultPlayers();
-    if (opts.allAI) for (const p of players) p.isHuman = false;
+    // all-AI debug matches: nobody is "You", so the commentary grammar ("Sam points", "Sam's boule") still works
+    if (opts.allAI) for (const p of players) { p.isHuman = false; if (p.id === 'you') p.name = 'Sam'; }
     match = createMatch({ target: opts.target || 13, players, firstJackTeam: opts.firstJackTeam ?? (Math.random() < 0.5 ? 0 : 1) });
     hud.hideOverlay();
     beginMene(true);
@@ -565,7 +584,7 @@ function boot() {
     if (thrower.isHuman) {
       humanTurn('jack', thrower.id, lead + 'Your jack. Aim, then toss it onto the court between the two yellow lines (6 to 10 metres out). It rolls on after landing: aim so the orange dashes end inside the zone.');
     } else {
-      aiJack(thrower, lead);
+      aiJack(thrower, lead).catch((err) => console.error(err));
     }
   }
 
@@ -613,11 +632,14 @@ function boot() {
     pierreChoice = null; thinkToken++;
     hud.hideChooser();
     const player = match.players.find((q) => q.id === playerId);
+    const t0 = token;
     if (kind === 'boule') match = apply(match, { type: 'bouleThrown', playerId });
     refreshHud({ team: player.team, playerId, text: `${player.isHuman ? 'You are' : player.name + ' is'} throwing…` });
     say2(comment || 'Rolling…');
-    const go = () => launchBody(kind, player.team, playerId, p, from);
-    if (instant || !loft) go(); else throwWith(playerId, loft, go);
+    let launched = false; // the boule leaves once, whichever of the release frame, the fallback or the error path gets there first
+    const go = () => { if (launched) return; launched = true; launchBody(kind, player.team, playerId, p, from); };
+    if (instant || !loft) go();
+    else throwWith(playerId, loft, go).catch((err) => { console.error(err); if (!launched && token === t0) go(); });
   }
 
   const sleep = (ms) => new Promise((res) => setTimeout(res, instant ? 0 : ms));
@@ -631,7 +653,13 @@ function boot() {
     aiYaw = 0;
     const base = releasePoint(player);
     enterCircle(player.id, aiYaw);
-    const choice = chooseJackThrow({ world, difficulty, rand: aiRand, player, from: base });
+    let choice;
+    try {
+      choice = chooseJackThrow({ world, difficulty, rand: aiRand, player, from: base });
+    } catch (err) { // never stall the game: a plain lob to about 8 m
+      console.error(err);
+      choice = { label: `${player.name} throws the cochonnet`, throwParams: { yaw: 0, speed: 5, loft: 0.9, backspin: 10, sidespin: 0 } };
+    }
     pending = null;
     const spot = spotText(player, choice, 'jack');
     await showAiSpot(player, choice, 'jack', spot);
@@ -662,12 +690,21 @@ function boot() {
     shoulderCam.yaw = aimYaw;
   }
 
-  // Status line while an AI shows its spot: the factual label and distance, then the player's own line
+  // Status line while an AI shows its spot: the factual label and distance, then the player's own line.
+  // The distance is where the throw lands (the donnée); a jack rolls on after landing, so its line also gives the
+  // distance it should come to rest at (noiseless prediction), and the settled distance is reported afterwards.
   function spotText(player, choice, kind) {
     const key = choice.labelKey || { event: kind === 'jack' ? 'spotJack' : 'spotPoint' };
-    const d = choice.donnee ? Math.hypot(choice.donnee.x - C.circle.x, choice.donnee.y - C.circle.y) : null;
+    const dist = (q) => Math.hypot(q.x - C.circle.x, q.y - C.circle.y);
     const target = key.target === 'jack' ? 'the jack' : player.team === 1 ? 'your boule' : 'their boule';
-    const facts = (choice.label || `${player.name} picks ${player.id === 'odette' ? 'her' : 'his'} spot`) + (d ? ` (${d.toFixed(1)} m).` : '.');
+    let tail = '.';
+    if (choice.donnee && kind === 'jack' && choice.from) {
+      const tp = solveLaunch({ from: choice.from, landing: choice.donnee, loft: choice.loft, terrain: world.terrain });
+      const path = predictRoll({ world, terrain, throwParams: tp, from: choice.from, kind: 'jack' });
+      const end = path[path.length - 1];
+      tail = ` (lands at ${dist(choice.donnee).toFixed(1)} m, should roll to about ${dist(end).toFixed(1)} m).`;
+    } else if (choice.donnee) tail = ` (lands at ${dist(choice.donnee).toFixed(1)} m).`;
+    const facts = (choice.label || `${player.name} picks ${player.id === 'odette' ? 'her' : 'his'} spot`) + tail;
     const quip = talk.say(player.id, key.event, { target });
     return quip ? `${facts} ${quip}` : facts;
   }
@@ -761,7 +798,7 @@ function boot() {
     if (player.isHuman) {
       humanTurn('boule', playerId, 'Your turn. Turn with a sideways drag, then press where you want the boule to land.');
     } else {
-      aiBoule(player);
+      aiBoule(player).catch((err) => console.error(err));
     }
   }
 
@@ -810,7 +847,7 @@ function boot() {
   };
   const ownerName = (b) => {
     const p = match && match.players.find((q) => q.id === b.owner);
-    return p ? (p.id === 'you' ? 'Your' : p.name + "'s") : 'The';
+    return p ? (p.isHuman ? 'Your' : p.name + "'s") : 'The';
   };
 
   // One or two personality lines for the throw that just settled (null when nothing fits)

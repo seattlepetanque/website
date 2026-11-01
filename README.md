@@ -73,7 +73,7 @@ The tests are in `tests/petanque/`. Physics, rules, terrain and AI have no DOM o
 To tune the game:
 
 - Physics and terrain numbers: `constants.js`.
-- Player skill and error cones: `SKILL` and `difficultyScale` in `donnee.js`; release height `releaseHeight`; tir aim `SNAP_SHORT`; AI style personality `AI.stylePref` in `ai.js`. `node tests/petanque/measure-human.js` compares a reasonable human with each AI difficulty.
+- Player skill and error cones: `SKILL` and `difficultyScale` in `donnee.js`; release height `releaseHeight`; tir aim `SNAP_SHORT`; AI style personality `AI.stylePref` in `ai.js`. `node tests/petanque/measure-human.js` compares a reasonable human with each AI difficulty, and `node tests/petanque/measure-release.js` checks roll-outs by style from each character's real release point.
 - Loft to backspin: `backspinForLoft` in `donnee.js`.
 - Toss input feel: `TOSS` in `toss.js`.
 - AI strength: `AI` in `ai.js`.
@@ -85,6 +85,7 @@ Debug URLs (add the query to `/game.html`):
 - `?debug&humanturn`: stops at your first boule. Use `?debug&humanturn=chooser` to stop at the who-throws chooser, or `?debug&humanturn=jack` to throw the jack yourself.
 - `?debug&humanturn&demo`: a scripted toss preview, for screenshots.
 - `?debug&aispot`: holds the view on the AI's spot, for screenshots.
+- `?debug&topcam`: top-down view of the circle (`&who=pierre|marcel|odette`, `&topdist=`, `&topel=`, `&topaz=` for a side view), for checking foot placement.
 - `?debug&preview`: static throw preview with made-up paths, for screenshots.
 - `?debug&characters`: all the stick-figure stances side by side, for screenshots. Add `&cast=quirk` (with `&q=0..2` for which quirk), `&cast=celebrate` or `&cast=dismay` for the four real players. `&figures=mesh` there too for the models.
 - `?figures=mesh`: use the Kenney mesh models instead of the stick figures (`?figures=stick` is the default).

@@ -510,8 +510,10 @@ export function createCharacter(THREE, spec = {}) {
   if (colors.scarf) scarf = addMesh(new THREE.TorusGeometry(H * 0.05, H * 0.02, 8, 14), mat(colors.scarf));
   let belly = null;
   if (build.belly > 0) {
-    belly = addMesh(new THREE.SphereGeometry(H * build.belly + H * 0.04, 14, 10), mShirt);
-    belly.scale.set(1, 0.9, 1.05);
+    // a paunch, not a ball: about the torso's own width, flattened front to back, same shirt (chest frame: x across,
+    // y forward, z up), sitting low on the waist and blending into the torso capsule
+    belly = addMesh(new THREE.SphereGeometry(H * (0.06 + build.belly * 0.33), 16, 12), mShirt);
+    belly.scale.set(1, 0.72, 0.78);
   }
 
   // head: sphere, nose, eyes, optional hat; the group's frame is the head frame
@@ -740,8 +742,8 @@ export function createCharacter(THREE, spec = {}) {
     }
     if (belly) {
       const [cx, cy, cz] = frames.chest;
-      const o = (cy.map((v) => v * H * 0.05));
-      belly.position.set(j.spine[0] + o[0] - cz[0] * H * 0.02, j.spine[1] + o[1] - cz[1] * H * 0.02, j.spine[2] + o[2] - cz[2] * H * 0.02 + 0.0);
+      const o = (cy.map((v) => v * H * (0.04 + build.belly * 0.25)));
+      belly.position.set(j.spine[0] + o[0] - cz[0] * H * 0.045, j.spine[1] + o[1] - cz[1] * H * 0.045, j.spine[2] + o[2] - cz[2] * H * 0.045);
       belly.quaternion.setFromRotationMatrix(m4.makeBasis(va.set(...cx), vb.set(...cy), vd.set(...cz)));
     }
     holdMesh.position.set(...j.handR); holdMesh.position.z -= H * 0.025;
@@ -796,7 +798,12 @@ export function createCharacter(THREE, spec = {}) {
   function lookAt(x, y, z) {
     st.look = x === null || x === undefined ? null : { x, y, z: z === undefined ? 1.5 : z };
   }
-  function setPlacement(x, y, yaw = st.yaw) { root.position.set(x, y, root.position.z); setYaw(yaw); }
+  function setPlacement(x, y, yaw = st.yaw) {
+    // a teleport ends any walk in progress, else the walk would carry on and snap the figure to its old goal
+    if (st.mode === 'throw') cancelThrow();
+    if (st.walk) { const w = st.walk; st.walk = null; switchMode('stance'); w.resolve(); }
+    root.position.set(x, y, root.position.z); setYaw(yaw);
+  }
   // Swap the stick figure for a loaded Kenney model (a THREE.Group from GLTFLoader, used once)
   function attachModel(model, name = spec.model) {
     if (vis) return;
@@ -820,12 +827,7 @@ export function createCharacter(THREE, spec = {}) {
     // the sun hat's dome is tall so Odette's bun stays inside it; Marcel's cap covers the flat crown
     if (mHat) buildHat(hatG, cap ? 0.235 : 0.2, 1.5, cap ? 1.5 : 1.8);
     bones.head.add(hatG);
-    // Marcel's belly: a small shirt-coloured ellipsoid on the torso bone
-    if (build.belly >= 0.05) {
-      const bel = addMesh(new V.SphereGeometry(1, 14, 10), mShirt, bones.torso);
-      bel.scale.set(0.105 + build.belly * 0.4, 0.09, 0.1 + build.belly * 0.4);
-      bel.position.set(0, 0.075, 0.07);
-    }
+    // no belly ellipsoid in mesh mode: the chibi is round already and the texture's colours would clash with the shirt
     root.add(mg);
     stickG.visible = false;
     vis = { scene: mg, model, s, name, bones };

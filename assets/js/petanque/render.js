@@ -720,7 +720,7 @@ export function createRenderer(canvas, terrain) {
   let heading = new THREE.Vector3(0, 1, 0);
 
   function setCamera(m, o = {}) {
-    if (m === 'inspect' && mode !== 'inspect') {
+    if (m === 'inspect' && (mode !== 'inspect' || o.reset)) { // o.reset: a scripted cut replaces the user's orbit
       const t = o.target || { x: 2, y: 8 };
       orbit.dist = o.dist || 2.5;
       orbit.az = o.az !== undefined ? o.az : 0;
@@ -780,7 +780,12 @@ export function createRenderer(canvas, terrain) {
       const t = opts.target || { x: 2, y: 8 };
       goal.tgt.set(t.x, t.y, groundZ(t) + 0.03 + (opts.height || 0));
       const ce = Math.cos(orbit.el), se = Math.sin(orbit.el);
-      goal.pos.set(t.x + Math.sin(orbit.az) * ce * orbit.dist, t.y - Math.cos(orbit.az) * ce * orbit.dist, goal.tgt.z + se * orbit.dist);
+      let dist = orbit.dist;
+      if (opts.fit) { // opts.fit: half-width in metres that must stay in view (pulls back on narrow screens)
+        const hf = 2 * Math.atan(Math.tan(camera.fov * Math.PI / 360) * camera.aspect);
+        dist = Math.max(dist, opts.fit / Math.tan(hf / 2));
+      }
+      goal.pos.set(t.x + Math.sin(orbit.az) * ce * dist, t.y - Math.cos(orbit.az) * ce * dist, goal.tgt.z + se * dist);
     }
   }
 
