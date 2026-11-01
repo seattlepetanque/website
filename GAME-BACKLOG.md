@@ -156,14 +156,14 @@ Design: GAME-PLAN.md §9–11. Round 1 contracts above still apply (units, axes,
 
 | ID | Status | Model | Deps | Title |
 |---|---|---|---|---|
-| C01 | in-progress | sonnet | — | Throw model: solver, backspin, cone (`donnee.js`) |
+| C01 | done | sonnet | — | Throw model: solver, backspin, cone (`donnee.js`) |
 | C02 | done | sonnet | — | Over-the-shoulder camera, placeholder players, preview drawing |
-| C03 | todo | sonnet | C01, C02 | Toss input: aim, donnée, pull for loft |
+| C03 | in-progress | sonnet | C01, C02 | Toss input: aim, donnée, pull for loft |
 | C04 | todo | sonnet | C03, C05 | Integrate the donnée throw into the game |
-| C05 | todo | sonnet | C01 | AI on the donnée model |
+| C05 | in-progress | sonnet | C01 | AI on the donnée model |
 | C06 | todo | haiku | C04 | Remove the old swing code; update README |
 | C07 | todo | sonnet | C04, C05, C06 | Review and tune throw feel |
-| C08 | todo | sonnet | C02 | Stick-figure skeleton and procedural animation |
+| C08 | in-progress | sonnet | C02 | Stick-figure skeleton and procedural animation |
 | C09 | todo | sonnet | C07, C08 | Characters in the game: positions, throw sync, reactions |
 | C10 | in-progress | sonnet | — | Find and vendor CC0 rigged human models |
 | C11 | todo | sonnet | C09, C10 | Skinned meshes on the skeleton |
@@ -213,6 +213,9 @@ Give Marcel, Odette, Pierre and You distinct looks (model choice, colours, hats/
 
 - From C02 screenshot: waiting players placed near the circle (partner behind at (2.6, 0.2), opponents at x ≈ 3.5) stand between the shoulder camera and the court and block much of the view. C04/C09: put waiting players out of shot (behind the camera, or beside the court near y ≈ 0–1 at x < 0 or x > 4), and raise the shoulder camera a little (~2.1 m) so the head area shows above the thrower's shoulder.
 - From C02: the roll-guide dots are too small to see at 7–9 m; make them larger or a dashed ribbon.
+- From C01: with release at z = 0.9 m, a 12° roulette to a 4 m donnée lands fast and runs ~10 m past (off the court). Real roulettes are released low from a crouch and land 1–2 m out. C07/C09: take the release point from the character's hand (crouched pointer ≈ 0.4–0.5 m), and check roulettes then behave; consider capping roulette donnée distance or showing the roll guide by default for low lofts.
+- From C01: sidespin from lateral error (≈ 20 rad/s at 2σ) moves a ball only ~3 mm; the lateral error itself carries the off-axis effect. Fine for now.
+- From C01: plombée stops within 0.4 m up to ~7 m; at 8–10 m it ends 0.5–0.9 m past (backspin depends only on loft). Acceptable; revisit in C07 if it feels off.
 
 ## Later (not scheduled)
 
