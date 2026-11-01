@@ -162,9 +162,9 @@ Design: GAME-PLAN.md §9–11. Round 1 contracts above still apply (units, axes,
 | C04 | done | sonnet | C03, C05 | Integrate the donnée throw into the game |
 | C05 | done | sonnet | C01 | AI on the donnée model |
 | C06 | done | haiku | C04 | Remove the old swing code; update README |
-| C07 | in-progress | sonnet | C04, C05, C06 | Review and tune throw feel |
+| C07 | done | sonnet | C04, C05, C06 | Review and tune throw feel |
 | C08 | done | sonnet | C02 | Stick-figure skeleton and procedural animation |
-| C09 | todo | sonnet | C07, C08 | Characters in the game: positions, throw sync, reactions |
+| C09 | in-progress | sonnet | C07, C08 | Characters in the game: positions, throw sync, reactions |
 | C10 | done | sonnet | — | Find and vendor CC0 rigged human models |
 | C11 | todo | sonnet | C09, C10 | Skinned meshes on the skeleton |
 | C12 | todo | sonnet | C11 | Personalities: looks, quirks, reactions, commentary |
@@ -219,6 +219,19 @@ Give Marcel, Odette, Pierre and You distinct looks (model choice, colours, hats/
 - From C10: the vendored models are Kenney "Mini Characters" (CC0, ~250 KB each): stylised chibi figures ~0.7 units tall (scale ≈ 2.4 for 1.7 m), T-pose, a 7-bone rig (root, leg-left, leg-right, torso, arm-left, arm-right, head) with no elbows or knees, 32 short clips (idle, walk, crouch, pick-up, emote-yes/no, holding-right…), no throw or celebrate clip, no hats. Throws must be procedural on arm-right/torso; hats as meshes on the head bone. A richer human rig (Quaternius Universal Base Characters / Modular Women, CC0) needs a manual download (122 MB zip / Drive quota). The user chose the Kenney chibis (2026-10-31). C11: drive the 7 bones from character.js's skeleton (shoulder → arm-right/arm-left, hips → legs, spine lean → torso, pelvis height → root), use Kenney clips (walk, idle, crouch) where they fit, and keep the stick figure selectable (e.g. `?figures=stick`) and as the load-failure fallback.
 - From C05: AI now picks plombée for ~85–90% of points (roulette rarely wins); tireur shoot bonus raised to 0.4; on flat terrain many shots run past the target to the end of the lane. Pointing accuracy improved a lot (medium mean 0.47 m, hard 0.40 m) because the skill cones are tighter than the old noise — C07 should check whether the AI is now too strong against a human using the same cones.
 - From C04 screenshots: the cone is hard to see — at 8 m the ±1σ edge arcs (~±10 cm) merge with the centre arc and the 1σ ellipse is a small ring. C07: make the cone read as a cone (e.g. a translucent filled surface between the edge arcs, widening toward the landing; make the ellipses filled and more visible; consider drawing 2σ as the outer edge). Also the roll guide sits behind the descending arc along the camera's line of sight; dashes or a ribbon would read better. Waiting players' shadows show at the left edge of the shoulder view.
+
+### C07 human play-test checklist
+
+Done by script and screenshots; a person still needs to feel it. Try each on a mouse, a trackpad and a phone (touch), on Easy and Hard.
+
+- **Cone:** press on the court at about 8 m and pull for a demi-portée (~35°) and a plombée (~60°). The pale-blue cone should widen toward the landing, the two ground ellipses (inner 1σ, outer 2σ) should be easy to see, and the camera should ease toward your spot. Throw ten boules at the same spot: about nine should end up inside the outer ellipse, four in the inner one. Does the cone feel fair, or too small to matter?
+- **Roll guide:** toggle it. The orange dashes should be clearly different from the cream arc and end in a ring. A roulette (≤ 18°) to a donnée 3 to 3.5 m out should roll to about 7 to 8 m; a plombée should stop near its donnée. On Easy the guide starts on, on Medium and Hard off.
+- **Low throws:** drag a low loft (about 12°) and watch the release height drop (crouch). Do roulettes feel controllable, or do they run off the court too easily? (Rest distance changes about 3.5 m per metre of donnée, so it is touchy by nature.)
+- **Tir:** press within 25 cm of a boule or the jack: the ring turns red, the readout says "Tir ... lands just short" and the cone sits 20 cm short of the target. At 30 to 40° expect to move the target about a third of the time and carreau a few times in a hundred.
+- **Jack:** the jack guide is on by default; aim so the orange dashes end between the yellow lines. Almost every toss aimed that way should be legal.
+- **AI spot:** watch Marcel and Odette show their spot (marker, arc and cone) for about a second before each throw. Marcel should now sometimes roll or demi-portée; Easy should feel clearly beatable, Medium about even with you pointing carefully, Hard strong.
+- **Phone:** the cone and dashes should still read at 500 px wide; dragging with a thumb must not scroll the page; pulling for loft should reach both extremes without leaving the canvas.
+- **Look for:** arcs leaving the top of the screen for lofts above ~60° (expected for very high lobs), the placeholder thrower hiding the start of the arc, cones that look wider or narrower than where the boules land, and any throw that leaves from a different height than the preview showed.
 
 ## Later (not scheduled)
 

@@ -17,6 +17,25 @@ export function styleForLoft(loft, snapped = false) {
   return 'plombee';
 }
 
+// Release height by loft until the character's hand supplies it (C09): a pointer's low throw is released from
+// a crouch (about 0.5 m), a standing lob from about 0.9 m, smoothly in between (18 to 30 degrees).
+export const RELEASE_LOW = 0.5, RELEASE_HIGH = 0.9;
+export function releaseHeight(loft) {
+  const t = Math.max(0, Math.min(1, (loft / DEG - 18) / 12));
+  return RELEASE_LOW + (RELEASE_HIGH - RELEASE_LOW) * t * t * (3 - 2 * t);
+}
+export const releaseFrom = (base, loft) => ({ x: base.x, y: base.y, z: releaseHeight(loft) });
+
+// A tir (donnée snapped onto a boule) lands this far short of the target's centre along the throw: the boule
+// then hops or rolls into it. Measured with the human cone at 32-40 degrees: about +8 points of hits over
+// aiming dead on (27% to 36% at 32 degrees), and carreaus 3% to 6%.
+export const SNAP_SHORT = 0.2;
+export function snapAim(from, target) {
+  const dx = target.x - from.x, dy = target.y - from.y, d = Math.hypot(dx, dy) || 1;
+  const k = Math.min(SNAP_SHORT, d * 0.5);
+  return { x: target.x - dx / d * k, y: target.y - dy / d * k };
+}
+
 // Backspin (rad/s) by loft: a roulette keeps almost none, a plombée bites hard.
 // Piecewise-linear knots tuned against physics.js on flat terrain (see tests/petanque/donnee.test.js).
 const SPIN_KNOTS = [
@@ -155,7 +174,7 @@ export const SKILL = Object.freeze({
   odette: Object.freeze({ lat: 0.008, long: 0.03, loft: 1.4 * DEG }), // tireur: tight lateral
   pierre: Object.freeze({ lat: 0.01, long: 0.033, loft: 1.6 * DEG }), // tireur-ish, a bit looser
 });
-export const difficultyScale = Object.freeze({ easy: 1.6, medium: 1.0, hard: 0.65 });
+export const difficultyScale = Object.freeze({ easy: 2.8, medium: 1.6, hard: 0.75 });
 const LONG_GROWTH = 5 / 3; // longitudinal sigma at LOFT_MAX relative to LOFT_MIN
 
 // Scale an AI skill by difficulty (the human is never scaled)
@@ -203,6 +222,7 @@ export function executeThrow({ from = C.throwFrom, landing, loft, cone, terrain,
   // positive sidespin (about +z) kicks the ball toward the thrower's right at landing (checked against
   // physics.js), so a ball landing right of the line gets positive spin and curls further right
   const z = cone.sigmaLat > 0 ? lateralError / cone.sigmaLat : 0;
+  throwParams.from = from;
   throwParams.sidespin = Math.max(-SIDESPIN_MAX, Math.min(SIDESPIN_MAX, z * SIDESPIN_PER_SIGMA));
   return { throwParams, actualLanding, lateralError };
 }

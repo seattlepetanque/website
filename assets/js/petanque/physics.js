@@ -19,7 +19,7 @@ export function createBody(kind, props = {}) {
 }
 
 // yaw 0 = +y, positive yaw toward +x. Backspin opposes the forward roll; sidespin is about +z.
-export function launch(body, p, from = C.throwFrom) {
+export function launch(body, p, from = p.from || C.throwFrom) {
   const dx = Math.sin(p.yaw), dy = Math.cos(p.yaw);
   const cl = Math.cos(p.loft), sl = Math.sin(p.loft);
   const bs = p.backspin || 0;

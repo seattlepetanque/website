@@ -6,7 +6,7 @@ import { C } from './constants.js';
 import { mulberry32 } from './rng.js';
 import { createBody, launch, createWorld, simulate } from './physics.js';
 import { meneResult, boulesInHand, jackValid } from './rules.js';
-import { SKILL, scaledSkill, coneFor, executeThrow, solveLaunch, styleForLoft } from './donnee.js';
+import { SKILL, scaledSkill, coneFor, executeThrow, solveLaunch, styleForLoft, releaseFrom } from './donnee.js';
 
 const DEG = Math.PI / 180;
 
@@ -14,7 +14,14 @@ const DEG = Math.PI / 180;
 export const AI = {
   sims: { easy: 8, medium: 12, hard: 16 },
   lofts: { roulette: 14 * DEG, demi: 32 * DEG, plombee: 55 * DEG, tir: 32 * DEG, tirHigh: 42 * DEG, jackLow: 35 * DEG, jack: 55 * DEG },
-  shootBonus: { pointeur: 0, tireur: 0.4 }, // tireurs like a shot: added to the score of tir candidates
+  shootBonus: { pointeur: 0, tireur: 0.6 }, // tireurs like a shot: added to the score of tir candidates
+  // personality: added to the score of pointing candidates of that style (Marcel the pointeur likes to roll)
+  stylePref: {
+    marcel: { roulette: 0.22, demi: 0.06 },
+    odette: { demi: 0.02 },
+    pierre: { demi: 0.04 },
+  },
+  styleNoise: 0.08, // random +- added to every candidate so equal-looking choices vary between turns
   maxSimSeconds: 14,
   refineSims: 3,
   refineIters: 2,
@@ -58,7 +65,7 @@ function rollTable(kind, loft, from) {
 export function resetLaunchTable() { rollCache.clear(); }
 
 // Donnée distance whose flat-terrain rest distance is `want`; null if it would run past by > 0.6 m
-function donneeDistFor(kind, loft, from, want) {
+export function donneeDistFor(kind, loft, from, want) {
   const { ds, rest } = rollTable(kind, loft, from);
   if (want < rest[0]) return want < rest[0] - 0.6 ? null : ds[0];
   for (let i = 1; i < ds.length; i++) {
@@ -182,7 +189,9 @@ const clampDonnee = (d) => ({
 // One noisy throw through the same model as the human's: the player's cone, on the given terrain
 function throwThrough({ from, donnee, loft, skill, terrain, rand }) {
   const cone = coneFor({ skill, from, landing: donnee, loft });
-  return executeThrow({ from, landing: donnee, loft, cone, terrain, rand }).throwParams;
+  const tp = executeThrow({ from, landing: donnee, loft, cone, terrain, rand }).throwParams;
+  tp.from = from; // launch() uses it, so the boule leaves from the same release point the solver assumed
+  return tp;
 }
 
 function* decide({ world, match, player, difficulty = 'medium', rand, from = FROM }) {
@@ -194,8 +203,9 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
   const deadBefore = liveBoules(world).filter((b) => b.dead && b.team === team).length;
   const cands = buildCandidates(world, match, player);
   const finish = (donnee, loft, intent, label, score, snapped) => {
-    const throwParams = throwThrough({ from, donnee, loft, skill, terrain: world.terrain, rand });
-    return { throwParams, intent, label, score, donnee, loft, style: styleForLoft(loft, snapped) };
+    const rel = releaseFrom(from, loft);
+    const throwParams = throwThrough({ from: rel, donnee, loft, skill, terrain: world.terrain, rand });
+    return { throwParams, from: rel, intent, label, score, donnee, loft, style: styleForLoft(loft, snapped) };
   };
   if (!cands.length) {
     // no jack to aim at: just lob towards the middle of the lane
@@ -205,21 +215,22 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
   let best = null;
   for (let i = 0; i < cands.length; i++) {
     const k = cands[i];
+    const fk = releaseFrom(from, k.loft);
     const srand = mulberry32(seeds[i]);
     let donnee;
     if (k.intent === 'shoot') {
       const dx = k.target.x - from.x, dy = k.target.y - from.y, d = Math.hypot(dx, dy) || 1;
       donnee = { x: k.target.x - dx / d * k.shortBy, y: k.target.y - dy / d * k.shortBy };
     } else {
-      donnee = pointDonnee(world, 'boule', from, k.target, k.loft, perceived, srand);
+      donnee = pointDonnee(world, 'boule', fk, k.target, k.loft, perceived, srand);
       if (!donnee) continue;
     }
     donnee = clampDonnee(donnee);
     let sum = 0, sum2 = 0;
     for (let s = 0; s < nSims; s++) {
       const w = world.clone(perceived, mulberry32(seedFrom(srand)));
-      const tp = throwThrough({ from, donnee, loft: k.loft, skill, terrain: perceived, rand: srand });
-      const b = launch(createBody('boule', { team, owner: player.id }), tp, from);
+      const tp = throwThrough({ from: fk, donnee, loft: k.loft, skill, terrain: perceived, rand: srand });
+      const b = launch(createBody('boule', { team, owner: player.id }), tp, fk);
       w.add(b);
       simulate(w, AI.maxSimSeconds);
       const v = evaluate(w, team, handT, handO, deadBefore);
@@ -227,7 +238,9 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
     }
     const mean = sum / nSims;
     const sd = Math.sqrt(Math.max(0, sum2 / nSims - mean * mean));
-    const score = mean - AI.riskAversion * sd + (k.intent === 'shoot' ? (AI.shootBonus[player.role] || 0) : 0);
+    const pref = (AI.stylePref[player.id] || {})[k.style] || 0;
+    const score = mean - AI.riskAversion * sd + (k.intent === 'shoot' ? (AI.shootBonus[player.role] || 0) : 0) +
+      pref + (srand() - 0.5) * AI.styleNoise;
     if (!best || score > best.score) best = { k, donnee, score };
     yield;
   }
@@ -260,12 +273,13 @@ export async function chooseThrowAsync(args) {
 
 // Tries a few lofts and distances, simulates each on the perceived terrain (with the player's cone) and keeps
 // the one that most often lands a legal jack (6-10 m, inside the lines).
-export function chooseJackThrow({ world, difficulty = 'medium', rand, player, from = FROM } = {}) {
-  const nSims = AI.sims[difficulty] ?? AI.sims.medium;
+export function chooseJackThrow({ world, difficulty = 'medium', rand, player, from: base = FROM } = {}) {
+  const nSims = Math.max(16, AI.sims[difficulty] ?? AI.sims.medium); // a legal jack matters on every level
   const skill = skillFor(player, difficulty);
   const perceived = world.terrain.perceived();
   const cands = [];
   for (const style of ['jackLow', 'jack']) {
+    const from = releaseFrom(base, AI.lofts[style]);
     for (const d of [AI.jackTarget - 1, AI.jackTarget, AI.jackTarget + 1]) {
       const want = { x: C.circle.x + (rand() - 0.5) * 0.4, y: C.circle.y + d };
       const dd = donneeDistFor('jack', AI.lofts[style], from, Math.hypot(want.x - from.x, want.y - from.y));
@@ -278,6 +292,7 @@ export function chooseJackThrow({ world, difficulty = 'medium', rand, player, fr
   let best = null;
   for (const k of cands) {
     const srand = mulberry32(seedFrom(rand));
+    const from = releaseFrom(base, k.loft);
     const donnee = refineDonnee(world, 'jack', from, k.want, k.loft, k.donnee, perceived, srand);
     let ok = 0;
     for (let s = 0; s < nSims; s++) {
@@ -293,9 +308,10 @@ export function chooseJackThrow({ world, difficulty = 'medium', rand, player, fr
     if (!best || score > best.score) best = { k, donnee, score };
   }
   const { k, donnee } = best;
+  const from = releaseFrom(base, k.loft);
   const throwParams = throwThrough({ from, donnee, loft: k.loft, skill, terrain: world.terrain, rand });
   return {
-    throwParams, intent: 'jack', label: `${player ? player.name : 'The AI'} throws the cochonnet`,
+    throwParams, from, intent: 'jack', label: `${player ? player.name : 'The AI'} throws the cochonnet`,
     donnee, loft: k.loft, style: styleForLoft(k.loft),
   };
 }

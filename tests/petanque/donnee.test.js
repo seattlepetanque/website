@@ -6,7 +6,7 @@ import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { createBody, launch, createWorld, simulate } from '../../assets/js/petanque/physics.js';
 import {
   LOFT_MIN, LOFT_MAX, styleForLoft, backspinForLoft, solveLaunch, SKILL, difficultyScale, coneFor,
-  executeThrow, arcPath, coneEnvelope, predictRoll,
+  executeThrow, arcPath, coneEnvelope, predictRoll, releaseHeight, releaseFrom, snapAim, SNAP_SHORT,
 } from '../../assets/js/petanque/donnee.js';
 
 const DEG = Math.PI / 180;
@@ -217,4 +217,69 @@ test('predictRoll ends where a real noiseless sim does', () => {
   w3.add(b3); b3.state = 'airborne'; simulate(w3);
   const end = path[path.length - 1];
   assert.ok(Math.hypot(end.x - b3.x, end.y - b3.y) < 1e-6);
+});
+
+test('the drawn cone matches the sampled landings: ~39% inside the 1 sigma ellipse, ~86% inside 2 sigma', () => {
+  const terrain = createTerrain(5), rand = mulberry32(11);
+  for (const [d, deg] of [[8, 40], [6, 60], [10, 25]]) {
+    const f = releaseFrom({ x: 2, y: 1 }, deg * DEG);
+    const landing = { x: 2.3, y: 1 + d }, loft = deg * DEG;
+    const cone = coneFor({ skill: SKILL.human, from: f, landing, loft });
+    const a = Math.atan2(landing.x - f.x, landing.y - f.y);
+    let in1 = 0, in2 = 0;
+    const N = 400;
+    for (let i = 0; i < N; i++) {
+      const { throwParams } = executeThrow({ from: f, landing, loft, cone, terrain, rand });
+      const path = arcPath(f, throwParams, 200, terrain), e = path[path.length - 1];
+      const dx = e.x - landing.x, dy = e.y - landing.y;
+      const lat = dx * Math.cos(a) - dy * Math.sin(a), lon = dx * Math.sin(a) + dy * Math.cos(a);
+      const q = (lat / cone.sigmaLat) ** 2 + (lon / cone.sigmaLong) ** 2;
+      if (q <= 1) in1++;
+      if (q <= 4) in2++;
+    }
+    assert.ok(Math.abs(in1 / N - 0.393) < 0.07, `1 sigma ${in1 / N} at ${d} m ${deg} deg`);
+    assert.ok(Math.abs(in2 / N - 0.865) < 0.06, `2 sigma ${in2 / N} at ${d} m ${deg} deg`);
+  }
+});
+
+test('release height: low and crouched for low lofts, standing for lobs, smooth and monotonic', () => {
+  assert.equal(releaseHeight(10 * DEG), 0.5);
+  assert.equal(releaseHeight(40 * DEG), 0.9);
+  let prev = 0;
+  for (let d = 8; d <= 75; d += 0.5) {
+    const z = releaseHeight(d * DEG);
+    assert.ok(z >= prev - 1e-12 && z <= 0.9 + 1e-12);
+    prev = z;
+  }
+  const f = releaseFrom({ x: 2, y: 1 }, 14 * DEG);
+  assert.deepEqual([f.x, f.y], [2, 1]);
+  // launch() follows the params' own release point, and executeThrow records it
+  const rand = mulberry32(2);
+  const landing = { x: 2, y: 4.5 }, loft = 14 * DEG;
+  const cone = coneFor({ skill: SKILL.human, from: f, landing, loft });
+  const { throwParams } = executeThrow({ from: f, landing, loft, cone, terrain: flat, rand });
+  assert.equal(throwParams.from.z, f.z);
+  assert.equal(launch(createBody('boule', { team: 0 }), throwParams).z, f.z);
+});
+
+test('roulettes thrown from the crouch land on their donnée and roll on well past it', () => {
+  const terrain = createTerrain(7);
+  for (const [dist, loftDeg] of [[3, 12], [3.5, 14]]) {
+    const f = releaseFrom({ x: 2, y: 1 }, loftDeg * DEG);
+    const p = solveLaunch({ from: f, landing: { x: 2, y: 1 + dist }, loft: loftDeg * DEG, terrain });
+    const end = arcPath(f, p, 100, terrain).pop();
+    assert.ok(Math.abs(end.y - 1 - dist) < 0.05, `flight ends ${end.y - 1} for donnée ${dist}`);
+    const { b } = run(terrain, p);
+    assert.ok(!b.dead && b.y - 1 > dist + 1.5 && b.y - 1 < 10, `rested ${b.y - 1} m for donnée ${dist}`);
+  }
+});
+
+test('a tir aims just short of its target along the line', () => {
+  const f = { x: 2, y: 1, z: 0.9 };
+  const a = snapAim(f, { x: 2.5, y: 9 });
+  assert.ok(Math.abs(Math.hypot(2.5 - a.x, 9 - a.y) - SNAP_SHORT) < 1e-9);
+  assert.ok(a.y < 9);
+  // very close target: never aims past the thrower
+  const near = snapAim(f, { x: 2, y: 1.2 });
+  assert.ok(near.y > 1);
 });

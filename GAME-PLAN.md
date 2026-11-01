@@ -139,7 +139,7 @@ Real players pick a landing spot (the *donnée*) and then decide how high to thr
 - **Sidespin:** comes from the lateral error (off-axis throws curl a little further off-axis).
 - After landing, the physics adds its own randomness (landing tilt, pebbles, rocks, slopes) as now.
 
-**Drawing:** the nominal arc as a ribbon, four faint edge arcs at ±1σ (lateral and longitudinal) forming the cone, and 1σ and 2σ landing ellipses. An optional dotted *roll guide* shows a noiseless roll-out on the perceived terrain; it is on for Easy, off for Hard, and can be toggled.
+**Drawing (C07):** the nominal arc as a cream ribbon inside a translucent pale-blue cone (an elliptical tube whose cross-section grows toward the landing, outlined by four edge arcs at **2σ**, about 86% of landings), filled 1σ (39%) and 2σ ground ellipses, and a small donnée mark. The shoulder camera eases toward the donnée and zooms in a little while a toss is live. An optional *roll guide* of orange dashes laid on the ground, ending in a ring, shows a noiseless roll-out on the perceived terrain; it is on for Easy, off for Medium and Hard, always on for the jack unless the player turned guides off, and can be toggled. Release height follows loft until the character's hand supplies it (0.5 m crouched below 18°, 0.9 m standing above 30°). A tir (snapped donnée) aims 0.2 m short of the target.
 
 **AI:** plans in the same space (donnée + loft) and throws through the same model with its own skill cone. Before throwing, the AI's donnée marker and arc are shown briefly ("Marcel picks his spot…").
 

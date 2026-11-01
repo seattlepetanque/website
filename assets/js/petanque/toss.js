@@ -228,7 +228,7 @@ export function createTossInput(canvas, options) {
     readout.classList.toggle('is-cancel', !!s.cancel);
     readout.textContent = s.cancel
       ? 'Release to cancel'
-      : `${STYLE_NAMES[styleForLoft(s.loft, !!s.snappedTo)]} ${Math.round(s.loft / DEG)}°`;
+      : `${STYLE_NAMES[styleForLoft(s.loft, !!s.snappedTo)]} ${Math.round(s.loft / DEG)}°${s.snappedTo ? ' · lands just short' : ''}`;
     if (s.px !== undefined) { readout.style.left = `${s.px + 18}px`; readout.style.top = `${s.py - 36}px`; }
     else { const r = canvas.getBoundingClientRect(); readout.style.left = `${r.left + r.width / 2}px`; readout.style.top = `${r.top + r.height * 0.2}px`; }
   }

@@ -73,7 +73,7 @@ The tests are in `tests/petanque/`. Physics, rules, terrain and AI have no DOM o
 To tune the game:
 
 - Physics and terrain numbers: `constants.js`.
-- Player skill and error cones: `SKILL` in `donnee.js`.
+- Player skill and error cones: `SKILL` and `difficultyScale` in `donnee.js`; release height `releaseHeight`; tir aim `SNAP_SHORT`; AI style personality `AI.stylePref` in `ai.js`. `node tests/petanque/measure-human.js` compares a reasonable human with each AI difficulty.
 - Loft to backspin: `backspinForLoft` in `donnee.js`.
 - Toss input feel: `TOSS` in `toss.js`.
 - AI strength: `AI` in `ai.js`.

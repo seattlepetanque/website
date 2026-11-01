@@ -160,3 +160,25 @@ test('chooseJackThrow returns a legal-aiming donnée and honours `from`', () => 
   assert.ok(d > 3 && d < 10, `donnée ${d} m out`);
   assert.ok(Number.isFinite(r.loft) && r.style);
 });
+
+test('AI choices carry their release point and launch from it', () => {
+  const s = setup({ jack: { x: 2, y: 8 } });
+  for (const id of ['marcel', 'odette']) {
+    const player = s.match.players.find((p) => p.id === id);
+    const r = chooseThrow({ world: s.world.clone(), match: s.match, player, difficulty: 'medium', rand: mulberry32(3) });
+    assert.ok(r.from && r.from.z >= 0.5 && r.from.z <= 0.9);
+    assert.equal(r.throwParams.from, r.from);
+  }
+  const j = chooseJackThrow({ world: s.world.clone(), difficulty: 'easy', rand: mulberry32(2), player: marcel(s.match) });
+  assert.ok(j.from && j.throwParams.from === j.from);
+});
+
+test('Marcel does not always throw plombées', () => {
+  const styles = new Set();
+  for (let i = 0; i < 10; i++) {
+    const s = setup({ jack: { x: 1.7 + i * 0.05, y: 7 + (i % 4) * 0.8 }, seed: i });
+    const r = chooseThrow({ world: s.world, match: s.match, player: marcel(s.match), difficulty: 'medium', rand: mulberry32(i + 1) });
+    styles.add(r.style);
+  }
+  assert.ok(styles.size >= 2, [...styles].join());
+});

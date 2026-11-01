@@ -11,7 +11,7 @@ import { createHud } from './hud.js';
 import { chooseThrowAsync, chooseJackThrow } from './ai.js';
 import { createTossInput } from './toss.js';
 import {
-  SKILL, scaledSkill, coneFor, coneEnvelope, executeThrow, solveLaunch, predictRoll, styleForLoft,
+  SKILL, scaledSkill, coneFor, coneEnvelope, executeThrow, solveLaunch, predictRoll, styleForLoft, releaseFrom, snapAim,
 } from './donnee.js';
 import { createAudio } from './audio.js';
 import * as THREE from '../vendor/three.module.js';
@@ -154,8 +154,9 @@ function boot() {
   }
 
   // Release point of a player's boule; C09 will return the character's hand here
-  function releasePoint(player) { // eslint-disable-line no-unused-vars
-    return { x: 2, y: 1, z: 0.9 };
+  // until then the height follows the loft (crouched low throws, standing lobs), see donnee.releaseHeight
+  function releasePoint(player, loft = 0.9) { // eslint-disable-line no-unused-vars
+    return releaseFrom(C.circle, loft);
   }
 
   const readParams = () => inputs.yaw ? ({
@@ -181,16 +182,18 @@ function boot() {
 
   // Draw the preview for a toss state { donnee, loft, snappedTo }
   function showToss(t, kind) {
-    const from = releasePoint(null);
-    const cone = coneFor({ skill: SKILL.human, from, landing: t.donnee, loft: t.loft });
-    const env = coneEnvelope({ from, landing: t.donnee, loft: t.loft, cone, terrain: world.terrain });
+    const from = releasePoint(null, t.loft);
+    const landing = t.snappedTo ? snapAim(from, t.donnee) : t.donnee; // a tir lands just short of its target
+    const cone = coneFor({ skill: SKILL.human, from, landing, loft: t.loft });
+    const env = coneEnvelope({ from, landing, loft: t.loft, cone, terrain: world.terrain });
     let path = null;
-    if (rollGuide) {
-      const key = `${t.donnee.x.toFixed(3)},${t.donnee.y.toFixed(3)},${t.loft.toFixed(4)},${kind}`;
+    // the jack rolls on a metre or more after landing, so its guide is on unless the player turned guides off
+    if (rollGuide || (kind === 'jack' && rollOverride !== '0')) {
+      const key = `${landing.x.toFixed(3)},${landing.y.toFixed(3)},${t.loft.toFixed(4)},${kind}`;
       const now = performance.now();
       if (key === roll.key) path = roll.path;
       else if (now - roll.t >= 100) {
-        const throwParams = solveLaunch({ from, landing: t.donnee, loft: t.loft, terrain: world.terrain });
+        const throwParams = solveLaunch({ from, landing, loft: t.loft, terrain: world.terrain });
         const full = predictRoll({ world, terrain, throwParams, from, kind: kind === 'jack' ? 'jack' : 'boule' });
         // the guide starts where the boule first touches down, not in the air
         const hit = full.findIndex((q) => q.z <= terrain.sample(q.x, q.y).h + 0.1);
@@ -230,9 +233,10 @@ function boot() {
     onThrow: (t) => {
       if (!pending || flying) { toss.setPhase('off'); return; }
       const { kind, playerId } = pending;
-      const from = releasePoint(null);
-      const cone = coneFor({ skill: SKILL.human, from, landing: t.donnee, loft: t.loft });
-      const res = executeThrow({ from, landing: t.donnee, loft: t.loft, cone, terrain: world.terrain, rand: throwRand });
+      const from = releasePoint(null, t.loft);
+      const landing = t.snappedTo ? snapAim(from, t.donnee) : t.donnee;
+      const cone = coneFor({ skill: SKILL.human, from, landing, loft: t.loft });
+      const res = executeThrow({ from, landing, loft: t.loft, cone, terrain: world.terrain, rand: throwRand });
       clearToss();
       humanThrow(res.throwParams, from);
       void kind; void playerId;
@@ -396,7 +400,7 @@ function boot() {
     refreshHud({ team, playerId: thrower.id, text: `${thrower.isHuman ? 'You' : thrower.name} throw${thrower.isHuman ? '' : 's'} the jack` });
     aimView();
     if (thrower.isHuman) {
-      humanTurn('jack', thrower.id, lead + 'Your jack. Aim, then toss it onto the court between the two yellow lines (6 to 10 metres out).');
+      humanTurn('jack', thrower.id, lead + 'Your jack. Aim, then toss it onto the court between the two yellow lines (6 to 10 metres out). It rolls on after landing: aim so the orange dashes end inside the zone.');
     } else {
       aiJack(thrower, lead);
     }
@@ -415,7 +419,13 @@ function boot() {
     if (demo) { // ?debug&humanturn&demo: a scripted toss preview for screenshots
       rollGuide = true;
       rollBtn.classList.add('is-on');
-      lastToss = { donnee: { x: 2.9, y: 8 }, loft: 40 * DEG, snappedTo: null };
+      // &loft=15 (degrees), &dist=7 (m ahead of the circle), &dx=0.9 (m across), &tir (snap onto the jack)
+      const jb = jackBody();
+      const tir = params.has('tir') && jb;
+      lastToss = {
+        donnee: tir ? { x: jb.x, y: jb.y } : { x: C.circle.x + (+params.get('dx') || 0.9), y: C.circle.y + (+params.get('dist') || 7) },
+        loft: (+params.get('loft') || 40) * DEG, snappedTo: tir ? jb.id : null,
+      };
       showToss(lastToss, kind);
     }
   }
@@ -453,18 +463,19 @@ function boot() {
     const t = token;
     await sleep(AI_MIN_THINK + 100);
     if (t !== token) return;
-    const from = releasePoint(player);
+    const base = releasePoint(player);
     placePlayers(player.id, 0);
-    const choice = chooseJackThrow({ world, difficulty, rand: aiRand, player, from });
+    const choice = chooseJackThrow({ world, difficulty, rand: aiRand, player, from: base });
     pending = null;
-    await showAiSpot(player, choice, 'jack', from);
+    await showAiSpot(player, choice, 'jack');
     if (t !== token) return;
-    doThrow('jack', player.id, choice.throwParams, choice.label, from);
+    doThrow('jack', player.id, choice.throwParams, choice.label, choice.from);
   }
 
   // Show the AI's donnée and arc for a moment before it throws
-  async function showAiSpot(player, choice, kind, from) {
+  async function showAiSpot(player, choice, kind) {
     if (instant || !choice.donnee) return;
+    const from = choice.from || releasePoint(player, choice.loft);
     const t = token;
     const yaw = Math.atan2(choice.donnee.x - from.x, choice.donnee.y - from.y);
     throwerYaw = yaw;
@@ -488,14 +499,14 @@ function boot() {
   async function aiBoule(player) {
     say2(`${player.name} is aiming…`);
     const t = token;
-    const from = releasePoint(player);
+    const base = releasePoint(player);
     placePlayers(player.id, 0);
     const cached = pierreChoice && pierreChoice.id === player.id ? pierreChoice.choice : null;
     pierreChoice = null;
     let choice;
     try {
       [choice] = await Promise.all([
-        cached || chooseThrowAsync({ world, match, player, difficulty, rand: aiRand, from }),
+        cached || chooseThrowAsync({ world, match, player, difficulty, rand: aiRand, from: base }),
         sleep(AI_MIN_THINK),
       ]);
     } catch (err) {
@@ -508,10 +519,10 @@ function boot() {
     }
     if (t !== token) return;
     say2(choice.label);
-    if (!instant) await showAiSpot(player, choice, 'boule', from);
+    if (!instant) await showAiSpot(player, choice, 'boule');
     else await sleep(700);
     if (t !== token) return;
-    doThrow('boule', player.id, choice.throwParams, choice.label, from);
+    doThrow('boule', player.id, choice.throwParams, choice.label, choice.from);
   }
 
   // Pierre looks at the court and tells you what he would do
@@ -520,7 +531,7 @@ function boot() {
     const t = token;
     let choice;
     try {
-      choice = await chooseThrowAsync({ world, match, player: pierre, difficulty, rand: aiRand });
+      choice = await chooseThrowAsync({ world, match, player: pierre, difficulty, rand: aiRand, from: releasePoint(pierre) });
     } catch (err) { return; }
     if (mine !== thinkToken || t !== token) return;
     pierreChoice = { id: pierre.id, choice };
