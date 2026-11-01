@@ -164,9 +164,9 @@ Design: GAME-PLAN.md §9–11. Round 1 contracts above still apply (units, axes,
 | C06 | done | haiku | C04 | Remove the old swing code; update README |
 | C07 | done | sonnet | C04, C05, C06 | Review and tune throw feel |
 | C08 | done | sonnet | C02 | Stick-figure skeleton and procedural animation |
-| C09 | in-progress | sonnet | C07, C08 | Characters in the game: positions, throw sync, reactions |
+| C09 | done | sonnet | C07, C08 | Characters in the game: positions, throw sync, reactions |
 | C10 | done | sonnet | — | Find and vendor CC0 rigged human models |
-| C11 | todo | sonnet | C09, C10 | Skinned meshes on the skeleton |
+| C11 | in-progress | sonnet | C09, C10 | Skinned meshes on the skeleton |
 | C12 | todo | sonnet | C11 | Personalities: looks, quirks, reactions, commentary |
 | C13 | todo | sonnet | C12 | Round 2 final review |
 
@@ -232,6 +232,7 @@ Done by script and screenshots; a person still needs to feel it. Try each on a m
 - **AI spot:** watch Marcel and Odette show their spot (marker, arc and cone) for about a second before each throw. Marcel should now sometimes roll or demi-portée; Easy should feel clearly beatable, Medium about even with you pointing carefully, Hard strong.
 - **Phone:** the cone and dashes should still read at 500 px wide; dragging with a thumb must not scroll the page; pulling for loft should reach both extremes without leaving the canvas.
 - **Look for:** arcs leaving the top of the screen for lofts above ~60° (expected for very high lobs), the placeholder thrower hiding the start of the arc, cones that look wider or narrower than where the boules land, and any throw that leaves from a different height than the preview showed.
+- From C09: release heights now come from the character's hand (crouched ≈ 0.16–0.8 m, standing ≈ 0.7–1.4 m by loft), replacing C07's 0.5/0.9 m rule — roulette behaviour shifts; re-run the C07 checklist in C13. The mène-end/game-over gathering reads poorly from the steep head camera (only legs at the top corners); the post-throw reaction cut shows only the thrower; the first throw of a mène gets no reaction. Waiting characters cast no shadow (their shadows fell into the shoulder view).
 
 ## Later (not scheduled)
 

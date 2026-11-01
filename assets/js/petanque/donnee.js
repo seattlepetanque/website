@@ -24,7 +24,8 @@ export function releaseHeight(loft) {
   const t = Math.max(0, Math.min(1, (loft / DEG - 18) / 12));
   return RELEASE_LOW + (RELEASE_HIGH - RELEASE_LOW) * t * t * (3 - 2 * t);
 }
-export const releaseFrom = (base, loft) => ({ x: base.x, y: base.y, z: releaseHeight(loft) });
+// base may carry release(loft) (the thrower's predicted hand position, C09); otherwise the height follows the loft
+export const releaseFrom = (base, loft) => (base.release ? base.release(loft) : { x: base.x, y: base.y, z: releaseHeight(loft) });
 
 // A tir (donnée snapped onto a boule) lands this far short of the target's centre along the throw: the boule
 // then hops or rolls into it. Measured with the human cone at 32-40 degrees: about +8 points of hits over

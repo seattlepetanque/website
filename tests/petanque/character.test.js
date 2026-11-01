@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from '../../assets/js/vendor/three.module.js';
 import {
-  createCharacter, stancePose, walkPose, solveSkeleton, boneLengths, BONES,
+  createCharacter, stancePose, walkPose, solveSkeleton, boneLengths, BONES, releaseOffset,
 } from '../../assets/js/petanque/character.js';
 
 const STANCES = ['idle', 'aim', 'crouch', 'stand', 'watch', 'celebrate', 'dismay'];
@@ -121,4 +121,23 @@ test('lookAt turns the head toward the point', () => {
   const j = ch.skeleton();
   assert.ok(j.head[0] === j.head[0]);
   ch.dispose();
+});
+
+test('releaseOffset predicts the hand position at release (within 3 cm)', async () => {
+  for (const stance of ['crouch', 'stand']) {
+    for (const loft of [10 * DEG, 25 * DEG, 45 * DEG, 70 * DEG]) {
+      for (const yaw of [0, 0.4, -0.5]) {
+        const ch = createCharacter(THREE, { stance, height: 1.78 });
+        ch.setStance(stance);
+        ch.setPlacement(2, 1, yaw);
+        for (let i = 0; i < 70; i++) ch.update(1 / 60); // idle for a while so the breathing is mid-cycle
+        let hand = null;
+        await run(ch, ch.playThrow({ loft, onRelease: (h) => { hand = h; } }), null);
+        assert.ok(hand, 'released');
+        const off = releaseOffset({ height: 1.78, stance, loft, yaw });
+        const d = Math.hypot(hand.x - (2 + off.x), hand.y - (1 + off.y), hand.z - off.z);
+        assert.ok(d < 0.03, `${stance} ${loft} ${yaw}: ${d}`);
+      }
+    }
+  }
 });

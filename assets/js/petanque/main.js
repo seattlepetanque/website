@@ -5,7 +5,7 @@ import { createTerrain } from './terrain.js';
 import { createWorld, createBody, launch } from './physics.js';
 import { createRenderer } from './render.js';
 import {
-  createMatch, defaultPlayers, apply, nextTeam, playersWithBoules,
+  createMatch, defaultPlayers, apply, nextTeam, playersWithBoules, holdingTeam,
 } from './rules.js';
 import { createHud } from './hud.js';
 import { chooseThrowAsync, chooseJackThrow } from './ai.js';
@@ -15,7 +15,7 @@ import {
 } from './donnee.js';
 import { createAudio } from './audio.js';
 import * as THREE from '../vendor/three.module.js';
-import { createCharacter } from './character.js';
+import { createCharacter, releaseOffset } from './character.js';
 
 const TEAM_NAMES = ['You & Pierre', 'Marcel & Odette'];
 const AIM_MAX = 0.6; // rad of aim either side of straight ahead
@@ -32,7 +32,27 @@ const VIEWS = ['shoulder', 'head', 'inspect'];
 const VIEW_LABELS = { shoulder: 'Shoulder', head: 'Head', inspect: 'Inspect' };
 const ROLL_DEFAULT = { easy: true, medium: false, hard: false };
 // Where waiting players stand: behind the circle and beside the court, out of the shoulder camera's view
-const WAIT_SPOTS = [{ x: -0.8, y: -0.7 }, { x: -1.4, y: 0.5 }, { x: 5.2, y: 0.1 }];
+const HOME = { you: { x: -0.9, y: -0.4 }, pierre: { x: -1.5, y: 0.7 }, marcel: { x: 5.0, y: 0.0 }, odette: { x: 5.6, y: 0.8 } };
+const CAST_SPEED = 2.4; // m/s: a brisk walk, so a change of thrower takes about a second
+// Looks and stances (GAME-PLAN section 10). Team colours: navy trousers for your team, bronze for the opponents.
+const SPECS = {
+  you: {
+    name: 'You', height: 1.76, build: 'average', stance: 'crouch',
+    colors: { shirt: '#9fb0b8', trousers: '#23396b', skin: '#d9a37c' },
+  },
+  pierre: {
+    name: 'Pierre', height: 1.82, build: 'average', stance: 'stand',
+    colors: { shirt: '#f2c230', trousers: '#23396b', skin: '#b98258' },
+  },
+  marcel: {
+    name: 'Marcel', height: 1.68, build: 'stout', stance: 'crouch',
+    colors: { shirt: '#d8d2c0', trousers: '#8a5a2b', skin: '#cf9a72', hat: '#3f3a34' }, quirks: { hat: 'cap' },
+  },
+  odette: {
+    name: 'Odette', height: 1.74, build: 'slim', stance: 'stand',
+    colors: { shirt: '#e9e1d2', trousers: '#9c6a34', skin: '#efc6a4', hat: '#e9d9a0' }, quirks: { hat: 'sunhat' },
+  },
+};
 
 function store(key, value) { // localStorage that never throws
   try {
@@ -66,6 +86,21 @@ function boot() {
   const world = createWorld(terrain, mulberry32(seed ^ 0x9e3779b9));
   const renderer = createRenderer(canvas, terrain);
   const aiRand = mulberry32(seed ^ 0x51ed270b);
+
+  // ---- Characters: created once, walk between the circle and their waiting spots ----
+  const reduceMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const cast = new Map(); // id -> character
+  for (const id of Object.keys(SPECS)) {
+    const ch = createCharacter(THREE, SPECS[id]);
+    ch.setStance('watch');
+    renderer.addObject(ch.root);
+    cast.set(id, ch);
+  }
+  const CAST_ALL = cast;
+  let inCircle = null; // id of whoever stands in the circle
+  let arrival = Promise.resolve(); // resolves when the thrower has reached the circle
+  let aiYaw = 0; // facing of an AI thrower (towards the jack), fixed before it plans so the release point matches
+  let frozen = false; // ?debug&freezethrow stops the animation at the release frame
 
   let match = null; // rules state; null until a game starts
   let difficulty = 'medium';
@@ -150,13 +185,23 @@ function boot() {
       inputs.yaw.value = (Math.round(aimYaw / DEG * 2) / 2).toString();
       outputs.yaw();
     }
-    if (pending) placePlayers(pending.playerId, aimYaw);
+    const me = cast.get('you');
+    if (pending && inCircle === 'you' && !me.busy) me.yaw = aimYaw;
   }
 
-  // Release point of a player's boule; C09 will return the character's hand here
-  // until then the height follows the loft (crouched low throws, standing lobs), see donnee.releaseHeight
-  function releasePoint(player, loft = 0.9) { // eslint-disable-line no-unused-vars
-    return releaseFrom(C.circle, loft);
+  // Release point of a player's boule: where that character's hand will be at the release frame for this loft,
+  // facing their aim. Without a loft it returns a base for the AI ({ x, y, release(loft) }), see donnee.releaseFrom.
+  const faceYaw = (id) => (id === 'you' ? aimYaw : aiYaw);
+  function handFrom(id, loft, yaw) {
+    const spec = SPECS[id];
+    const o = releaseOffset({ height: spec.height, stance: spec.stance, loft, yaw });
+    return { x: C.circle.x + o.x, y: C.circle.y + o.y, z: terrain.sample(C.circle.x, C.circle.y).h + o.z };
+  }
+  function releasePoint(player, loft) {
+    const id = player ? player.id : 'you';
+    const yaw = faceYaw(id);
+    if (loft === undefined) return { x: C.circle.x, y: C.circle.y, release: (l) => handFrom(id, l, yaw) };
+    return handFrom(id, loft, yaw);
   }
 
   const readParams = () => inputs.yaw ? ({
@@ -221,7 +266,7 @@ function boot() {
   const toss = createTossInput(canvas, {
     pick: (x, y) => renderer.pick(x, y),
     getYaw: () => aimYaw,
-    getOrigin: () => releasePoint(null),
+    getOrigin: () => C.circle,
     onTurn: (dyaw) => setAim(aimYaw + dyaw, false),
     onPreview: (t) => {
       if (!pending || flying) return;
@@ -230,20 +275,20 @@ function boot() {
       lastToss = t;
       showToss(t, pending.kind);
     },
-    onThrow: (t) => {
-      if (!pending || flying) { toss.setPhase('off'); return; }
-      const { kind, playerId } = pending;
-      const from = releasePoint(null, t.loft);
-      const landing = t.snappedTo ? snapAim(from, t.donnee) : t.donnee;
-      const cone = coneFor({ skill: SKILL.human, from, landing, loft: t.loft });
-      const res = executeThrow({ from, landing, loft: t.loft, cone, terrain: world.terrain, rand: throwRand });
-      clearToss();
-      humanThrow(res.throwParams, from);
-      void kind; void playerId;
-    },
+    onThrow: (t) => humanToss(t),
     onCancel: () => clearToss(),
     targets: () => world.bodies.filter((b) => !b.dead).map((b) => ({ id: b.id, x: b.x, y: b.y, r: b.r })),
   });
+
+  function humanToss(t) {
+    if (!pending || flying) { toss.setPhase('off'); return; }
+    const from = releasePoint(null, t.loft);
+    const landing = t.snappedTo ? snapAim(from, t.donnee) : t.donnee;
+    const cone = coneFor({ skill: SKILL.human, from, landing, loft: t.loft });
+    const res = executeThrow({ from, landing, loft: t.loft, cone, terrain: world.terrain, rand: throwRand });
+    clearToss();
+    humanThrow(res.throwParams, from, t.loft);
+  }
 
   function enableControls(on) {
     for (const k in inputs) inputs[k].disabled = !on;
@@ -295,15 +340,131 @@ function boot() {
   });
   const say2 = hud.say;
 
-  // Placeholder players: the thrower in the circle, everyone else out of the shoulder camera's view
-  function placePlayers(throwerId, yaw) {
-    const list = match ? match.players : defaultPlayers();
-    let w = 0;
-    renderer.setPlayers(list.map((p) => {
-      if (p.id === throwerId) return { id: p.id, x: C.circle.x, y: C.circle.y, yaw, team: p.team };
-      const spot = WAIT_SPOTS[w++ % WAIT_SPOTS.length];
-      return { id: p.id, x: spot.x, y: spot.y, yaw: 0, team: p.team };
-    }));
+  // ---- Cast movement ----
+  const snapMove = () => instant || reduceMotion(); // no walking: teleport
+  const homeYaw = (id) => Math.atan2(C.circle.x - HOME[id].x, 6 - HOME[id].y);
+  function placeAt(id, x, y, yaw) {
+    const ch = cast.get(id);
+    ch.setPlacement(x, y, yaw);
+    ch.root.position.z = terrain.sample(x, y).h;
+  }
+  // Waiting players cast no shadow: the low sun would throw theirs into the shoulder view
+  const shadow = (id, on) => cast.get(id).root.traverse((o) => { if (o.isMesh) o.castShadow = on; });
+  function walkOut(id) { // to a waiting spot, then watch
+    const ch = cast.get(id), h = HOME[id];
+    shadow(id, false);
+    ch.setHolding(false);
+    ch.setStance('watch');
+    if (snapMove()) placeAt(id, h.x, h.y, homeYaw(id));
+    else ch.walkTo({ x: h.x, y: h.y, yaw: homeYaw(id), speed: CAST_SPEED });
+  }
+  // Everyone to their waiting spot at once (new mène, new game)
+  function resetCast() {
+    inCircle = null;
+    for (const id of cast.keys()) {
+      const ch = cast.get(id);
+      ch.setHolding(false); ch.setStance('watch'); shadow(id, false);
+      placeAt(id, HOME[id].x, HOME[id].y, homeYaw(id));
+    }
+  }
+  // The thrower walks into the circle (the previous one walks out); returns a promise for the arrival
+  function enterCircle(id, yaw, snap) {
+    const ch = cast.get(id), c = C.circle;
+    if (inCircle && inCircle !== id) walkOut(inCircle);
+    inCircle = id;
+    shadow(id, true);
+    for (const [oid, och] of cast) if (oid !== id && oid !== inCircle && !och.busy) och.setStance('watch');
+    ch.setStance(SPECS[id].stance);
+    ch.setHolding(true);
+    const here = Math.hypot(ch.root.position.x - c.x, ch.root.position.y - c.y) < 0.05;
+    if (here || snap || snapMove()) {
+      placeAt(id, c.x, c.y, yaw);
+      arrival = Promise.resolve();
+    } else {
+      const t = token;
+      arrival = ch.walkTo({ x: c.x, y: c.y, yaw, speed: CAST_SPEED }).then(() => {
+        if (t === token && inCircle === id) ch.yaw = faceYaw(id);
+      });
+    }
+    return arrival;
+  }
+  // Setup screen and debug views: the human crouched in the circle, the others waiting
+  function placePlayers(throwerId) {
+    resetCast();
+    enterCircle(throwerId, 0, true);
+  }
+
+  // Throw animation drives the launch: go() runs at the release frame (the boule leaves the hand)
+  async function throwWith(id, loft, go) {
+    const ch = cast.get(id), t = token;
+    await arrival;
+    if (t !== token) return;
+    ch.setHolding(true);
+    if (!ch.busy) ch.yaw = faceYaw(id);
+    let released = false;
+    const done = ch.playThrow({
+      loft,
+      onRelease: () => {
+        released = true;
+        if (t !== token) return;
+        if (debug && params.has('freezethrow')) { frozen = true; return; }
+        go();
+      },
+    });
+    await done;
+    if (!released && t === token) go(); // the animation was cut short: still throw
+  }
+
+  // Per frame: animate, keep feet on the terrain, everyone watches the boule in flight (or the jack)
+  function tickCast(dt) {
+    if (frozen) return;
+    const w = flying && !flying.dead ? flying : jackBody();
+    for (const ch of cast.values()) {
+      const p = ch.root.position;
+      p.z = terrain.sample(p.x, p.y).h;
+      if (w) ch.lookAt(w.x, w.y, Math.max(0.3, w.z)); else ch.lookAt(null);
+      ch.update(dt);
+    }
+  }
+
+  // After a throw settles: celebrate a point gained, dismay for a poor throw, otherwise watch
+  function react(was, prevHold) {
+    if (instant || !was || was.kind !== 'boule' || !match) return;
+    const j = jackBody(), now = holdingTeam(match.jack, match.boules);
+    const gap = j ? Math.hypot(was.x - j.x, was.y - j.y) - was.r - j.r : 9;
+    let mood = 'watch';
+    if (was.dead) mood = 'dismay';
+    else if (now === was.team && prevHold !== null && prevHold !== was.team) mood = 'celebrate';
+    else if (now !== was.team && gap > 0.6) mood = 'dismay';
+    for (const p of match.players) {
+      const ch = cast.get(p.id);
+      let m = 'watch';
+      if (p.id === was.owner) m = mood;
+      else if (mood === 'celebrate') m = p.team === was.team ? 'celebrate' : 'dismay';
+      if (p.id === inCircle && m === 'watch') continue; // keep the thrower's follow-through
+      ch.setStance(m);
+    }
+    // cut to the thrower for a moment so the reaction can be seen
+    later(() => { if (!pending && !flying) renderer.setCamera('inspect', { target: { x: C.circle.x, y: C.circle.y }, dist: 3.8, az: Math.PI, el: 0.12, height: 0.9 }); }, 800);
+  }
+
+  // Mène end or game over: gather by the jack; the winners celebrate, the others are dismayed
+  function gather(winTeam) {
+    if (instant && !(debug && params.has('meneend'))) return; // ?debug&meneend shows the gathering in instant matches
+    const j = jackBody(), c = j && !j.dead ? j : { x: 2, y: 8 };
+    const slots = [[-2.3, 1.0], [-3.0, 1.9], [2.3, 1.0], [3.0, 1.9]]; // beyond the jack, to the sides
+    const n = [0, 0];
+    for (const p of match.players) {
+      const ch = cast.get(p.id), k = n[p.team]++;
+      const [dx, dy] = slots[p.team * 2 + k];
+      const x = c.x + dx, y = c.y + dy;
+      ch.setHolding(false); shadow(p.id, true);
+      ch.setStance(winTeam === null || winTeam === undefined ? 'watch' : p.team === winTeam ? 'celebrate' : 'dismay');
+      if (p.id === inCircle) inCircle = null;
+      const yaw = Math.atan2(c.x - x, c.y - y);
+      if (snapMove()) placeAt(p.id, x, y, yaw);
+      else ch.walkTo({ x, y, yaw, speed: CAST_SPEED });
+    }
   }
 
   // Head camera framing the jack and live boules within 2 m of it
@@ -370,7 +531,7 @@ function boot() {
     enableControls(false);
     clearWorld();
     setAim(0, false);
-    placePlayers('you', 0);
+    placePlayers('you');
     aimView();
     hud.hideChooser();
     hud.hideHint();
@@ -391,10 +552,12 @@ function boot() {
 
   function beginMene(first) {
     clearWorld();
+    resetCast();
     pending = null;
     hud.hideChooser();
     const team = match.jackTeam;
-    const thrower = match.players.find((p) => p.team === team && (p.isHuman || team === 1)) ||
+    const thrower = (debug && match.players.find((p) => p.id === params.get('thrower') && p.team === team)) ||
+      match.players.find((p) => p.team === team && (p.isHuman || team === 1)) ||
       match.players.find((p) => p.team === team);
     const lead = first ? `${TEAM_NAMES[team]} won the toss. ` : '';
     refreshHud({ team, playerId: thrower.id, text: `${thrower.isHuman ? 'You' : thrower.name} throw${thrower.isHuman ? '' : 's'} the jack` });
@@ -411,7 +574,7 @@ function boot() {
   function humanTurn(kind, playerId, text) {
     pending = { kind, playerId };
     renderer.showJackZone(kind === 'jack');
-    placePlayers(playerId, aimYaw);
+    enterCircle(playerId, aimYaw);
     enableControls(true);
     setView('shoulder');
     say2(text);
@@ -427,17 +590,18 @@ function boot() {
         loft: (+params.get('loft') || 40) * DEG, snappedTo: tir ? jb.id : null,
       };
       showToss(lastToss, kind);
+      if (params.has('autothrow') && !humanTurn.auto) setTimeout(() => { humanTurn.auto = true; humanToss(lastToss); }, 2500); // screenshots of the throw
     }
   }
 
-  function humanThrow(p, from) {
+  function humanThrow(p, from, loft) {
     if (!pending || flying) return;
     const { kind, playerId } = pending;
     pending = null;
     audio.unlock();
     store(HINT_KEY, '1');
     hud.hideHint();
-    doThrow(kind, playerId, p, undefined, from);
+    doThrow(kind, playerId, p, undefined, from, loft);
   }
 
   if (throwBtn) throwBtn.addEventListener('click', () => humanThrow(readParams()));
@@ -445,14 +609,15 @@ function boot() {
     if (match) toSetup();
   });
 
-  function doThrow(kind, playerId, p, comment, from) {
+  function doThrow(kind, playerId, p, comment, from, loft) {
     pierreChoice = null; thinkToken++;
     hud.hideChooser();
     const player = match.players.find((q) => q.id === playerId);
     if (kind === 'boule') match = apply(match, { type: 'bouleThrown', playerId });
     refreshHud({ team: player.team, playerId, text: `${player.isHuman ? 'You are' : player.name + ' is'} throwing…` });
     say2(comment || 'Rolling…');
-    launchBody(kind, player.team, playerId, p, from);
+    const go = () => launchBody(kind, player.team, playerId, p, from);
+    if (instant || !loft) go(); else throwWith(playerId, loft, go);
   }
 
   const sleep = (ms) => new Promise((res) => setTimeout(res, instant ? 0 : ms));
@@ -463,13 +628,14 @@ function boot() {
     const t = token;
     await sleep(AI_MIN_THINK + 100);
     if (t !== token) return;
+    aiYaw = 0;
     const base = releasePoint(player);
-    placePlayers(player.id, 0);
+    enterCircle(player.id, aiYaw);
     const choice = chooseJackThrow({ world, difficulty, rand: aiRand, player, from: base });
     pending = null;
     await showAiSpot(player, choice, 'jack');
     if (t !== token) return;
-    doThrow('jack', player.id, choice.throwParams, choice.label, choice.from);
+    doThrow('jack', player.id, choice.throwParams, choice.label, choice.from, choice.loft);
   }
 
   // Show the AI's donnée and arc for a moment before it throws
@@ -479,7 +645,6 @@ function boot() {
     const t = token;
     const yaw = Math.atan2(choice.donnee.x - from.x, choice.donnee.y - from.y);
     throwerYaw = yaw;
-    placePlayers(player.id, yaw);
     shoulderCam.yaw = yaw;
     shoulderView();
     const skill = scaledSkill(SKILL[player.id] || SKILL.human, difficulty);
@@ -499,8 +664,10 @@ function boot() {
   async function aiBoule(player) {
     say2(`${player.name} is aiming…`);
     const t = token;
+    const jk = jackBody();
+    aiYaw = jk && !jk.dead ? Math.atan2(jk.x - C.circle.x, jk.y - C.circle.y) : 0;
     const base = releasePoint(player);
-    placePlayers(player.id, 0);
+    enterCircle(player.id, aiYaw);
     const cached = pierreChoice && pierreChoice.id === player.id ? pierreChoice.choice : null;
     pierreChoice = null;
     let choice;
@@ -522,7 +689,14 @@ function boot() {
     if (!instant) await showAiSpot(player, choice, 'boule');
     else await sleep(700);
     if (t !== token) return;
-    doThrow('boule', player.id, choice.throwParams, choice.label, choice.from);
+    doThrow('boule', player.id, choice.throwParams, choice.label, choice.from, choice.from ? choice.loft : undefined);
+  }
+
+  // Planning base for an AI that is not (yet) in the circle: facing the jack
+  function aiBase(player) {
+    const jk = jackBody(), c = C.circle;
+    const yaw = jk && !jk.dead ? Math.atan2(jk.x - c.x, jk.y - c.y) : 0;
+    return { x: c.x, y: c.y, release: (l) => handFrom(player.id, l, yaw) };
   }
 
   // Pierre looks at the court and tells you what he would do
@@ -531,7 +705,7 @@ function boot() {
     const t = token;
     let choice;
     try {
-      choice = await chooseThrowAsync({ world, match, player: pierre, difficulty, rand: aiRand, from: releasePoint(pierre) });
+      choice = await chooseThrowAsync({ world, match, player: pierre, difficulty, rand: aiRand, from: aiBase(pierre) });
     } catch (err) { return; }
     if (mine !== thinkToken || t !== token) return;
     pierreChoice = { id: pierre.id, choice };
@@ -649,6 +823,7 @@ function boot() {
       later(nextTurn, 1400);
       return;
     }
+    const prevHold = holdingTeam(match.jack, match.boules);
     match = apply(match, { type: 'throwSettled', jack: snap.jack, boules: snap.boules });
     if (match.phase === 'meneEnd' || match.phase === 'gameOver') {
       endOfMene(note);
@@ -657,7 +832,8 @@ function boot() {
     headView(snap.jack);
     say2(note);
     refreshHud(null);
-    later(nextTurn, 1500);
+    react(was, prevHold);
+    later(nextTurn, instant ? 0 : 1800);
   }
 
   function endOfMene(note) {
@@ -691,6 +867,7 @@ function boot() {
       if (win) note = `${special}Closest: ${ownerName(win)} boule, ${gapText(win, j)} from the jack.`;
     }
     refreshHud(null);
+    gather(r.void ? null : r.team);
     let text, detail = note;
     if (r.void) text = 'Void mène: no points';
     else {
@@ -717,7 +894,8 @@ function boot() {
     beginMene(false);
   }
 
-  // Fixed timestep loop
+  // Fixed timestep loop (?debug&timerframes drives it from timers, for headless screenshots under virtual time)
+  const nextFrame = debug && params.has('timerframes') ? (f) => setTimeout(() => f(performance.now()), 16) : requestAnimationFrame;
   let acc = 0, last = performance.now();
   function frame(now) {
     const dt = Math.min((now - last) / 1000, 0.1);
@@ -735,13 +913,14 @@ function boot() {
       audio.handleEvents(world.events, new Map(world.bodies.map((b) => [b.id, b])));
       world.events.length = 0;
     }
+    tickCast(dt);
     renderer.sync(world);
     renderer.render(dt);
-    requestAnimationFrame(frame);
+    nextFrame(frame);
   }
 
   aimView();
-  requestAnimationFrame(frame);
+  nextFrame(frame);
 
   if (debug) {
     window.__petanque = {
@@ -754,17 +933,18 @@ function boot() {
 
   if (debug && params.has('autotest')) {
     // AI-only quick match, every throw simulated to rest instantly
-    startGame({ target: 7, difficulty: 'medium', allAI: true, instant: true });
+    startGame({ target: +params.get('target') || 7, difficulty: 'medium', allAI: true, instant: !params.has('animate') }); // &animate: real time
   } else if (debug && params.has('aispot')) {
     // Real-time game where Marcel throws the jack first: screenshot while he shows his spot
     startGame({ target: 7, difficulty: 'medium', firstJackTeam: 1 });
   } else if (debug && pickHuman !== null) {
     // Stop at the human's first boule (or at the chooser with ?humanturn=chooser)
-    startGame({ target: 7, difficulty: 'medium', instant: true, firstJackTeam: pickHuman === 'jack' ? 0 : 1 });
+    startGame({ target: 7, difficulty: 'medium', instant: !params.has('animate'), firstJackTeam: pickHuman === 'jack' ? 0 : 1 }); // &animate: real time
   } else if (debug && params.has('characters')) {
     // --- ?debug&characters: stick figures in every stance side by side (for screenshots) ---
     clearWorld();
     hud.hideHint();
+    for (const ch of CAST_ALL.values()) ch.root.visible = false;
     const specs = [
       ['idle', { name: 'Ana', height: 1.62, build: 'slim', stance: 'stand', colors: { shirt: '#c0392b', trousers: '#2c3e50', skin: '#e8b48c' } }],
       ['crouch', { name: 'Marcel', height: 1.7, build: 'stout', stance: 'crouch', colors: { shirt: '#6f8f4e', trousers: '#4b4b55', skin: '#d29b74', hat: '#2d3a55' }, quirks: { hat: 'cap' } }],
@@ -774,7 +954,7 @@ function boot() {
       ['watch', { name: 'Max', height: 1.9, build: 'stout', stance: 'stand', colors: { shirt: '#7a3b8f', trousers: '#33414d', skin: '#f0c7a8' } }],
       ['throw', { name: 'Thrower', height: 1.72, build: 'average', stance: params.get('stance') === 'stand' ? 'stand' : 'crouch', colors: { shirt: '#1f9d8b', trousers: '#3b3b3b', skin: '#dba983' } }],
     ];
-    const cast = specs.map(([stance, spec], i) => {
+    const figures = specs.map(([stance, spec], i) => {
       const ch = createCharacter(THREE, spec);
       const x = 0.15 + i * (3.7 / (specs.length - 1));
       ch.setPlacement(x, 3, Math.PI); // facing the camera (-y)
@@ -795,12 +975,12 @@ function boot() {
     let lastC = performance.now();
     const tickC = (now) => {
       const dt = Math.min((now - lastC) / 1000, 0.1); lastC = now;
-      for (const ch of cast) ch.update(dt);
+      for (const ch of figures) ch.update(dt);
       requestAnimationFrame(tickC);
     };
-    for (const ch of cast) ch.update(0.5);
+    for (const ch of figures) ch.update(0.5);
     requestAnimationFrame(tickC);
-    window.__characters = cast;
+    window.__characters = figures;
   } else if (debug && params.has('preview')) {
     // --- ?debug&preview: static throw preview with made-up paths (for screenshots) ---
     clearWorld();
@@ -810,7 +990,7 @@ function boot() {
     put('boule', 0, 1.9, 8.3);
     put('boule', 1, 2.3, 8.6);
     renderer.sync(world);
-    placePlayers('you', 0);
+    placePlayers('you');
     renderer.setCamera('shoulder', { player: { x: 2, y: 1 }, yaw: 0, zoom: 1 });
     const arc = (x1, y1, peak, n = 40) => {
       const pts = [];

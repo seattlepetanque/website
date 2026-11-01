@@ -777,7 +777,7 @@ export function createRenderer(canvas, terrain) {
       }
     } else if (mode === 'inspect') {
       const t = opts.target || { x: 2, y: 8 };
-      goal.tgt.set(t.x, t.y, groundZ(t) + 0.03);
+      goal.tgt.set(t.x, t.y, groundZ(t) + 0.03 + (opts.height || 0));
       const ce = Math.cos(orbit.el), se = Math.sin(orbit.el);
       goal.pos.set(t.x + Math.sin(orbit.az) * ce * orbit.dist, t.y - Math.cos(orbit.az) * ce * orbit.dist, goal.tgt.z + se * orbit.dist);
     }

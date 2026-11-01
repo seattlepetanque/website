@@ -259,6 +259,16 @@ export function throwPose(tt, base, stance) {
   return p;
 }
 
+// Where the throwing hand will be at release, relative to the root (turned by yaw), for a given stance and loft.
+// Pure and matches playThrow (the base pose breathes by about a centimetre, so t barely matters).
+export function releaseOffset({ height = 1.75, stance = 'crouch', loft = 0.5, yaw = 0, t = 0 } = {}) {
+  const kind = stance === 'stand' ? 'stand' : 'crouch';
+  const pose = throwPose(releaseTime(loft), stancePose(kind, t, {}), kind);
+  const h = solveSkeleton(pose, height).joints.handR;
+  const r = twist(h, yaw);
+  return { x: r[0], y: r[1], z: r[2] };
+}
+
 export const THROW_TIME = T_BACK + T_FWD + T_HOLD; // then ~0.35 s back to watch
 
 // ---------- three.js character ----------
@@ -430,10 +440,10 @@ export function createCharacter(THREE, spec = {}) {
           if (w.stage === 'turn1') { w.stage = w.dist > 0.02 ? 'go' : 'turn2'; } else w.stage = 'done';
         } else setYaw(st.yaw + Math.sign(dy) * step);
       } else if (w.stage === 'go') {
-        const step = min(WALK_SPEED * dt, w.dist - w.moved);
+        const step = min(w.speed * dt, w.dist - w.moved);
         w.moved += step;
         root.position.x += sin(st.yaw) * step; root.position.y += cos(st.yaw) * step;
-        w.phase += WALK_SPEED * dt / (4 * 0.18 * H) * 2 * PI;
+        w.phase += w.speed * dt / (4 * 0.18 * H) * 2 * PI;
         if (w.dist - w.moved < 1e-6) {
           root.position.x = w.target.x; root.position.y = w.target.y; w.stage = 'turn2';
         }
@@ -541,7 +551,7 @@ export function createCharacter(THREE, spec = {}) {
       const heading = dist > 0.02 ? atan2(dx, dy) : st.yaw;
       const ty = target.yaw === undefined ? heading : target.yaw;
       st.walk = {
-        target: { x: target.x, y: target.y, yaw: ty }, dist, moved: 0, heading, phase: 0, stage: 'turn1', resolve,
+        target: { x: target.x, y: target.y, yaw: ty }, dist, moved: 0, heading, phase: 0, stage: 'turn1', resolve, speed: target.speed || WALK_SPEED,
       };
       switchMode('walk');
     });
