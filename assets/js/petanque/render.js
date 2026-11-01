@@ -767,7 +767,8 @@ export function createRenderer(canvas, terrain) {
       const p = opts.player || C.circle, yaw = opts.yaw || 0;
       const fx = Math.sin(yaw), fy = Math.cos(yaw), rx = Math.cos(yaw), ry = -Math.sin(yaw);
       const gz = groundZ(p);
-      goal.pos.set(p.x - fx * 2.2 * zoom + rx * 1.1 * zoom, p.y - fy * 2.2 * zoom + ry * 1.1 * zoom, gz + 1.5 + 0.6 * zoom);
+      const w = opts.wide || 1; // chibi mesh players are bulkier: stand the camera further back and up
+      goal.pos.set(p.x - fx * 2.2 * zoom * w + rx * 1.1 * zoom * w, p.y - fy * 2.2 * zoom * w + ry * 1.1 * zoom * w, gz + (1.5 + 0.6 * zoom) * w);
       goal.tgt.set(p.x + fx * 7 - rx * 0.5, p.y + fy * 7 - ry * 0.5, gz - 0.7);
       if (focusK > 0 && preview && preview.donnee) { // while tossing, look toward the donnée (and zoom in a little)
         const d = preview.donnee, k = 0.6 * focusK;

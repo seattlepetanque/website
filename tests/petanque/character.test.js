@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from '../../assets/js/vendor/three.module.js';
+import fs from 'node:fs';
 import {
-  createCharacter, stancePose, walkPose, solveSkeleton, boneLengths, BONES, releaseOffset,
+  RIG, meshScale, createCharacter, stancePose, walkPose, solveSkeleton, boneLengths, BONES, releaseOffset,
 } from '../../assets/js/petanque/character.js';
 
 const STANCES = ['idle', 'aim', 'crouch', 'stand', 'watch', 'celebrate', 'dismay'];
@@ -140,4 +141,119 @@ test('releaseOffset predicts the hand position at release (within 3 cm)', async 
       }
     }
   }
+});
+
+// ---------- Kenney mesh mode (GLTFLoader needs a few browser stubs to parse the embedded texture) ----------
+globalThis.self = globalThis;
+globalThis.createImageBitmap = globalThis.createImageBitmap || (async () => ({ width: 1, height: 1, close() {} }));
+const { GLTFLoader } = await import('../../assets/js/vendor/GLTFLoader.js');
+const loadModel = (name) => new Promise((resolve, reject) => {
+  const b = fs.readFileSync(new URL('../../static/models/' + name + '.glb', import.meta.url));
+  new GLTFLoader().parse(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), '/models/', (g) => resolve(g.scene), reject);
+});
+const SPECS = {
+  marcel: { height: 1.68, build: 'stout', stance: 'crouch', colors: { hat: '#3f3a34' }, quirks: { hat: 'cap' } },
+  odette: { height: 1.74, build: 'slim', stance: 'stand', colors: { hat: '#e9d9a0' }, quirks: { hat: 'sunhat' } },
+  pierre: { height: 1.82, build: 'average', stance: 'stand' },
+  you: { height: 1.76, build: 'average', stance: 'crouch' },
+};
+
+// world position of the end of the arm-right bone (the mesh's hand), straight from the three.js bone matrices
+function skinnedHand(ch) { // centroid of the skinned hand vertices of the right arm (rest x < -0.33), in world space
+  ch.root.updateMatrixWorld(true);
+  let sm = null;
+  ch.root.traverse((o) => { if (o.isSkinnedMesh && o.name === 'body-mesh') sm = o; });
+  sm.skeleton.update();
+  const ai = sm.skeleton.bones.findIndex((b) => b.name === 'arm-right');
+  const { skinIndex: si, skinWeight: sw, position: pos } = sm.geometry.attributes;
+  const c = new THREE.Vector3(), t = new THREE.Vector3();
+  let n = 0;
+  for (let i = 0; i < si.count; i++) {
+    for (let k = 0; k < 4; k++) {
+      if (si.getComponent(i, k) === ai && sw.getComponent(i, k) > 0.5 && pos.getX(i) < -0.33) {
+        sm.getVertexPosition(i, t); c.add(t.applyMatrix4(sm.matrixWorld)); n++;
+      }
+    }
+  }
+  return c.divideScalar(n);
+}
+function boneHand(ch) {
+  ch.root.updateMatrixWorld(true);
+  let bone = null;
+  ch.root.traverse((o) => { if (o.isBone && o.name === 'arm-right') bone = o; });
+  const [o, f] = RIG.armRest, l = Math.hypot(o, f);
+  const p = new THREE.Vector3(-o / l * RIG.armHand, 0, f / l * RIG.armHand); // along the arm's rest axis
+  bone.localToWorld(p);
+  return p;
+}
+
+test('mesh mode: hand at release matches the prediction and the real arm bone (under 3 cm; the target is 8 cm)', async () => {
+  for (const [name, spec] of Object.entries(SPECS)) {
+    for (const loft of [10 * DEG, 30 * DEG, 50 * DEG, 70 * DEG]) {
+      for (const yaw of [0, 0.5]) {
+        const ch = createCharacter(THREE, { ...spec, model: name });
+        ch.attachModel(await loadModel(name), name);
+        assert.ok(ch.isMesh);
+        ch.setStance(spec.stance);
+        ch.setPlacement(2, 1, yaw);
+        for (let i = 0; i < 70; i++) ch.update(1 / 60);
+        let hand = null, bone = null, mesh = null;
+        await run(ch, ch.playThrow({ loft, onRelease: (h) => { hand = h; bone = boneHand(ch); mesh = skinnedHand(ch); } }), null);
+        assert.ok(hand, 'released');
+        const off = releaseOffset({ height: spec.height, stance: spec.stance, loft, yaw, model: name });
+        const dPred = Math.hypot(hand.x - (2 + off.x), hand.y - (1 + off.y), hand.z - off.z);
+        assert.ok(dPred < 0.03, `${name} ${loft} ${yaw}: prediction off by ${dPred}`);
+        const dBone = Math.hypot(hand.x - bone.x, hand.y - bone.y, hand.z - bone.z);
+        assert.ok(dBone < 0.03, `${name} ${loft} ${yaw}: hand off the bone by ${dBone}`);
+        const dMesh = Math.hypot(hand.x - mesh.x, hand.y - mesh.y, hand.z - mesh.z);
+        assert.ok(dMesh < 0.03, `${name} ${loft} ${yaw}: skinned hand off by ${dMesh}`);
+        ch.dispose();
+      }
+    }
+  }
+});
+
+test('mesh mode: feet stay on the ground in every stance and while walking, no NaN, scale matches the spec height', async () => {
+  for (const [name, spec] of Object.entries(SPECS)) {
+    const ch = createCharacter(THREE, { ...spec, model: name });
+    ch.attachModel(await loadModel(name), name);
+    ch.setPlacement(0, 0, 0);
+    const feet = () => {
+      ch.root.updateMatrixWorld(true);
+      const zs = [];
+      ch.root.traverse((o) => {
+        if (o.isBone && (o.name === 'leg-left' || o.name === 'leg-right')) zs.push(o.localToWorld(new THREE.Vector3(0, -RIG.leg, 0)).z);
+      });
+      return zs;
+    };
+    for (const stance of STANCES) {
+      ch.setStance(stance);
+      for (let i = 0; i < 90; i++) ch.update(1 / 30);
+      const zs = feet();
+      assert.ok(zs.every(Number.isFinite), `${name} ${stance} finite`);
+      assert.ok(Math.min(...zs) > -0.03, `${name} ${stance}: foot below ground ${zs}`);
+      assert.ok(Math.min(...zs) < 0.06 || stance === 'celebrate', `${name} ${stance}: floating ${zs}`);
+    }
+    // walking
+    await run(ch, ch.walkTo({ x: 2, y: 1, yaw: 0 }), () => {
+      const zs = feet();
+      assert.ok(Math.min(...zs) > -0.03 && Math.min(...zs) < 0.08, `${name} walk feet ${zs}`);
+    });
+    assert.ok(meshScale(spec.height, name) > 2);
+    ch.dispose();
+  }
+});
+
+test('mesh mode: the crouch is clearly lower than standing', async () => {
+  const ch = createCharacter(THREE, { ...SPECS.marcel, model: 'marcel' });
+  ch.attachModel(await loadModel('marcel'), 'marcel');
+  const headTop = (stance) => {
+    ch.setStance(stance);
+    for (let i = 0; i < 90; i++) ch.update(1 / 30);
+    ch.root.updateMatrixWorld(true);
+    let h = null; ch.root.traverse((o) => { if (o.isBone && o.name === 'head') h = o; });
+    return h.getWorldPosition(new THREE.Vector3()).z;
+  };
+  assert.ok(headTop('crouch') < headTop('idle') - 0.3);
+  ch.dispose();
 });

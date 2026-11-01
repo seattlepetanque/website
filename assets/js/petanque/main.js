@@ -16,6 +16,7 @@ import {
 import { createAudio } from './audio.js';
 import * as THREE from '../vendor/three.module.js';
 import { createCharacter, releaseOffset } from './character.js';
+import { attachModels } from './models.js';
 
 const TEAM_NAMES = ['You & Pierre', 'Marcel & Odette'];
 const AIM_MAX = 0.6; // rad of aim either side of straight ahead
@@ -23,6 +24,8 @@ const MAX_STEPS = 24; // physics steps per frame; backlog beyond this is dropped
 const DEG = Math.PI / 180;
 const params = new URLSearchParams(location.search);
 const debug = params.has('debug');
+const modelTimeout = +params.get('modeltimeout') || 5000; // ms; ?modeltimeout=600000 for virtual-time screenshots
+const useMeshes = params.get('figures') !== 'stick'; // ?figures=stick forces the stick figures
 const AI_MIN_THINK = 800; // ms: the AI never answers faster than this
 const HINT_KEY = 'petanque-hint-seen';
 const ROLL_KEY = 'petanque-roll-guide';
@@ -32,24 +35,24 @@ const VIEWS = ['shoulder', 'head', 'inspect'];
 const VIEW_LABELS = { shoulder: 'Shoulder', head: 'Head', inspect: 'Inspect' };
 const ROLL_DEFAULT = { easy: true, medium: false, hard: false };
 // Where waiting players stand: behind the circle and beside the court, out of the shoulder camera's view
-const HOME = { you: { x: -0.9, y: -0.4 }, pierre: { x: -1.5, y: 0.7 }, marcel: { x: 5.0, y: 0.0 }, odette: { x: 5.6, y: 0.8 } };
+const HOME = { you: { x: -0.9, y: -0.4 }, pierre: { x: -1.5, y: 0.7 }, marcel: { x: 6.0, y: 0.0 }, odette: { x: 6.8, y: 0.8 } };
 const CAST_SPEED = 2.4; // m/s: a brisk walk, so a change of thrower takes about a second
 // Looks and stances (GAME-PLAN section 10). Team colours: navy trousers for your team, bronze for the opponents.
 const SPECS = {
   you: {
-    name: 'You', height: 1.76, build: 'average', stance: 'crouch',
+    model: 'you', name: 'You', height: 1.76, build: 'average', stance: 'crouch',
     colors: { shirt: '#9fb0b8', trousers: '#23396b', skin: '#d9a37c' },
   },
   pierre: {
-    name: 'Pierre', height: 1.82, build: 'average', stance: 'stand',
+    model: 'pierre', name: 'Pierre', height: 1.82, build: 'average', stance: 'stand',
     colors: { shirt: '#f2c230', trousers: '#23396b', skin: '#b98258' },
   },
   marcel: {
-    name: 'Marcel', height: 1.68, build: 'stout', stance: 'crouch',
+    model: 'marcel', name: 'Marcel', height: 1.68, build: 'stout', stance: 'crouch',
     colors: { shirt: '#d8d2c0', trousers: '#8a5a2b', skin: '#cf9a72', hat: '#3f3a34' }, quirks: { hat: 'cap' },
   },
   odette: {
-    name: 'Odette', height: 1.74, build: 'slim', stance: 'stand',
+    model: 'odette', name: 'Odette', height: 1.74, build: 'slim', stance: 'stand',
     colors: { shirt: '#e9e1d2', trousers: '#9c6a34', skin: '#efc6a4', hat: '#e9d9a0' }, quirks: { hat: 'sunhat' },
   },
 };
@@ -97,6 +100,9 @@ function boot() {
     cast.set(id, ch);
   }
   const CAST_ALL = cast;
+  // Skinned meshes load in the background; each character stays a stick figure until its model arrives
+  const meshReady = useMeshes
+    ? attachModels([...cast.entries()].map(([id, ch]) => ({ ch, model: SPECS[id].model })), modelTimeout) : Promise.resolve([]);
   let inCircle = null; // id of whoever stands in the circle
   let arrival = Promise.resolve(); // resolves when the thrower has reached the circle
   let aiYaw = 0; // facing of an AI thrower (towards the jack), fixed before it plans so the release point matches
@@ -194,7 +200,7 @@ function boot() {
   const faceYaw = (id) => (id === 'you' ? aimYaw : aiYaw);
   function handFrom(id, loft, yaw) {
     const spec = SPECS[id];
-    const o = releaseOffset({ height: spec.height, stance: spec.stance, loft, yaw });
+    const o = releaseOffset({ height: spec.height, stance: spec.stance, loft, yaw, model: cast.get(id).isMesh ? spec.model : null });
     return { x: C.circle.x + o.x, y: C.circle.y + o.y, z: terrain.sample(C.circle.x, C.circle.y).h + o.z };
   }
   function releasePoint(player, loft) {
@@ -418,6 +424,8 @@ function boot() {
   // Per frame: animate, keep feet on the terrain, everyone watches the boule in flight (or the jack)
   function tickCast(dt) {
     if (frozen) return;
+    const thrower = inCircle && cast.get(inCircle);
+    shoulderCam.wide = thrower && thrower.isMesh ? 1.45 : 1;
     const w = flying && !flying.dead ? flying : jackBody();
     for (const ch of cast.values()) {
       const p = ch.root.position;
@@ -946,36 +954,48 @@ function boot() {
     hud.hideHint();
     for (const ch of CAST_ALL.values()) ch.root.visible = false;
     const specs = [
-      ['idle', { name: 'Ana', height: 1.62, build: 'slim', stance: 'stand', colors: { shirt: '#c0392b', trousers: '#2c3e50', skin: '#e8b48c' } }],
-      ['crouch', { name: 'Marcel', height: 1.7, build: 'stout', stance: 'crouch', colors: { shirt: '#6f8f4e', trousers: '#4b4b55', skin: '#d29b74', hat: '#2d3a55' }, quirks: { hat: 'cap' } }],
-      ['stand', { name: 'Odette', height: 1.65, build: 'slim', stance: 'stand', colors: { shirt: '#f2efe6', trousers: '#6b5b8c', skin: '#efc6a4', hat: '#e9d9a0' }, quirks: { hat: 'sunhat' } }],
-      ['celebrate', { name: 'Pierre', height: 1.82, build: 'average', stance: 'crouch', colors: { shirt: '#2f6fb5', trousers: '#2b2b2b', skin: '#a8734d' } }],
-      ['dismay', { name: 'Lou', height: 1.75, build: 'average', stance: 'stand', colors: { shirt: '#e0a526', trousers: '#4a3b2f', skin: '#c58a63' } }],
-      ['watch', { name: 'Max', height: 1.9, build: 'stout', stance: 'stand', colors: { shirt: '#7a3b8f', trousers: '#33414d', skin: '#f0c7a8' } }],
-      ['throw', { name: 'Thrower', height: 1.72, build: 'average', stance: params.get('stance') === 'stand' ? 'stand' : 'crouch', colors: { shirt: '#1f9d8b', trousers: '#3b3b3b', skin: '#dba983' } }],
+      ['idle', { model: 'odette', name: 'Ana', height: 1.62, build: 'slim', stance: 'stand', colors: { shirt: '#c0392b', trousers: '#2c3e50', skin: '#e8b48c' } }],
+      ['crouch', { model: 'marcel', name: 'Marcel', height: 1.7, build: 'stout', stance: 'crouch', colors: { shirt: '#6f8f4e', trousers: '#4b4b55', skin: '#d29b74', hat: '#2d3a55' }, quirks: { hat: 'cap' } }],
+      ['stand', { model: 'odette', name: 'Odette', height: 1.65, build: 'slim', stance: 'stand', colors: { shirt: '#f2efe6', trousers: '#6b5b8c', skin: '#efc6a4', hat: '#e9d9a0' }, quirks: { hat: 'sunhat' } }],
+      ['celebrate', { model: 'pierre', name: 'Pierre', height: 1.82, build: 'average', stance: 'crouch', colors: { shirt: '#2f6fb5', trousers: '#2b2b2b', skin: '#a8734d' } }],
+      ['dismay', { model: 'you', name: 'Lou', height: 1.75, build: 'average', stance: 'stand', colors: { shirt: '#e0a526', trousers: '#4a3b2f', skin: '#c58a63' } }],
+      ['watch', { model: 'pierre', name: 'Max', height: 1.9, build: 'stout', stance: 'stand', colors: { shirt: '#7a3b8f', trousers: '#33414d', skin: '#f0c7a8' } }],
+      ['throw', { model: 'you', name: 'Thrower', height: 1.72, build: 'average', stance: params.get('stance') === 'stand' ? 'stand' : 'crouch', colors: { shirt: '#1f9d8b', trousers: '#3b3b3b', skin: '#dba983' } }],
     ];
     const figures = specs.map(([stance, spec], i) => {
       const ch = createCharacter(THREE, spec);
-      const x = 0.15 + i * (3.7 / (specs.length - 1));
-      ch.setPlacement(x, 3, Math.PI); // facing the camera (-y)
-      ch.root.position.z = terrain.sample(x, 3).h;
+      if (useMeshes) attachModels([{ ch, model: spec.model }], modelTimeout);
+      const x = -2.2 + i * 1.3;
+      const y = stance === 'throw' && params.has('closeup') ? 0.5 : 3; // closeup: the thrower steps out of the line
+      ch.setPlacement(x, y, Math.PI); // facing the camera (-y)
+      ch.root.position.z = terrain.sample(x, y).h;
       renderer.addObject(ch.root);
       if (stance === 'throw') {
         ch.setStance(spec.stance);
         const loop = () => {
           ch.setHolding(true);
-          ch.playThrow({ loft: 0.3 + Math.random() * 0.7 }).then(() => setTimeout(loop, 800));
+          const loft = params.has('loft') ? +params.get('loft') * DEG : 0.3 + Math.random() * 0.7;
+          ch.playThrow({ // &freezethrow: stop at the release frame and mark where the boule leaves
+            loft,
+            onRelease: (h) => {
+              if (!params.has('freezethrow')) return;
+              const m = new THREE.Mesh(new THREE.SphereGeometry(C.boule.r, 12, 8), new THREE.MeshBasicMaterial({ color: '#ff2020' }));
+              m.position.set(h.x, h.y, h.z); renderer.addObject(m);
+              ch.frozen = true;
+            },
+          }).then(() => { if (!ch.frozen) setTimeout(loop, 800); });
         };
         loop();
       } else ch.setStance(stance);
       if (stance === 'watch') ch.lookAt(2, 0.5, 1.6);
       return ch;
     });
-    renderer.setCamera('inspect', { target: { x: 2, y: 3 }, dist: 4.6, az: 0, el: 0.1 });
+    if (params.has('closeup')) renderer.setCamera('inspect', { target: { x: 5.6, y: 0.5, }, dist: +params.get('dist') || 3.6, az: +params.get('az') || 1.2, el: +params.get('el') || 0.12 });
+    else renderer.setCamera('inspect', { target: { x: 1.7, y: 3 }, dist: 7, az: 0, el: 0.1 });
     let lastC = performance.now();
     const tickC = (now) => {
-      const dt = Math.min((now - lastC) / 1000, 0.1); lastC = now;
-      for (const ch of figures) ch.update(dt);
+      const dt = params.has('freezethrow') ? 1 / 60 : Math.min((now - lastC) / 1000, 0.1); lastC = now; // fixed step so a frozen release is exact
+      for (const ch of figures) if (!ch.frozen) ch.update(dt);
       requestAnimationFrame(tickC);
     };
     for (const ch of figures) ch.update(0.5);

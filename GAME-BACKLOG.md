@@ -166,8 +166,8 @@ Design: GAME-PLAN.md §9–11. Round 1 contracts above still apply (units, axes,
 | C08 | done | sonnet | C02 | Stick-figure skeleton and procedural animation |
 | C09 | done | sonnet | C07, C08 | Characters in the game: positions, throw sync, reactions |
 | C10 | done | sonnet | — | Find and vendor CC0 rigged human models |
-| C11 | in-progress | sonnet | C09, C10 | Skinned meshes on the skeleton |
-| C12 | todo | sonnet | C11 | Personalities: looks, quirks, reactions, commentary |
+| C11 | done | sonnet | C09, C10 | Skinned meshes on the skeleton |
+| C12 | in-progress | sonnet | C11 | Personalities: looks, quirks, reactions, commentary |
 | C13 | todo | sonnet | C12 | Round 2 final review |
 
 ### C01 Throw model (sonnet)
@@ -233,6 +233,7 @@ Done by script and screenshots; a person still needs to feel it. Try each on a m
 - **Phone:** the cone and dashes should still read at 500 px wide; dragging with a thumb must not scroll the page; pulling for loft should reach both extremes without leaving the canvas.
 - **Look for:** arcs leaving the top of the screen for lofts above ~60° (expected for very high lobs), the placeholder thrower hiding the start of the arc, cones that look wider or narrower than where the boules land, and any throw that leaves from a different height than the preview showed.
 - From C09: release heights now come from the character's hand (crouched ≈ 0.16–0.8 m, standing ≈ 0.7–1.4 m by loft), replacing C07's 0.5/0.9 m rule — roulette behaviour shifts; re-run the C07 checklist in C13. The mène-end/game-over gathering reads poorly from the steep head camera (only legs at the top corners); the post-throw reaction cut shows only the thrower; the first throw of a mène gets no reaction. Waiting characters cast no shadow (their shadows fell into the shoulder view).
+- From C11: meshes load in the background (stick figures until ready; `?figures=stick`; 5 s timeout → stick fallback; use `&modeltimeout=600000` for headless screenshots). Mesh release heights are lower (crouch ≈ 0.12–0.4 m, stand ≈ 0.1–0.7 m), so plombées start low — check in C13 whether standing throwers should release higher (the chibi's short arms). Shoulder camera widened (×1.45) because the big heads block the view; the thrower's head still fills the lower-left in the human view. Odette's bun pokes through her sun hat from behind. `spec.colors` is ignored in mesh mode (texture colours), and the belly ellipsoid uses the spec shirt colour, which can clash with the texture. Kenney walk clip unused (procedural gait).
 
 ## Later (not scheduled)
 

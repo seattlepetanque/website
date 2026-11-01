@@ -259,12 +259,83 @@ export function throwPose(tt, base, stance) {
   return p;
 }
 
+// ---------- Kenney "Mini Characters" rig (pure mapping from the procedural skeleton to its 7 bones) ----------
+// Model units: +Y up, facing +Z, the character's left on +X. Game space: z up, facing +y, right on +x.
+// model (x, y, z) <-> game (-x, z, y); the map is its own inverse.
+export const RIG = {
+  hipX: 0.0836, hipY: -0.0288, leg: 0.17625, torsoY: -0.0288, torsoZ: 0.17625,
+  shoulder: [0.0999, 0.0115, 0.1115], // x (outward), y (forward), z (up) relative to the torso bone, game axes
+  head: [0, 0.0264, 0.167], armHand: 0.2713, // hand centre, along the arm's rest axis from the shoulder
+  armRest: [0.263, 0.0665], // the T-pose arm points 14 degrees forward of straight out: [outward, forward] (model x, z)
+  headCentre: 0.12, // head box centre above the head bone (hats)
+};
+// Model heights (feet to top of head, hair buns excluded) used to scale each model to its spec height
+export const MODEL_HEIGHT = { marcel: 0.661, odette: 0.7, pierre: 0.671, you: 0.676 };
+export const meshScale = (H, model) => H / (MODEL_HEIGHT[model] || 0.675);
+const hyp = Math.hypot;
+const HAND_MIN_Z = 0.12; // m above the ground
+
+// Bone targets in character root space (metres) for the Kenney rig. The legs and arms are rigid, so the
+// crouch bends the legs outward and lowers the root; the hand is where the arm bone ends.
+export function meshFrame(solved, pose, H, s) {
+  const j = solved.joints;
+  const [ex, ey, ez] = solved.frames.chest;
+  const L = RIG.leg * s;
+  const ks = L / (0.475 * H);
+  const c = clamp((0.49 - pose.pz) / 0.205, 0, 1); // 0 standing .. 1 full squat
+  const legs = {}, rootXY = [j.pelvis[0], j.pelvis[1]];
+  let R = 0, fwd = 0;
+  for (const [n, sg] of [['L', -1], ['R', 1]]) {
+    const a = j['ankle' + n], h = j['hip' + n];
+    let hx = (a[0] - h[0]) * ks + sg * c * 0.25 * L, hy = (a[1] - h[1]) * ks + c * 0.4 * L;
+    const hl = hyp(hx, hy) || 1;
+    const mag = clamp(max(hl, c * 0.8 * L), 0, 0.98 * L);
+    hx = hx / hl * mag; hy = hy / hl * mag;
+    const dz = -sqrt(max(0, L * L - mag * mag));
+    const lift = max(0, a[2] - L_ANKLE(H));
+    R = max(R, -dz + lift);
+    fwd += hy / 2;
+    legs[n] = { hx, hy, dz };
+  }
+  rootXY[1] -= 0.5 * fwd * (0.5 + 0.5 * c);
+  const root = [rootXY[0], rootXY[1], R - L]; // root bone offset (the root bone's rest is at the ground)
+  const hipZ = R;
+  const out = { root, legDir: {}, hip: {}, shoulder: {}, armDir: {}, hand: {}, scale: s, crouch: c };
+  for (const [n, sg] of [['L', -1], ['R', 1]]) {
+    const g = legs[n];
+    out.legDir[n] = norm([g.hx, g.hy, g.dz]);
+    out.hip[n] = [rootXY[0] + sg * RIG.hipX * s, rootXY[1] + RIG.hipY * s, hipZ];
+  }
+  const T = [rootXY[0], rootXY[1] + RIG.torsoY * s, hipZ];
+  out.torso = T;
+  const [sx, sy, sz] = RIG.shoulder;
+  for (const [n, sg] of [['L', -1], ['R', 1]]) {
+    const off = add(add(mul(ex, sg * sx * s), mul(ey, sy * s)), mul(ez, sz * s));
+    const sh = add(T, off);
+    let d = norm(sub(j['hand' + n], j['shoulder' + n]));
+    // the chibi's shoulders sit low and its arms are long: keep the hand off the ground (a low release in a crouch)
+    const armLen = RIG.armHand * s, dzMin = (HAND_MIN_Z - sh[2]) / armLen;
+    if (d[2] < dzMin) {
+      const dz = clamp(dzMin, -1, 1), hl = hyp(d[0], d[1]);
+      const k = hl > 1e-6 ? sqrt(1 - dz * dz) / hl : 0;
+      d = hl > 1e-6 ? [d[0] * k, d[1] * k, dz] : [0, sqrt(1 - dz * dz), dz];
+    }
+    out.shoulder[n] = sh; out.armDir[n] = d;
+    out.hand[n] = add(sh, mul(d, RIG.armHand * s));
+  }
+  out.head = add(T, add(add(mul(ex, RIG.head[0] * s), mul(ey, RIG.head[1] * s)), mul(ez, RIG.head[2] * s)));
+  return out;
+}
+const L_ANKLE = (H) => 0.04 * H;
+
 // Where the throwing hand will be at release, relative to the root (turned by yaw), for a given stance and loft.
 // Pure and matches playThrow (the base pose breathes by about a centimetre, so t barely matters).
-export function releaseOffset({ height = 1.75, stance = 'crouch', loft = 0.5, yaw = 0, t = 0 } = {}) {
+export function releaseOffset({ height = 1.75, stance = 'crouch', loft = 0.5, yaw = 0, t = 0, model = null } = {}) {
   const kind = stance === 'stand' ? 'stand' : 'crouch';
   const pose = throwPose(releaseTime(loft), stancePose(kind, t, {}), kind);
-  const h = solveSkeleton(pose, height).joints.handR;
+  const solved = solveSkeleton(pose, height);
+  // with a model name the hand is the end of the Kenney arm bone instead of the stick figure's hand
+  const h = model ? meshFrame(solved, pose, height, meshScale(height, model)).hand.R : solved.joints.handR;
   const r = twist(h, yaw);
   return { x: r[0], y: r[1], z: r[2] };
 }
@@ -288,6 +359,8 @@ export function createCharacter(THREE, spec = {}) {
 
   const root = new THREE.Group();
   root.name = spec.name || 'character';
+  const stickG = new THREE.Group(); // the stick figure; hidden once a model is attached
+  root.add(stickG);
   const geos = [], mats = [];
   const mat = (c) => {
     const m = new THREE.MeshStandardMaterial({ color: c, flatShading: true, roughness: 0.85, metalness: 0 });
@@ -297,7 +370,7 @@ export function createCharacter(THREE, spec = {}) {
   const mDark = mat('#1b1b1b');
   const mHat = colors.hat ? mat(colors.hat) : null;
   const geo = (g) => { geos.push(g); return g; };
-  const addMesh = (g, m, parent = root) => {
+  const addMesh = (g, m, parent = stickG) => {
     const me = new THREE.Mesh(geo(g), m); me.castShadow = true; me.receiveShadow = true; parent.add(me); return me;
   };
   const rs = (v) => v * H * build.r;
@@ -335,7 +408,7 @@ export function createCharacter(THREE, spec = {}) {
 
   // head: sphere, nose, eyes, optional hat; the group's frame is the head frame
   const headG = new THREE.Group();
-  root.add(headG);
+  stickG.add(headG);
   const headR = H * 0.065;
   const neckMesh = bone('neck', 'head', rLimb(0.024), mSkin, 'head');
   addMesh(new THREE.SphereGeometry(headR, 16, 12), mSkin, headG);
@@ -346,19 +419,21 @@ export function createCharacter(THREE, spec = {}) {
     eye.position.set(sx * headR * 0.38, headR * 0.88, headR * 0.2);
   }
   void neckMesh;
-  if (mHat) {
+  // hat in a head-like frame (z up, y forward) sized by the head radius
+  const buildHat = (g, hr, brimK = 2.7, domeK = 1) => {
     if (quirks.hat === 'sunhat') {
-      const dome = addMesh(new THREE.SphereGeometry(headR * 1.08, 14, 8, 0, PI * 2, 0, PI / 2).rotateX(PI / 2), mHat, headG);
-      dome.position.z = headR * 0.15;
-      const brim = addMesh(new THREE.CylinderGeometry(headR * 2.7, headR * 2.7, headR * 0.1, 24).rotateX(PI / 2), mHat, headG);
-      brim.position.z = headR * 0.3;
+      const dome = addMesh(new THREE.SphereGeometry(hr * 1.08, 14, 8, 0, PI * 2, 0, PI / 2).rotateX(PI / 2), mHat, g);
+      dome.position.z = hr * 0.15; dome.scale.z = domeK;
+      const brim = addMesh(new THREE.CylinderGeometry(hr * brimK, hr * brimK, hr * 0.1, 24).rotateX(PI / 2), mHat, g);
+      brim.position.z = hr * 0.3;
     } else {
-      const dome = addMesh(new THREE.SphereGeometry(headR * 1.1, 14, 8, 0, PI * 2, 0, PI / 2).rotateX(PI / 2), mHat, headG);
-      dome.position.z = headR * 0.2; dome.scale.set(1, 1, 0.75);
-      const peak = addMesh(new THREE.BoxGeometry(headR * 1.6, headR * 1.0, headR * 0.12), mHat, headG);
-      peak.position.set(0, headR * 1.15, headR * 0.35); peak.rotation.x = -0.2;
+      const dome = addMesh(new THREE.SphereGeometry(hr * 1.1, 14, 8, 0, PI * 2, 0, PI / 2).rotateX(PI / 2), mHat, g);
+      dome.position.z = hr * 0.2; dome.scale.set(1, 1, 0.75);
+      const peak = addMesh(new THREE.BoxGeometry(hr * 1.6, hr * 1.0, hr * 0.12), mHat, g);
+      peak.position.set(0, hr * 1.15, hr * 0.35); peak.rotation.x = -0.2;
     }
-  }
+  };
+  if (mHat) buildHat(headG, headR);
 
   // boule shown in the hand before release
   const holdMesh = new THREE.Mesh(
@@ -373,8 +448,9 @@ export function createCharacter(THREE, spec = {}) {
   const st = {
     t: 0, yaw: 0, stance: 'idle', mode: 'stance', blend: 1, snap: null, out: null,
     look: null, lookSm: { yaw: 0, pitch: 0 }, holding: false,
-    walk: null, throwing: null, solved: null,
+    walk: null, throwing: null, solved: null, frame: null,
   };
+  let vis = null; // skinned-mesh visual: { scene, s, name, bones, hatG, mHat }
   const V = THREE;
   const q = new V.Quaternion(), yAxis = new V.Vector3(0, 1, 0), va = new V.Vector3(), vb = new V.Vector3(), vd = new V.Vector3();
   const m4 = new V.Matrix4();
@@ -391,6 +467,7 @@ export function createCharacter(THREE, spec = {}) {
     const target = currentTarget();
     st.out = st.blend < 1 && st.snap ? blendPoses(st.snap, target, st.blend) : target;
     st.solved = solveSkeleton(st.out, H);
+    st.frame = vis ? meshFrame(st.solved, st.out, H, vis.s) : null;
     return st.solved;
   }
   function switchMode(mode) {
@@ -398,7 +475,7 @@ export function createCharacter(THREE, spec = {}) {
     st.mode = mode; st.blend = st.snap ? 0 : 1;
   }
   const setYaw = (y) => { st.yaw = y; root.rotation.z = -y; };
-  const handLocal = () => (st.solved || evalPose()).joints.handR;
+  const handLocal = () => { const j = (st.solved || evalPose()).joints; return st.frame ? st.frame.hand.R : j.handR; };
   const toWorld = (v) => {
     const r = twist(v, st.yaw);
     return { x: root.position.x + r[0], y: root.position.y + r[1], z: root.position.z + r[2] };
@@ -408,7 +485,7 @@ export function createCharacter(THREE, spec = {}) {
   function updateLook(dt) {
     let ty = 0, tp = 0;
     if (st.look && st.solved) {
-      const hw = twist(st.solved.joints.head, st.yaw);
+      const hw = twist(st.frame ? st.frame.head : st.solved.joints.head, st.yaw);
       const d = [st.look.x - root.position.x - hw[0], st.look.y - root.position.y - hw[1], st.look.z - root.position.z - hw[2]];
       const l = twist(d, -st.yaw);
       ty = atan2(l[0], l[1]); tp = -atan2(l[2], sqrt(l[0] * l[0] + l[1] * l[1]));
@@ -478,6 +555,7 @@ export function createCharacter(THREE, spec = {}) {
         th.released = true;
         st.holding = false; holdMesh.visible = false;
         evalPose();
+        applyMeshes(); // bones at the release frame, so the visible hand is where the boule leaves from
         const pos = handWorldPosition();
         if (th.onRelease) th.onRelease(pos);
         left -= h;
@@ -488,7 +566,40 @@ export function createCharacter(THREE, spec = {}) {
     }
   }
 
+  // Mesh mode: pose the 7 Kenney bones. All bones rest with no rotation, so a bone's world rotation is its
+  // rotation from the rest direction. Targets come from meshFrame (game space), converted to model space.
+  const MM = new V.Matrix4().makeBasis(new V.Vector3(-1, 0, 0), new V.Vector3(0, 0, 1), new V.Vector3(0, 1, 0));
+  const mdir = (d) => new V.Vector3(-d[0], d[2], d[1]);
+  const qTorso = new V.Quaternion(), qTmp = new V.Quaternion(), mTmp = new V.Matrix4(), mTmp2 = new V.Matrix4();
+  function frameQuat(out, [x, y, z]) {
+    mTmp.makeBasis(va.set(...x), vb.set(...y), vd.set(...z));
+    mTmp2.multiplyMatrices(MM, mTmp).multiply(MM);
+    return out.setFromRotationMatrix(mTmp2);
+  }
+  const [rOut, rFwd] = RIG.armRest, rLen = Math.hypot(rOut, rFwd);
+  const restL = new V.Vector3(rOut / rLen, 0, rFwd / rLen), restR = new V.Vector3(-rOut / rLen, 0, rFwd / rLen);
+  function applyBones() {
+    const f = st.frame, b = vis.bones, s = vis.s;
+    b.root.position.copy(mdir(f.root)).divideScalar(s);
+    const down = new V.Vector3(0, -1, 0);
+    b['leg-left'].quaternion.setFromUnitVectors(down, mdir(f.legDir.L));
+    b['leg-right'].quaternion.setFromUnitVectors(down, mdir(f.legDir.R));
+    frameQuat(qTorso, st.solved.frames.chest);
+    b.torso.quaternion.copy(qTorso);
+    const inv = qTmp.copy(qTorso).invert();
+    // arm-left rests along +X, arm-right along -X (model space)
+    const armQ = (bone, rest, d) => {
+      bone.quaternion.setFromUnitVectors(rest, mdir(d).normalize()).premultiply(inv);
+    };
+    armQ(b['arm-left'], restL, f.armDir.L);
+    armQ(b['arm-right'], restR, f.armDir.R);
+    frameQuat(b.head.quaternion, st.solved.frames.head);
+    b.head.quaternion.premultiply(inv);
+    b.root.updateMatrixWorld(true);
+  }
+
   function applyMeshes() {
+    if (vis) { applyBones(); holdMesh.position.set(...st.frame.hand.R); return; }
     const { joints: j, frames } = st.solved;
     for (const c of caps) {
       va.set(...j[c.a]); vb.set(...j[c.b]);
@@ -569,9 +680,49 @@ export function createCharacter(THREE, spec = {}) {
     st.look = x === null || x === undefined ? null : { x, y, z: z === undefined ? 1.5 : z };
   }
   function setPlacement(x, y, yaw = st.yaw) { root.position.set(x, y, root.position.z); setYaw(yaw); }
+  // Swap the stick figure for a loaded Kenney model (a THREE.Group from GLTFLoader, used once)
+  function attachModel(model, name = spec.model) {
+    if (vis) return;
+    const bones = {};
+    for (const n of ['root', 'torso', 'leg-left', 'leg-right', 'arm-left', 'arm-right', 'head']) {
+      bones[n] = model.getObjectByName(n);
+      if (!bones[n]) throw new Error('model has no bone ' + n);
+    }
+    const s = meshScale(H, name);
+    const mg = new V.Group();
+    mg.quaternion.setFromRotationMatrix(MM); mg.scale.setScalar(s);
+    mg.add(model);
+    model.traverse((o) => {
+      if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; }
+    });
+    // hats ride the head bone: a head-like frame (z up, y forward) mapped into model space
+    const hatG = new V.Group();
+    hatG.quaternion.setFromRotationMatrix(MM);
+    hatG.position.set(0, RIG.headCentre + 0.1, 0.01);
+    if (mHat) buildHat(hatG, 0.2, 1.5, 1.5);
+    bones.head.add(hatG);
+    // Marcel's belly: a small shirt-coloured ellipsoid on the torso bone
+    if (build.belly > 0) {
+      const bel = addMesh(new V.SphereGeometry(1, 14, 10), mShirt, bones.torso);
+      bel.scale.set(0.105 + build.belly * 0.4, 0.09, 0.1 + build.belly * 0.4);
+      bel.position.set(0, 0.075, 0.07);
+    }
+    root.add(mg);
+    stickG.visible = false;
+    vis = { scene: mg, model, s, name, bones };
+    evalPose(); applyMeshes();
+  }
   function dispose() {
     if (st.walk) { const w = st.walk; st.walk = null; w.resolve(); }
     if (st.throwing) cancelThrow();
+    if (vis) {
+      vis.model.traverse((o) => {
+        if (!o.isMesh) return;
+        o.geometry.dispose();
+        const ms = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of ms) { if (m.map) m.map.dispose(); m.dispose(); }
+      });
+    }
     for (const g of geos) g.dispose();
     for (const m of mats) m.dispose();
     if (root.parent) root.parent.remove(root);
@@ -581,7 +732,8 @@ export function createCharacter(THREE, spec = {}) {
   applyMeshes();
   return {
     root, update, setStance, walkTo, playThrow, handWorldPosition, dispose,
-    lookAt, setHolding, setPlacement,
+    lookAt, setHolding, setPlacement, attachModel,
+    get isMesh() { return !!vis; },
     get yaw() { return st.yaw; },
     set yaw(v) { setYaw(v); },
     get stance() { return st.stance; },
