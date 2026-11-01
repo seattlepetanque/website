@@ -133,6 +133,22 @@ function boot() {
   bar.append(audio.createMuteButton());
   const newBtn = mkBtn(bar, 'New game', 'pc-reset');
   controls.append(bar);
+  if (debug && params.has('sounds')) { // ?debug&sounds: audition panel for the synthesized sound effects
+    const panel = document.createElement('div');
+    panel.className = 'pc-bar pc-sounds';
+    panel.style.flexWrap = 'wrap';
+    const SOUNDS = [
+      ['Boule lands (soft)', 'land', { speed: 1.5 }], ['Boule lands (hard)', 'land', { speed: 7 }],
+      ['Boule rolls 2 s (slow)', 'roll', { speed: 0.6, dur: 2 }], ['Boule rolls 2 s (fast)', 'roll', { speed: 4, dur: 2, decay: 0.9 }],
+      ['Jack rolls 2 s', 'roll', { kind: 'jack', speed: 1.5, dur: 2 }],
+      ['Jack lands', 'jackLand', {}], ['Jack hit by boule', 'jackHit', {}],
+      ['Boules graze', 'graze', {}], ['Boules hit direct', 'direct', {}], ['Carreau', 'carreau', {}],
+    ];
+    for (const [label, name, p] of SOUNDS) {
+      mkBtn(panel, label, 'pc-sound').addEventListener('click', () => { audio.unlock(); audio.play(name, p); });
+    }
+    controls.append(panel);
+  }
   let throwBtn = null;
   if (debug) {
     const grid = document.createElement('div');
@@ -1002,6 +1018,7 @@ function boot() {
       audio.handleEvents(world.events, new Map(world.bodies.map((b) => [b.id, b])));
       world.events.length = 0;
     }
+    audio.update(world.bodies, dt); // rolling scrape loops (accepts an array)
     tickCast(dt);
     renderer.sync(world);
     renderer.render(dt);
@@ -1014,6 +1031,7 @@ function boot() {
   if (debug) {
     window.__petanque = {
       world, terrain, renderer, seed, reset: toSetup, startGame,
+      audio,
       get match() { return match; },
       throw: (p) => launchBody(jackBody() && !jackBody().dead ? 'boule' : 'jack', 0, 'you', { ...readParams(), ...p }),
       throwJack: (p) => launchBody('jack', -1, null, { ...readParams(), ...p }),
