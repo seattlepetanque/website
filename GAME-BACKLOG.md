@@ -159,11 +159,11 @@ Design: GAME-PLAN.md §9–11. Round 1 contracts above still apply (units, axes,
 | C01 | done | sonnet | — | Throw model: solver, backspin, cone (`donnee.js`) |
 | C02 | done | sonnet | — | Over-the-shoulder camera, placeholder players, preview drawing |
 | C03 | done | sonnet | C01, C02 | Toss input: aim, donnée, pull for loft |
-| C04 | todo | sonnet | C03, C05 | Integrate the donnée throw into the game |
-| C05 | in-progress | sonnet | C01 | AI on the donnée model |
+| C04 | in-progress | sonnet | C03, C05 | Integrate the donnée throw into the game |
+| C05 | done | sonnet | C01 | AI on the donnée model |
 | C06 | todo | haiku | C04 | Remove the old swing code; update README |
 | C07 | todo | sonnet | C04, C05, C06 | Review and tune throw feel |
-| C08 | in-progress | sonnet | C02 | Stick-figure skeleton and procedural animation |
+| C08 | done | sonnet | C02 | Stick-figure skeleton and procedural animation |
 | C09 | todo | sonnet | C07, C08 | Characters in the game: positions, throw sync, reactions |
 | C10 | done | sonnet | — | Find and vendor CC0 rigged human models |
 | C11 | todo | sonnet | C09, C10 | Skinned meshes on the skeleton |
@@ -216,7 +216,8 @@ Give Marcel, Odette, Pierre and You distinct looks (model choice, colours, hats/
 - From C01: with release at z = 0.9 m, a 12° roulette to a 4 m donnée lands fast and runs ~10 m past (off the court). Real roulettes are released low from a crouch and land 1–2 m out. C07/C09: take the release point from the character's hand (crouched pointer ≈ 0.4–0.5 m), and check roulettes then behave; consider capping roulette donnée distance or showing the roll guide by default for low lofts.
 - From C01: sidespin from lateral error (≈ 20 rad/s at 2σ) moves a ball only ~3 mm; the lateral error itself carries the off-axis effect. Fine for now.
 - From C01: plombée stops within 0.4 m up to ~7 m; at 8–10 m it ends 0.5–0.9 m past (backspin depends only on loft). Acceptable; revisit in C07 if it feels off.
-- From C10: the vendored models are Kenney "Mini Characters" (CC0, ~250 KB each): stylised chibi figures ~0.7 units tall (scale ≈ 2.4 for 1.7 m), T-pose, a 7-bone rig (root, leg-left, leg-right, torso, arm-left, arm-right, head) with no elbows or knees, 32 short clips (idle, walk, crouch, pick-up, emote-yes/no, holding-right…), no throw or celebrate clip, no hats. Throws must be procedural on arm-right/torso; hats as meshes on the head bone. A richer human rig (Quaternius Universal Base Characters / Modular Women, CC0) needs a manual download (122 MB zip / Drive quota). Awaiting the user's choice before C11.
+- From C10: the vendored models are Kenney "Mini Characters" (CC0, ~250 KB each): stylised chibi figures ~0.7 units tall (scale ≈ 2.4 for 1.7 m), T-pose, a 7-bone rig (root, leg-left, leg-right, torso, arm-left, arm-right, head) with no elbows or knees, 32 short clips (idle, walk, crouch, pick-up, emote-yes/no, holding-right…), no throw or celebrate clip, no hats. Throws must be procedural on arm-right/torso; hats as meshes on the head bone. A richer human rig (Quaternius Universal Base Characters / Modular Women, CC0) needs a manual download (122 MB zip / Drive quota). The user chose the Kenney chibis (2026-10-31). C11: drive the 7 bones from character.js's skeleton (shoulder → arm-right/arm-left, hips → legs, spine lean → torso, pelvis height → root), use Kenney clips (walk, idle, crouch) where they fit, and keep the stick figure selectable (e.g. `?figures=stick`) and as the load-failure fallback.
+- From C05: AI now picks plombée for ~85–90% of points (roulette rarely wins); tireur shoot bonus raised to 0.4; on flat terrain many shots run past the target to the end of the lane. Pointing accuracy improved a lot (medium mean 0.47 m, hard 0.40 m) because the skill cones are tighter than the old noise — C07 should check whether the AI is now too strong against a human using the same cones.
 
 ## Later (not scheduled)
 

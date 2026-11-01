@@ -1,9 +1,9 @@
-// AI accuracy on seeded gravel: node tests/petanque/measure-ai.js [n]
+// AI accuracy on seeded gravel (donnée model): node tests/petanque/measure-ai.js [n]
 import { mulberry32 } from '../../assets/js/petanque/rng.js';
 import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { createBody, launch, createWorld, simulate } from '../../assets/js/petanque/physics.js';
-import { createMatch } from '../../assets/js/petanque/rules.js';
-import { chooseThrow } from '../../assets/js/petanque/ai.js';
+import { createMatch, jackValid } from '../../assets/js/petanque/rules.js';
+import { chooseThrow, chooseJackThrow } from '../../assets/js/petanque/ai.js';
 
 const n = +process.argv[2] || 24;
 const pl = (m, id) => m.players.find((p) => p.id === id);
@@ -16,7 +16,6 @@ function scenario(i, boules) {
   return { terrain, world, jack, match, bodies };
 }
 const med = (a) => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
-const out = [];
 const t0 = performance.now();
 for (const difficulty of ['easy', 'medium', 'hard']) {
   const ds = [];
@@ -53,5 +52,30 @@ for (const difficulty of ['medium', 'hard']) {
     }
   }
   console.log(`tireur ${difficulty}: shoots ${shot}/${n}, target moved ${hit}/${shot}, carreau ${carreau}/${shot}`);
+}
+const jackStats = {};
+for (const difficulty of ['easy', 'medium', 'hard']) {
+  let ok = 0;
+  for (let i = 0; i < n; i++) {
+    const terrain = createTerrain(100 + (i % 8));
+    const world = createWorld(terrain, mulberry32(i));
+    const r = chooseJackThrow({ world: world.clone(), difficulty, rand: mulberry32(900 + i), player: { id: 'marcel', name: 'Marcel', role: 'pointeur' } });
+    const j = launch(createBody('jack', {}), r.throwParams);
+    world.add(j);
+    simulate(world);
+    if (jackValid({ x: j.x, y: j.y, dead: j.dead })) ok++;
+  }
+  jackStats[difficulty] = `${ok}/${n}`;
+}
+console.log('legal jack', JSON.stringify(jackStats));
+// timings: one pointing + shooting decision per difficulty after warm-up
+for (const difficulty of ['easy', 'medium', 'hard']) {
+  const s = scenario(3, [(j) => ({ x: j.x + 0.05, y: j.y - 0.1, team: 0 }), (j) => ({ x: j.x - 0.3, y: j.y + 0.2, team: 1 })]);
+  const args = { world: s.world, match: s.match, player: pl(s.match, 'odette'), difficulty };
+  chooseThrow({ ...args, rand: mulberry32(1) });
+  const t1 = performance.now();
+  const reps = 10;
+  for (let i = 0; i < reps; i++) chooseThrow({ ...args, rand: mulberry32(2 + i) });
+  console.log(`decision ${difficulty}: ${((performance.now() - t1) / reps).toFixed(0)} ms`);
 }
 console.log('ms', Math.round(performance.now() - t0));

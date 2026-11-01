@@ -4,6 +4,7 @@ import { mulberry32, gauss } from '../../assets/js/petanque/rng.js';
 import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { createBody, launch, createWorld, simulate } from '../../assets/js/petanque/physics.js';
 import { createMatch, jackValid } from '../../assets/js/petanque/rules.js';
+import { LOFT_MIN, LOFT_MAX, styleForLoft } from '../../assets/js/petanque/donnee.js';
 import { chooseThrow, chooseThrowAsync, chooseJackThrow, assistJackThrow } from '../../assets/js/petanque/ai.js';
 
 // Flat packed terrain, no stones
@@ -77,14 +78,14 @@ test('chooseThrow does not modify the world', () => {
   assert.equal(JSON.stringify(s.world.bodies), before);
 });
 
-test('a medium decision takes under 200 ms', () => {
+test('a medium decision takes under 100 ms', () => {
   const s = setup({ boules: [{ x: 2.2, y: 8.6, team: 0 }, { x: 1.7, y: 8.4, team: 1 }] });
   const args = { world: s.world, match: s.match, player: odette(s.match), difficulty: 'medium', rand: mulberry32(9) };
-  chooseThrow(args); // builds the launch table
+  chooseThrow(args); // builds the roll-out tables
   const t0 = performance.now();
   chooseThrow({ ...args, rand: mulberry32(10) });
   const ms = performance.now() - t0;
-  assert.ok(ms < 200, `took ${ms.toFixed(0)} ms`);
+  assert.ok(ms < 100, `took ${ms.toFixed(0)} ms`);
 });
 
 test('chooseJackThrow lands a valid jack most of the time', () => {
@@ -122,4 +123,55 @@ test('assistJackThrow pulls a wide range of swing speeds into a legal jack most 
     if (jackValid({ x: j.x, y: j.y, dead: j.dead })) ok++;
   }
   assert.ok(ok >= 0.65 * n, `${ok}/${n} valid`);
+});
+
+test('results carry the donnée, loft and style, and the throw was solved for them', () => {
+  const s = setup({ boules: [{ x: 2.2, y: 8.6, team: 0 }] });
+  const from = { x: 2, y: 1, z: 0.9 };
+  for (const difficulty of ['easy', 'medium', 'hard']) {
+    const r = chooseThrow({ world: s.world, match: s.match, player: marcel(s.match), difficulty, rand: mulberry32(5), from });
+    assert.ok(Number.isFinite(r.donnee.x) && Number.isFinite(r.donnee.y));
+    assert.ok(r.loft >= LOFT_MIN && r.loft <= LOFT_MAX);
+    assert.equal(r.style, styleForLoft(r.loft, r.intent === 'shoot'));
+    assert.ok(typeof r.score === 'number');
+    // throw aims within the cone of the donnée (yaw close to the line to it)
+    const yaw = Math.atan2(r.donnee.x - from.x, r.donnee.y - from.y);
+    assert.ok(Math.abs(r.throwParams.yaw - yaw) < 0.08, `yaw ${r.throwParams.yaw} vs ${yaw}`);
+  }
+});
+
+test('pointing donnée lies short of or near the jack along the line', () => {
+  const s = setup({ jack: { x: 2.3, y: 9 } });
+  const r = chooseThrow({ world: s.world, match: s.match, player: marcel(s.match), difficulty: 'medium', rand: mulberry32(8) });
+  assert.equal(r.intent, 'point');
+  assert.ok(r.donnee.y < 9.6 && r.donnee.y > 2, `donnée y ${r.donnee.y}`);
+});
+
+test('shooting candidates use a tir style and a donnée near the target', () => {
+  const s = setup({ boules: [{ x: 2.03, y: 8.55, team: 0 }] });
+  let seen = 0;
+  for (let i = 0; i < 6; i++) {
+    const r = chooseThrow({ world: s.world, match: s.match, player: odette(s.match), difficulty: 'hard', rand: mulberry32(i + 1) });
+    if (r.intent !== 'shoot') continue;
+    seen++;
+    assert.equal(r.style, 'tir');
+    assert.ok(Math.hypot(r.donnee.x - 2.03, r.donnee.y - 8.55) < 1.2);
+  }
+  assert.ok(seen >= 3, `shot ${seen}/6`);
+});
+
+test('a tireur takes the jack shot when the opponent holds two points', () => {
+  // team 0 holds two close boules; team 1 (Odette) has boules left
+  const s = setup({ boules: [{ x: 2.1, y: 8.6, team: 0 }, { x: 1.9, y: 8.55, team: 0 }] });
+  const r = chooseThrow({ world: s.world, match: s.match, player: odette(s.match), difficulty: 'hard', rand: mulberry32(4) });
+  assert.ok(['point', 'shoot'].includes(r.intent));
+});
+
+test('chooseJackThrow returns a legal-aiming donnée and honours `from`', () => {
+  const world = createWorld(flat(), mulberry32(1));
+  const from = { x: 2, y: 1, z: 0.5 };
+  const r = chooseJackThrow({ world, difficulty: 'hard', rand: mulberry32(2), from });
+  const d = Math.hypot(r.donnee.x - 2, r.donnee.y - 1);
+  assert.ok(d > 3 && d < 10, `donnée ${d} m out`);
+  assert.ok(Number.isFinite(r.loft) && r.style);
 });
