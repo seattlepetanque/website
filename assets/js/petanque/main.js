@@ -714,16 +714,20 @@ function boot() {
     throwerYaw = yaw;
     shoulderCam.yaw = yaw;
     shoulderView();
-    const skill = scaledSkill(SKILL[player.id] || SKILL.human, difficulty);
-    const cone = coneFor({ skill, from, landing: choice.donnee, loft: choice.loft, energyFrac: choice.energyFrac });
-    const env = coneEnvelope({ from, landing: choice.donnee, loft: choice.loft, cone, terrain: world.terrain });
     const snapped = choice.style === 'tir';
+    const showArc = debug && params.has('aispot'); // the arc and cone stay hidden from players
+    let env = {};
+    if (showArc) {
+      const skill = scaledSkill(SKILL[player.id] || SKILL.human, difficulty);
+      const cone = coneFor({ skill, from, landing: choice.donnee, loft: choice.loft, energyFrac: choice.energyFrac });
+      env = coneEnvelope({ from, landing: choice.donnee, loft: choice.loft, cone, terrain: world.terrain });
+    }
     renderer.setThrowPreview({
       ...env, roll: null, donnee: choice.donnee, style: choice.style || styleForLoft(choice.loft, snapped),
       snapped, legalZone: kind === 'jack',
     });
     say2(spot);
-    await sleep(debug && params.has('aispot') ? 1e8 : 1100); // ?debug&aispot holds the view for screenshots
+    await sleep(showArc ? 1e8 : 1100); // ?debug&aispot holds the view for screenshots
     if (t === token) { renderer.setThrowPreview(null); renderer.showJackZone(false); }
     shoulderCam.yaw = aimYaw;
   }
