@@ -400,7 +400,7 @@ export function createRenderer(canvas, terrain) {
   function updateJackMark(dt) {
     jackT += dt;
     arrowK = reduce() ? (arrowWant ? 1 : 0) : Math.max(0, Math.min(1, arrowK + (arrowWant ? dt : -dt) / 0.4));
-    const e = jackLive, on = e && !e.body.dead && mode !== 'inspect' && !measure.children.length && !placeMarker.visible;
+    const e = jackLive, on = e && !e.body.dead && mode !== 'inspect' && !measure.children.length && !scoring.children.length && !placeMarker.visible;
     if (!on) { jackChevron.visible = false; jackHalo.visible = false; return; }
     const p = e.mesh.position, dist = camera.position.distanceTo(p);
     const k = Math.max(0, Math.min(1, (dist - 1.5) / 1.5)); // fade out inside ~1.5 m, fully on by 3 m
@@ -509,41 +509,124 @@ export function createRenderer(canvas, terrain) {
   // Measuring tape: lines from the jack to each measured boule, with cm labels
   const measure = new THREE.Group();
   scene.add(measure);
+  const scoring = new THREE.Group(); // D07: the mène-end circle, number badges and rival ring
+  scene.add(scoring);
   function clearMeasure() {
-    for (const o of [...measure.children]) {
-      measure.remove(o);
-      if (o.material && o.material.map) o.material.map.dispose();
-      if (o.material) o.material.dispose();
-      if (o.geometry && o.geometry !== divotGeo) o.geometry.dispose();
+    for (const g of [measure, scoring]) {
+      for (const o of [...g.children]) {
+        g.remove(o);
+        if (o.material && o.material.map) o.material.map.dispose();
+        if (o.material) o.material.dispose();
+        if (o.geometry && o.geometry !== divotGeo) o.geometry.dispose();
+      }
     }
   }
-  function labelSprite(text, color) {
+  // Ground-hugging geometry (follows the bumps so it never z-fights or sinks): annulus r0..r1 around (cx, cy)
+  function groundRing(cx, cy, r0, r1, color, opacity, zoff, order) {
+    const segs = 72, rows = r0 > 0 ? 1 : 8, pos = [], idx = [];
+    for (let i = 0; i <= rows; i++) {
+      const r = r0 + (r1 - r0) * i / rows;
+      for (let k = 0; k < segs; k++) {
+        const a = k / segs * Math.PI * 2, x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+        pos.push(x, y, terrain.sample(x, y).h + zoff);
+      }
+    }
+    for (let i = 0; i < rows; i++) for (let k = 0; k < segs; k++) {
+      const a = i * segs + k, b = i * segs + (k + 1) % segs, c = a + segs, d = b + segs;
+      idx.push(a, b, c, b, d, c);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide, fog: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 }));
+    m.renderOrder = order; m.frustumCulled = false;
+    return m;
+  }
+  // A flat ribbon along the ground from a to b (shortened by ra and rb at the ends)
+  function groundRibbon(a, b, ra, rb, w, color, opacity, zoff, order) {
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len <= ra + rb + 0.005) return null;
+    const dx = (b.x - a.x) / len, dy = (b.y - a.y) / len, nx = -dy * w / 2, ny = dx * w / 2;
+    const n = Math.max(2, Math.ceil((len - ra - rb) / 0.04)), pos = [], idx = [];
+    for (let i = 0; i <= n; i++) {
+      const t = ra + (len - ra - rb) * i / n, x = a.x + dx * t, y = a.y + dy * t, z = terrain.sample(x, y).h + zoff;
+      pos.push(x + nx, y + ny, z, x - nx, y - ny, z);
+      if (i < n) idx.push(2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 1, 2 * i + 3, 2 * i + 2);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: opacity < 1, opacity, depthWrite: false, side: THREE.DoubleSide, fog: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 }));
+    m.renderOrder = order; m.frustumCulled = false;
+    return m;
+  }
+  function badgeSprite(text, fill, edge) {
+    const cv = makeCanvas(96, 96), g = cv.getContext('2d');
+    g.beginPath(); g.arc(48, 48, 42, 0, Math.PI * 2);
+    g.fillStyle = fill; g.fill(); g.lineWidth = 7; g.strokeStyle = edge; g.stroke();
+    g.font = '800 56px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = '#fff'; g.fillText(text, 48, 52);
+    const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthTest: false, transparent: true, fog: false }));
+    spr.renderOrder = 6; spr.scale.set(0.15, 0.15, 1);
+    return spr;
+  }
+  // D07 mène end: soft disc on the jack holding every scoring boule, numbered badges, and the best rival outlined.
+  // o: { radius, fill, edge, items: [{ x, y, n }], rival: { x, y, r, label } | null }
+  function showScoring(jack, o) {
+    clearMeasure();
+    scoring.add(groundRing(jack.x, jack.y, 0, o.radius, o.fill, 0.3, 0.014, 2));
+    scoring.add(groundRing(jack.x, jack.y, o.radius - 0.012, o.radius + 0.006, o.edge, 0.95, 0.018, 3));
+    const placed = [];
+    for (const it of o.items) {
+      let lift = 0.11;
+      for (const q of placed) if (Math.hypot(q.x - it.x, q.y - it.y) < 0.16) lift = Math.max(lift, q.lift + 0.16);
+      placed.push({ x: it.x, y: it.y, lift });
+      const spr = badgeSprite(String(it.n), o.edge, '#fff');
+      spr.position.set(it.x, it.y, terrain.sample(it.x, it.y).h + 0.073 + lift);
+      scoring.add(spr);
+    }
+    if (o.rival) {
+      const rv = o.rival, r = rv.r || 0.037;
+      scoring.add(groundRing(rv.x, rv.y, r + 0.004, r + 0.02, '#e8e8e8', 0.95, 0.018, 3));
+      scoring.add(groundRing(rv.x, rv.y, 0, r + 0.004, '#777777', 0.28, 0.016, 2));
+      if (rv.label) {
+        const spr = labelSprite(rv.label, '#fff', 'rgba(110,110,110,0.88)');
+        const d = Math.hypot(rv.x - jack.x, rv.y - jack.y) || 1, ux = (rv.x - jack.x) / d, uy = (rv.y - jack.y) / d;
+        void ux; void uy;
+        spr.center.set(0.5, 1); // just below the rival, on screen
+        spr.position.set(rv.x, rv.y - r - 0.03, terrain.sample(rv.x, rv.y).h + 0.04);
+        scoring.add(spr);
+      }
+    }
+  }
+  function labelSprite(text, color, bg) {
     const cv = makeCanvas(160, 64), g = cv.getContext('2d');
     g.font = '700 38px system-ui, sans-serif';
     g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillStyle = 'rgba(20,40,75,0.82)';
+    g.fillStyle = bg || 'rgba(20,40,75,0.82)';
     g.beginPath(); g.roundRect(6, 8, 148, 48, 12); g.fill();
     g.fillStyle = color;
     g.fillText(text, 80, 33);
     const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthTest: false, transparent: true, fog: false }));
     spr.renderOrder = 5;
-    spr.scale.set(0.34, 0.136, 1);
+    spr.scale.set(0.27, 0.108, 1);
     return spr;
   }
-  // items: [{ x, y, label, scored }]; jack: { x, y }
+  // Between throws (D07): ribbons from the jack's edge to the closest boule of each team, with team-coloured cm labels
+  // items: [{ x, y, r, label, color, dark }]; jack: { x, y, r }
   function showMeasure(jack, items) {
     clearMeasure();
-    const jz = terrain.sample(jack.x, jack.y).h + 0.012;
+    const jz = terrain.sample(jack.x, jack.y).h;
     for (const it of items) {
-      const color = it.scored ? '#ffd24a' : '#c9d2e6';
-      const iz = terrain.sample(it.x, it.y).h + 0.012;
-      const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(jack.x, jack.y, jz), new THREE.Vector3(it.x, it.y, iz)]);
-      const line = new THREE.Line(geo, new THREE.LineDashedMaterial({ color, dashSize: 0.04, gapSize: it.scored ? 0.0 : 0.03, depthTest: false, transparent: true, opacity: 0.95 }));
-      line.computeLineDistances();
-      line.renderOrder = 4;
-      measure.add(line);
-      const spr = labelSprite(it.label, color);
-      spr.position.set((jack.x + it.x) / 2, (jack.y + it.y) / 2, Math.max(jz, iz) + 0.1);
+      const under = groundRibbon(jack, it, jack.r || 0.015, it.r || 0.037, 0.05, '#000000', 0.5, 0.014, 4);
+      const line = groundRibbon(jack, it, jack.r || 0.015, it.r || 0.037, 0.032, it.color, 1, 0.017, 5);
+      if (under) measure.add(under);
+      if (line) measure.add(line);
+      const spr = labelSprite(it.label, '#fff', it.dark);
+      // the label sits just beyond the boule, away from the jack, so neither the jack nor the boule is covered
+      const d = Math.hypot(it.x - jack.x, it.y - jack.y) || 1, ux = (it.x - jack.x) / d, uy = (it.y - jack.y) / d, off = (it.r || 0.037) + 0.04;
+      spr.center.set(0.5 - 0.5 * Math.max(-1, Math.min(1, ux * 1.6)), 0.5 - 0.5 * Math.max(-1, Math.min(1, uy * 1.6)));
+      spr.position.set(it.x + ux * off, it.y + uy * off, Math.max(jz, terrain.sample(it.x, it.y).h) + 0.06);
       measure.add(spr);
     }
   }
@@ -932,8 +1015,9 @@ export function createRenderer(canvas, terrain) {
       for (const p of opts.points || []) {
         x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
       }
-      const margin = 0.3, el = 0.95; // rad of elevation
-      const hx = Math.max(0.45, (x1 - x0) / 2 + margin), hy = Math.max(0.45, (y1 - y0) / 2 + margin);
+      const margin = opts.margin || 0.3, el = 0.95; // rad of elevation
+      const minHalf = opts.minHalf || 0.45;
+      const hx = Math.max(minHalf, (x1 - x0) / 2 + margin), hy = Math.max(minHalf, (y1 - y0) / 2 + margin);
       const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
       const vf = camera.fov * Math.PI / 180, hf = 2 * Math.atan(Math.tan(vf / 2) * camera.aspect);
       const dist = Math.max(opts.dist || 1.4, hx / Math.tan(hf / 2), (hy * Math.sin(el) + 0.1) / Math.tan(vf / 2) + hy * Math.cos(el)) * 1.05;
@@ -1106,5 +1190,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { sync, setCamera, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, clearMeasure, showJackZone, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  return { sync, setCamera, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, clearMeasure, showJackZone, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
 }

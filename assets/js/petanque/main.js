@@ -465,16 +465,35 @@ function boot() {
     // boules by the jack with the four players gathering behind them; the steep head camera shows only legs
     later(() => { // (instant debug matches cut straight to it)
       if (!match || (match.phase !== 'meneEnd' && match.phase !== 'gameOver')) return;
+      if (scoringShown) return; // keep the scoring circle framed (D07)
       renderer.setCamera('inspect', { target: { x: c.x, y: c.y - 0.2 }, dist: 5.5, az: 0, el: 0.4, height: 0.2, reset: true, fit: 3.4 });
     }, 2200);
   }
 
   // Head camera framing the jack and live boules within 2 m of it
-  function headView(jack, extra, lift) {
+  function headView(jack, extra, lift, tight) {
     const pts = world.bodies
       .filter((b) => b.kind === 'boule' && !b.dead && Math.hypot(b.x - jack.x, b.y - jack.y) < 2)
       .map((b) => ({ x: b.x, y: b.y }));
-    renderer.setCamera('head', { target: { x: jack.x, y: jack.y }, points: pts.concat(extra || []), lift });
+    renderer.setCamera('head', { target: { x: jack.x, y: jack.y }, points: (tight ? [] : pts).concat(extra || []), lift, ...(tight ? { margin: 0.25, minHalf: 0.55, dist: 1.3 } : {}) });
+  }
+  // D07 between throws: ribbons from the cochonnet to the closest live boule of each team (a team with none is dropped)
+  const TEAM_INK = [{ line: '#2f5fb8', dark: 'rgba(22,49,95,0.95)' }, { line: '#f0a040', dark: 'rgba(100,54,8,0.95)' }];
+  const edgeCm = (b, j) => `${Math.max(0, Math.round((Math.hypot(b.x - j.x, b.y - j.y) - b.r - j.r) * 100))} cm`;
+  function showBetween() {
+    const j = jackBody();
+    if (!j || j.dead) { renderer.clearMeasure(); return; }
+    const items = [];
+    for (const team of [0, 1]) {
+      let best = null;
+      for (const b of world.bodies) {
+        if (b.kind !== 'boule' || b.dead || b.team !== team) continue;
+        if (!best || Math.hypot(b.x - j.x, b.y - j.y) < Math.hypot(best.x - j.x, best.y - j.y)) best = b;
+      }
+      if (best) items.push({ x: best.x, y: best.y, r: best.r, label: edgeCm(best, j), color: TEAM_INK[team].line, dark: TEAM_INK[team].dark });
+    }
+    if (items.length) renderer.showMeasure({ x: j.x, y: j.y, r: j.r }, items);
+    else renderer.clearMeasure();
   }
   // Landing marks from physics 'land' events
   function markLandings(events) {
@@ -510,6 +529,7 @@ function boot() {
     preThrow = new Map(world.bodies.map((b) => [b.id, { x: b.x, y: b.y }]));
     throwEvents = [];
     renderer.showJackZone(false);
+    renderer.clearMeasure();
     const body = createBody(kind, { team: kind === 'jack' ? -1 : team, owner });
     world.add(body);
     launch(body, p, from || C.throwFrom);
@@ -583,6 +603,7 @@ function boot() {
 
   function humanTurn(kind, playerId, text) {
     pending = { kind, playerId };
+    renderer.clearMeasure(); // aiming starts: the between-throws lines go (D07)
     renderer.showJackZone(kind === 'jack');
     enterCircle(playerId, aimYaw);
     enableControls(true);
@@ -779,6 +800,7 @@ function boot() {
 
   async function aiBoule(player) {
     say2(`${player.name} is aiming…`);
+    renderer.clearMeasure(); // aiming starts: the between-throws lines go (D07)
     const t = token;
     const jk = jackBody();
     aiYaw = jk && !jk.dead ? Math.atan2(jk.x - C.circle.x, jk.y - C.circle.y) : 0;
@@ -1078,6 +1100,7 @@ function boot() {
       return;
     }
     headView(snap.jack);
+    showBetween();
     const remark = quip(was, prevHold);
     say2(remark ? `${note} ${remark}` : note);
     refreshHud(null);
@@ -1085,28 +1108,39 @@ function boot() {
     later(nextTurn, instant ? 0 : 1800);
   }
 
+  // lift the framing so the circle sits above the card (a bottom card on tall/narrow screens, less on wide ones)
+  const SCORING_LIFT = () => (innerWidth / innerHeight < 1 ? 0.2 : 0.15);
+  let scoringShown = false;
   function endOfMene(note) {
     const r = match.result;
+    scoringShown = false;
     const j = jackBody();
     const jackOut = !j || j.dead;
     if (!jackOut) {
-      // measuring tape to every boule that scored, plus the best losing boule
-      const items = [];
-      if (!r.void && r.measured) {
+      // scoring circle on the jack around every scoring boule, numbered by closeness, with the best rival outlined
+      const pts = [];
+      if (!r.void && r.measured && r.measured.length) {
         const byId = new Map(world.bodies.map((b) => [b.id, b]));
-        const best = r.measured.find((m) => byId.get(m.id) && byId.get(m.id).team !== r.team);
-        let shown = 0;
-        for (const m of r.measured) {
-          const b = byId.get(m.id);
-          if (!b) continue;
-          const scored = b.team === r.team && (!best || m.dist < best.dist);
-          if (!scored && m !== best) continue;
-          items.push({ x: b.x, y: b.y, scored, label: `${Math.max(0, Math.round((m.dist - b.r - j.r) * 100))} cm` });
-          shown++;
-        }
-        if (shown) renderer.showMeasure(j, items);
-      }
-      headView(j, items, 0.4); // subject high in the view, clear of the result card
+        const live = r.measured.map((m) => ({ m, b: byId.get(m.id) })).filter((e) => e.b);
+        const rivalE = live.find((e) => e.b.team !== r.team);
+        const scoringE = live.filter((e) => e.b.team === r.team && (!rivalE || e.m.dist < rivalE.m.dist));
+        if (scoringE.length) {
+          const edge = (e) => e.m.dist + e.b.r;
+          let radius = Math.max(...scoringE.map(edge));
+          const room = rivalE ? (rivalE.m.dist - rivalE.b.r - radius) / 2 : 0.07; // keep the rival just outside when it fits
+          radius += Math.min(0.07, Math.max(0.01, room));
+          const ink = r.team === 0 ? { fill: '#2f5fb8', edge: '#16315f' } : { fill: '#d9893a', edge: '#8a4a0c' };
+          renderer.showScoring(j, {
+            radius, fill: ink.fill, edge: ink.edge,
+            items: scoringE.map((e, n) => ({ x: e.b.x, y: e.b.y, n: n + 1 })),
+            rival: rivalE ? { x: rivalE.b.x, y: rivalE.b.y, r: rivalE.b.r, label: edgeCm(rivalE.b, j) } : null,
+          });
+          scoringShown = true;
+          pts.push({ x: j.x - radius, y: j.y - radius }, { x: j.x + radius, y: j.y + radius });
+          if (rivalE) pts.push({ x: rivalE.b.x, y: rivalE.b.y });
+        } else renderer.clearMeasure();
+      } else renderer.clearMeasure();
+      headView(j, pts, scoringShown ? SCORING_LIFT() : 0.4, scoringShown); // subject high in the view, clear of the result card
     } else aimView();
     if (r.void) {
       // say why: a dead jack (even one that rolled back onto the court), tied boules, or no live boules
@@ -1276,6 +1310,18 @@ function boot() {
     for (const ch of figures) ch.update(0.5);
     requestAnimationFrame(tickC);
     window.__characters = figures;
+  } else if (debug && params.has('measure')) {
+    // --- ?debug&measure: jack and boules from both teams, with the between-throws measuring lines (for screenshots) ---
+    clearWorld();
+    hud.hideHint();
+    const put = (kind, team, x, y) => { const b = createBody(kind, { team, x, y }); b.z = b.r; return world.add(b); };
+    put('jack', -1, 2.1, 8.45);
+    put('boule', 0, 1.9, 8.3); put('boule', 0, 2.5, 8.9);
+    put('boule', 1, 2.28, 8.62); put('boule', 1, 1.6, 7.9);
+    renderer.sync(world);
+    placePlayers('you');
+    headView(jackBody());
+    showBetween();
   } else if (debug && params.has('lumber')) {
     // --- ?debug&lumber: ghosts resting against the timbers and beyond them, plus live boules (for screenshots);
     // &lx=&ly=&dist=&az=&el= place the inspect camera ---

@@ -268,19 +268,19 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D04 | done | sonnet | — | Make the cochonnet easy to see |
 | D05 | done | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
 | D06 | done | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
-| D07 | todo | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
+| D07 | done | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
 | D08 | todo | sonnet | D01–D07, D09–D19 | Round 3 review |
 | D09 | todo | sonnet | — | Flight camera follows every moving object, the cochonnet first when it moves fast |
 | D10 | done | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
 | D11 | todo | sonnet | D10 | Players fetch dead balls and walk the cochonnet to its spot |
 | D12 | todo | sonnet | — | Paused game: frozen, sepia, UI inert, free orbit camera |
-| D13 | todo | sonnet | D04, D16 | AI tactics system: design done (GAME-PLAN §12, decisions in §12.10); step 2 implement next |
+| D13 | in-progress | sonnet | D04, D16 | AI tactics system: design done (GAME-PLAN §12, decisions in §12.10); step 2 implement next |
 | D14 | todo | sonnet | — | Placed cochonnet: legal region runs out to the strings; settle the ground under it |
 | D15 | done | sonnet | — | Surroundings: grass, nearby trees, Seattle skyline with Mount Rainier and the Space Needle |
 | D16 | done | sonnet | — | Investigate AI throws that fall far short, and why Pierre misses most shots |
 | D17 | done | haiku | — | Bright orange cochonnet; arrow only while the human aims, fading after the throw |
 | D18 | done | haiku | — | No target marking for AI throws (boules or cochonnet) |
-| D19 | todo | haiku | — | Roll guide over-predicts low throws (same perceived-terrain bias D16 fixed for the AI) |
+| D19 | in-progress | haiku | — | Roll guide over-predicts low throws (same perceived-terrain bias D16 fixed for the AI) |
 
 ### D00 Invalid jack: the other team places it (sonnet)
 Current rule (FIPJP): if the jack throw is invalid (out of bounds, closer than 6 m, further than 10 m, or within 1 m of a line), the opposing team places the jack by hand anywhere valid. The team that threw the jack still plays the first boule. Replace the current hand-over (other team throws again):
@@ -445,6 +445,10 @@ D03 hid the AI's arc and cone but kept a small donnée ring on the ground. Remov
 ### D15 notes
 - `scenery.js`: tileable grass texture, instanced tufts (7000 desktop / 2200 phone), 8 low-poly trees (Douglas fir, cedar, maple), and a 2048×800 runtime-painted panorama on an inside cylinder spanning 140° around +y (Rainier ~12° left of down-court, downtown and the Space Needle right of centre). Fog pushed to 30–170 m; the terrain mesh eases down to the grass plane 1–1.9 m outside the timbers (visual only).
 - Not done: on desktop the shoulder camera sees only ~9° above the horizon, so the top HUD covers Rainier's summit and the Needle's saucer (fine on phone portrait). Fix by lowering or compressing the skyline vertically, or tilting the shoulder camera up slightly. Tree sway skipped.
+
+### D07 notes
+- Between throws: team-coloured ribbons from the jack to each team's closest live boule with edge-to-edge cm labels; cleared on aim or launch. Mène end: a translucent circle in the scoring team's colour sized to the farthest scoring boule (trimmed so the best rival sits just outside), numbered badges by closeness, the rival ringed with a grey cm label; the head view frames it above the card, and the gather cut is skipped while it shows. `?debug&measure` scene.
+- Not done: a between-throws label placed "beyond the boule" along its line can end up next to a different boule (seen in the debug scene); badges can overlap a neighbour in very tight mènes; the centred game-over card still covers the circle; landscape phones untested.
 
 ### D19 Roll guide over-predicts low throws (haiku)
 The human's roll guide (`predictRoll` in donnee.js) simulates on `terrain.perceived()`, which has no ground jitter, so it over-predicts how far roulettes and low demi-portées roll. This is the bias D16 found for the AI. Apply the same low-loft roughness allowance D16 added in ai.js (`roughness()` / `AI.roughK`; move the helper into donnee.js so both share it) to `predictRoll`. Test that the predicted rest for 14° and 30° throws on seeded gravel matches the mean real rest within ~0.3 m, and leave plombée unchanged.
