@@ -74,24 +74,24 @@ export const SOUND = {
     minSpeed: 0.05, // m/s: silent below this
     fullSpeed: 3, // m/s at which rate and level reach their maximum
     fadeSpeed: 0.3, // m/s above minSpeed over which rate/level fade in: slow rolls = a few ticks, then silence
-    rateMin: 3, rateMax: 30, // ticks per second per body: slow roll .. fast roll (Poisson-ish, random gaps)
+    rateMin: 0.6, rateMax: 6, // ticks per second per body: slow roll .. fast roll (Poisson-ish, random gaps)
     rateCurve: 1.5, // >1 keeps mid speeds sparse
     lookahead: 0.07, // s: ticks are scheduled this far ahead of the audio clock inside each update()
     maxPerSec: 120, // cap on ticks per second across all bodies (clatter ticks count too)
-    gain: 0.035, // level of a fast boule tick (compare: soft landing thud peaks ~0.3)
+    gain: 0.015, // level of a fast boule tick (compare: soft landing thud peaks ~0.3)
     levelMin: 0.35, // level factor at the slowest roll (rising to 1 at fullSpeed)
     levelSpread: [0.3, 1], // random per-tick level factor
-    freqLo: 1500, freqHi: 4000, q: [0.7, 1.2], // Hz band-pass centre range and Q (low = soft, dry)
+    freqLo: 600, freqHi: 1600, q: [0.7, 1.2], // Hz band-pass centre range and Q (low = soft, dry)
     burst: [0.001, 0.003], // s: noise burst length
     attack: 0.0005, // s: soft onset
     decay: [0.002, 0.006], // s: fast decay (dry, no ringing)
     dullChance: 0.25, // fraction of boule ticks that are lower and duller (gravel grinding)
-    dullFreqLo: 450, dullFreqHi: 1100, dullDecay: [0.005, 0.01], dullGain: 1.3,
+    dullFreqLo: 250, dullFreqHi: 550, dullDecay: [0.005, 0.01], dullGain: 1.3,
     clatterChance: 0.12, // chance a tick becomes a pair/triple (small pebble clatter)
     clatterGap: [0.004, 0.02], clatterFall: 0.65, // s between ticks; level factor per extra tick
-    jackFreqLo: 3000, jackFreqHi: 6000, jackGain: 0.5, jackRate: 0.8, // jack: higher, lighter, quieter, a bit sparser
+    jackFreqLo: 1400, jackFreqHi: 3000, jackGain: 0.5, jackRate: 0.8, // jack: higher, lighter, quieter, a bit sparser
     deadGain: 0.7, // level factor for dead/ghost balls rolling outside the court
-    stoneGain: 2.5, // stone event tick: level factor over a normal tick, also scaled by speed
+    stoneGain: 2, // stone event tick: level factor over a normal tick, also scaled by speed
     stoneSpeed: 3, // m/s of a stone contact that gives the full stone tick level
   },
 };
