@@ -262,6 +262,7 @@ function boot() {
   });
 
   function humanToss(t) {
+    renderer.setJackArrow(false); // released: the chevron fades out (D17)
     if (!pending || flying) { toss.setPhase('off'); return; }
     const from = releasePoint(null, t.loft);
     const { landing, energyFrac } = fitToss(t, from);
@@ -276,7 +277,7 @@ function boot() {
     reaimBtn.hidden = !on;
     rollBtn.hidden = !on;
     viewBtn.hidden = !on;
-    if (!on) clearToss();
+    if (!on) { clearToss(); renderer.setJackArrow(false); }
   }
   enableControls(false);
 
@@ -585,6 +586,7 @@ function boot() {
     renderer.showJackZone(kind === 'jack');
     enterCircle(playerId, aimYaw);
     enableControls(true);
+    renderer.setJackArrow(kind !== 'jack'); // the chevron guides a boule throw only, never the cochonnet's (D17)
     setView('shoulder');
     say2(text);
     if (pickHuman !== null || store(HINT_KEY) !== '1') hud.showHint(HINT_TEXT);
@@ -680,6 +682,29 @@ function boot() {
     else throwWith(playerId, loft, go).catch((err) => { console.error(err); if (!launched && token === t0) go(); });
   }
 
+  // ?debug&ailog (D16): one console line per AI boule, the plan (style, donnée, budget clamp, release point vs the hand at
+  // launch) when it throws and the result (rest, distance to the jack) when it settles
+  const ailog = debug && params.has('ailog');
+  let aiLogRec = null;
+  function aiLogPlan(player, choice) {
+    if (!ailog || !choice.from) return;
+    const hand = handFrom(player.id, choice.loft, aiYaw), j = jackBody();
+    aiLogRec = {
+      player: player.id, difficulty, intent: choice.intent, style: choice.style, loftDeg: +(choice.loft * 180 / Math.PI).toFixed(1),
+      donneeM: +Math.hypot(choice.donnee.x - choice.from.x, choice.donnee.y - choice.from.y).toFixed(2),
+      jackM: j ? +Math.hypot(j.x - choice.from.x, j.y - choice.from.y).toFixed(2) : null,
+      fromVsHandCm: +(Math.hypot(hand.x - choice.from.x, hand.y - choice.from.y, hand.z - choice.from.z) * 100).toFixed(1),
+      clampedByM: choice.info ? +choice.info.clampedBy.toFixed(2) : null, fallback: choice.info ? choice.info.fallback : null,
+      energyFrac: +(choice.energyFrac ?? 0).toFixed(2),
+    };
+  }
+  function aiLogResult(was) {
+    if (!aiLogRec || !was || was.kind !== 'boule') return;
+    const j = jackBody(), rec = aiLogRec;
+    aiLogRec = null;
+    console.log('[ailog]', JSON.stringify({ ...rec, restY: +(was.y - C.circle.y).toFixed(2), dead: was.dead, toJackM: j && !was.dead ? +Math.hypot(was.x - j.x, was.y - j.y).toFixed(2) : null }));
+  }
+
   const sleep = (ms) => new Promise((res) => setTimeout(res, instant ? 0 : ms));
 
   async function aiJack(player, lead) {
@@ -715,17 +740,18 @@ function boot() {
     shoulderCam.yaw = yaw;
     shoulderView();
     const snapped = choice.style === 'tir';
-    const showArc = debug && params.has('aispot'); // the arc and cone stay hidden from players
-    let env = {};
+    const showArc = debug && params.has('aispot'); // the arc, cone, donnée and legal zone stay hidden from players (D18)
+    renderer.setThrowPreview(null);
+    renderer.showJackZone(false);
     if (showArc) {
       const skill = scaledSkill(SKILL[player.id] || SKILL.human, difficulty);
       const cone = coneFor({ skill, from, landing: choice.donnee, loft: choice.loft, energyFrac: choice.energyFrac });
-      env = coneEnvelope({ from, landing: choice.donnee, loft: choice.loft, cone, terrain: world.terrain });
+      const env = coneEnvelope({ from, landing: choice.donnee, loft: choice.loft, cone, terrain: world.terrain });
+      renderer.setThrowPreview({
+        ...env, roll: null, donnee: choice.donnee, style: choice.style || styleForLoft(choice.loft, snapped),
+        snapped, legalZone: kind === 'jack',
+      });
     }
-    renderer.setThrowPreview({
-      ...env, roll: null, donnee: choice.donnee, style: choice.style || styleForLoft(choice.loft, snapped),
-      snapped, legalZone: kind === 'jack',
-    });
     say2(spot);
     await sleep(showArc ? 1e8 : 1100); // ?debug&aispot holds the view for screenshots
     if (t === token) { renderer.setThrowPreview(null); renderer.showJackZone(false); }
@@ -780,6 +806,7 @@ function boot() {
     if (!instant) await showAiSpot(player, choice, 'boule', spot);
     else await sleep(700);
     if (t !== token) return;
+    aiLogPlan(player, choice);
     doThrow('boule', player.id, choice.throwParams, spot, choice.from, choice.from ? choice.loft : undefined);
   }
 
@@ -1021,6 +1048,7 @@ function boot() {
   function onSettled() {
     const was = flying;
     flying = null;
+    aiLogResult(was);
     if (!match) { // debug throws outside a game
       const j = jackBody();
       if (j && !j.dead) headView(j);

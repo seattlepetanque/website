@@ -307,7 +307,7 @@ export function createRenderer(canvas, terrain) {
   // Dead (out of play) bodies: greyed and dulled
   const deadBouleMat = new THREE.MeshStandardMaterial({ color: '#a4a8b0', metalness: 0.45, roughness: 0.5, envMapIntensity: 0.9 });
   const deadJackMat = new THREE.MeshStandardMaterial({ color: '#8a7a5e', metalness: 0, roughness: 0.6 });
-  const jackMat = new THREE.MeshStandardMaterial({ color: '#ffa81c', metalness: 0, roughness: 0.45, emissive: '#3a1c00' });
+  const jackMat = new THREE.MeshStandardMaterial({ color: '#ff7a00', metalness: 0, roughness: 0.45, emissive: '#4a1e00' }); // bright orange, lit a little from within so it stays vivid in shade
   const bouleGeo = new THREE.SphereGeometry(1, 40, 24);
   bouleGeo.rotateX(Math.PI / 2); // texture poles along z; any orientation is fine
   const jackGeo = new THREE.SphereGeometry(1, 20, 12);
@@ -363,7 +363,7 @@ export function createRenderer(canvas, terrain) {
   })();
   const jv = jackVisParam === null ? { a: true, b: false, c: true, headRing: true }
     : { a: jackVisParam.includes('a'), b: jackVisParam.includes('b'), c: jackVisParam.includes('c'), headRing: false };
-  const jackBright = new THREE.MeshStandardMaterial({ color: '#ffc02e', metalness: 0, roughness: 0.4, emissive: '#ff9a10', emissiveIntensity: 0.75 });
+  const jackBright = new THREE.MeshStandardMaterial({ color: '#ff8a1e', metalness: 0, roughness: 0.4, emissive: '#ff6a00', emissiveIntensity: 0.6 });
   const jackChevron = (() => {
     const cv = makeCanvas(64, 96), g = cv.getContext('2d');
     g.lineJoin = 'round';
@@ -389,17 +389,21 @@ export function createRenderer(canvas, terrain) {
     return m;
   })();
   let jackLive = null, jackT = 0;
+  // The chevron is only wanted while the human aims a boule (D17): main.js switches it on and off, and it fades over ~0.4 s
+  let arrowWant = false, arrowK = 0;
+  function setJackArrow(on) { arrowWant = !!on; if (reduce()) arrowK = arrowWant ? 1 : 0; }
   function updateJackMark(dt) {
     jackT += dt;
+    arrowK = reduce() ? (arrowWant ? 1 : 0) : Math.max(0, Math.min(1, arrowK + (arrowWant ? dt : -dt) / 0.4));
     const e = jackLive, on = e && !e.body.dead && mode !== 'inspect' && !measure.children.length && !placeMarker.visible;
     if (!on) { jackChevron.visible = false; jackHalo.visible = false; return; }
     const p = e.mesh.position, dist = camera.position.distanceTo(p);
     const k = Math.max(0, Math.min(1, (dist - 1.5) / 1.5)); // fade out inside ~1.5 m, fully on by 3 m
     const ndcH = dist * Math.tan(camera.fov * Math.PI / 360); // metres per unit of NDC height at the jack
-    if (jv.a && k > 0) {
+    if (jv.a && k > 0 && arrowK > 0) {
       const bob = reduce() ? 0 : 0.5 + 0.5 * Math.sin(jackT * 4.5);
       jackChevron.position.set(p.x, p.y, p.z + e.body.r + ndcH * (0.03 + 0.03 * bob));
-      jackChevron.material.opacity = k;
+      jackChevron.material.opacity = k * arrowK;
       jackChevron.visible = true;
     } else jackChevron.visible = false;
     const kh = Math.max(0, Math.min(1, (dist - 0.9) / 0.8)); // the halo is a ground mark, so it can stay closer in
@@ -1097,5 +1101,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { sync, setCamera, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, clearMeasure, showJackZone, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  return { sync, setCamera, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, clearMeasure, showJackZone, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
 }

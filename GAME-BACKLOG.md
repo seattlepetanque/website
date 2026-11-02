@@ -276,10 +276,10 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D12 | todo | sonnet | — | Paused game: frozen, sepia, UI inert, free orbit camera |
 | D13 | todo | sonnet | D04, D16 | AI tactics system: design done (GAME-PLAN §12, decisions in §12.10); step 2 implement next |
 | D14 | todo | sonnet | — | Placed cochonnet: legal region runs out to the strings; settle the ground under it |
-| D15 | todo | sonnet | — | Surroundings: grass, nearby trees, Seattle skyline with Mount Rainier and the Space Needle |
+| D15 | in-progress | sonnet | — | Surroundings: grass, nearby trees, Seattle skyline with Mount Rainier and the Space Needle |
 | D16 | in-progress | sonnet | — | Investigate AI throws that fall far short, and why Pierre misses most shots |
-| D17 | todo | haiku | — | Bright orange cochonnet; arrow only while the human aims, fading after the throw |
-| D18 | todo | haiku | — | No target marking for AI throws (boules or cochonnet) |
+| D17 | done | haiku | — | Bright orange cochonnet; arrow only while the human aims, fading after the throw |
+| D18 | done | haiku | — | No target marking for AI throws (boules or cochonnet) |
 
 ### D00 Invalid jack: the other team places it (sonnet)
 Current rule (FIPJP): if the jack throw is invalid (out of bounds, closer than 6 m, further than 10 m, or within 1 m of a line), the opposing team places the jack by hand anywhere valid. The team that threw the jack still plays the first boule. Replace the current hand-over (other team throws again):
