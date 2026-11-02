@@ -269,10 +269,11 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D05 | done | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
 | D06 | done | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
 | D07 | todo | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
-| D08 | todo | sonnet | D01–D07, D09–D11 | Round 3 review |
+| D08 | todo | sonnet | D01–D07, D09–D12 | Round 3 review |
 | D09 | todo | sonnet | — | Flight camera follows every moving object, the cochonnet first when it moves fast |
 | D10 | in-progress | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
 | D11 | todo | sonnet | D10 | Players fetch dead balls and walk the cochonnet to its spot |
+| D12 | todo | sonnet | — | Paused game: frozen, sepia, UI inert, free orbit camera |
 
 ### D00 Invalid jack: the other team places it (sonnet)
 Current rule (FIPJP): if the jack throw is invalid (out of bounds, closer than 6 m, further than 10 m, or within 1 m of a line), the opposing team places the jack by hand anywhere valid. The team that threw the jack still plays the first boule. Replace the current hand-over (other team throws again):
@@ -350,6 +351,15 @@ Design principle (GAME-PLAN §10): simulate how people really move about during 
 - **Timing:** walks at a natural pace (about 1.2–1.5 m/s), skipped or sped up in `instant`/autotest and under `prefers-reduced-motion` (teleport with a short fade). Characters avoid walking through the court's live boules where cheap (step around or along the side), and step over the lumber.
 - **Camera:** stays on the head or follows the fetcher loosely while a fetch runs; never blocks the human's next aim.
 - Add a `?debug&fetch` path that scripts a boule and a jack going out, and check the walk, pick-up and carry with a few frame screenshots.
+
+### D12 Paused game: frozen, sepia, UI inert, free orbit camera (sonnet)
+When the game is paused (Exit in the game, or Esc, per D01):
+- **Freeze everything:** the physics step, character animation and walks, AI thinking and its timers (D01 noted AI timers keep running while paused), throw-reveal sleeps, reaction cuts, camera transitions and audio (suspend the context or stop scheduling ticks). Resume continues exactly where it stopped, with no time jump. Use one pause clock or gate that every timer and sleep in main.js goes through, rather than ad-hoc checks.
+- **Sepia:** render the 3D scene in sepia (a post-process pass, or a full-screen shader quad over the frame; keep it cheap) and the game UI too: the scoreboard, buttons, dock and toss readout, via a CSS `filter: sepia(…)` on the game layer, so the whole game reads as a paused photograph. The page's paused bar (Resume / New game) stays in normal colour and fully interactive.
+- **UI inert:** game widgets don't respond (`inert` attribute or `pointer-events: none` plus `tabindex=-1`), and the toss input is off.
+- **Free camera:** any drag on the scene orbits the camera around a point on the ground (the point under the screen centre when the pause began, or the jack). The wheel or a pinch zooms toward that point. Clamp it to stay above the ground and within a sensible distance. On Resume the camera eases back to where it was before the pause.
+- Respect `prefers-reduced-motion` (no animated sepia fade). Check that the paused game shown on the normal page (not full window) still looks right.
+- Add `?debug&paused` to enter the paused state for screenshots. Tests for the pause clock: timers don't fire while paused, and fire with the remaining delay after resume.
 
 ### D08 Round 3 review (sonnet)
 Run `npm test`, the build check and the full-match test, take screenshots on desktop and phone, review the code for bugs, and add a "Round 3 remaining issues" list at the end of this file.
