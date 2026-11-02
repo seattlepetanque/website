@@ -1080,7 +1080,19 @@ function boot() {
       }
       headView(j, items, 0.4); // subject high in the view, clear of the result card
     } else aimView();
-    if (r.void && jackOut) note = 'The jack is out: mène void.';
+    if (r.void) {
+      // say why: a dead jack (even one that rolled back onto the court), tied boules, or no live boules
+      const live = world.bodies.filter((b) => b.kind === 'boule' && !b.dead);
+      const near = [0, 1].map((t) => live.filter((b) => b.team === t)
+        .reduce((m, b) => Math.min(m, Math.hypot(b.x - j.x, b.y - j.y)), Infinity));
+      if (jackOut) note = 'The cochonnet went out of bounds, so it is dead (even if it rolled back in) and neither side has boules left: mène void.';
+      else if (!live.length) note = 'No live boules on the court: mène void.';
+      else if (Math.abs(near[0] - near[1]) <= 0.002) note = 'The closest boules of each team are the same distance from the cochonnet: mène void.';
+      else { note = 'Mène void.'; console.warn('[void mène] no reason found: please report this with the details below'); }
+      console.info('[void mène]', { jackDead: !!(j && j.dead), jackAt: j && { x: +j.x.toFixed(3), y: +j.y.toFixed(3) },
+        liveBoules: live.length, closest: near.map((d) => (Number.isFinite(d) ? +d.toFixed(4) : null)),
+        matchJack: match.jack, inHand: match.players.map((p) => `${p.id}:${p.boulesLeft}`).join(' ') });
+    }
     else if (!jackOut && !r.void && r.measured && r.measured.length) {
       // report the winning boule's gap, the figure on its measuring label
       const win = world.bodies.find((b) => b.id === r.measured[0].id);
