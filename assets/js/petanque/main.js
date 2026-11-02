@@ -11,7 +11,7 @@ import { createHud } from './hud.js';
 import { chooseThrowAsync, chooseJackThrow } from './ai.js';
 import { createTossInput } from './toss.js';
 import {
-  SKILL, scaledSkill, coneFor, coneEnvelope, executeThrow, solveLaunch, predictRoll, styleForLoft, releaseFrom, snapAim,
+  SKILL, scaledSkill, coneFor, coneEnvelope, executeThrow, solveLaunch, predictRoll, styleForLoft, releaseFrom, snapAim, fitToBudget,
 } from './donnee.js';
 import { createAudio } from './audio.js';
 import * as THREE from '../vendor/three.module.js';
@@ -55,15 +55,6 @@ const status = document.querySelector('.petanque-status');
 const canvas = document.querySelector('#petanque canvas');
 const controls = document.querySelector('.petanque-controls');
 const say = (text) => { if (status) status.textContent = text; };
-
-// slider spec: [key, label, min, max, step, default, unit]
-const SLIDERS = [
-  ['yaw', 'Aim', -35, 35, 0.5, 0, '°'],
-  ['speed', 'Speed', 2, 12, 0.1, 7, ' m/s'],
-  ['loft', 'Loft', 5, 75, 1, 50, '°'],
-  ['backspin', 'Backspin', 0, 150, 1, 30, ' rad/s'],
-  ['sidespin', 'Sidespin', -40, 40, 1, 0, ' rad/s'],
-];
 
 
 function boot() {
@@ -115,9 +106,7 @@ function boot() {
   let pierreChoice = null; // cached AI choice for Pierre while the chooser is open
   const pickHuman = params.get('humanturn'); // debug: stop at the human's first boule (or 'chooser')
 
-  // Controls: [Re-aim] [Roll guide] [View] [mute] [New game] bar; raw sliders only with ?debug
-  const inputs = {};
-  const outputs = {};
+  // Controls: [Re-aim] [Roll guide] [View] [mute] [New game] bar; no raw sliders
   controls.textContent = '';
   const mkBtn = (parent, text, cls) => {
     const b = document.createElement('button');
@@ -132,8 +121,16 @@ function boot() {
   const viewBtn = mkBtn(bar, 'View: Shoulder', 'pc-view');
   bar.append(audio.createMuteButton());
   const newBtn = mkBtn(bar, 'New game', 'pc-reset');
+  const exitBtn = mkBtn(bar, 'Exit', 'pc-exit'); // leaves the full-window view (only shown while playing)
   controls.append(bar);
-  if (debug && params.has('sounds')) { // ?debug&sounds: audition panel for the synthesized sound effects
+  if (debug && params.has('sounds')) {
+    // ?debug&sounds panel sits in a collapsible drawer: below the game on the page, an overlay while playing
+    const drawer = document.createElement('details');
+    drawer.className = 'pc-debug';
+    drawer.open = !params.has('play');
+    const sum = document.createElement('summary');
+    sum.textContent = 'Sounds';
+    drawer.append(sum); // ?debug&sounds: audition panel for the synthesized sound effects
     const panel = document.createElement('div');
     panel.className = 'pc-bar pc-sounds';
     panel.style.flexWrap = 'wrap';
@@ -147,53 +144,14 @@ function boot() {
     for (const [label, name, p] of SOUNDS) {
       mkBtn(panel, label, 'pc-sound').addEventListener('click', () => { audio.unlock(); audio.play(name, p); });
     }
-    controls.append(panel);
+    drawer.append(panel);
+    controls.append(drawer);
   }
-  let throwBtn = null;
-  if (debug) {
-    const grid = document.createElement('div');
-    grid.className = 'pc-grid';
-    for (const [key, label, min, max, step, def, unit] of SLIDERS) {
-      const row = document.createElement('div');
-      row.className = 'pc-row';
-      const lab = document.createElement('label');
-      lab.htmlFor = 'pc-' + key;
-      lab.textContent = label;
-      const input = document.createElement('input');
-      input.type = 'range';
-      input.id = 'pc-' + key;
-      Object.assign(input, { min, max, step, value: def });
-      const out = document.createElement('output');
-      out.htmlFor = input.id;
-      const show = () => { out.textContent = input.value + unit; };
-      input.addEventListener('input', () => {
-        show();
-        if (key === 'yaw') setAim(+input.value * DEG, true);
-      });
-      show();
-      row.append(lab, input, out);
-      grid.append(row);
-      inputs[key] = input;
-      outputs[key] = show;
-    }
-    const panel = document.createElement('div');
-    panel.className = 'pc-panel';
-    const buttons = document.createElement('div');
-    buttons.className = 'pc-buttons';
-    throwBtn = mkBtn(buttons, 'Throw (raw)', 'pc-throw');
-    panel.append(grid, buttons);
-    controls.append(panel);
-  }
-
   // Aim: toss turns the shared camera options; the debug yaw slider mirrors it
-  function setAim(yaw, fromSlider) {
+  function setAim(yaw) {
     aimYaw = Math.max(-AIM_MAX, Math.min(AIM_MAX, yaw));
     shoulderCam.yaw = aimYaw;
     throwerYaw = aimYaw;
-    if (!fromSlider && inputs.yaw) {
-      inputs.yaw.value = (Math.round(aimYaw / DEG * 2) / 2).toString();
-      outputs.yaw();
-    }
     const me = cast.get('you');
     if (pending && inCircle === 'you' && !me.busy) me.yaw = aimYaw;
   }
@@ -213,13 +171,8 @@ function boot() {
     return handFrom(id, loft, yaw);
   }
 
-  const readParams = () => inputs.yaw ? ({
-    yaw: +inputs.yaw.value * DEG,
-    speed: +inputs.speed.value,
-    loft: +inputs.loft.value * DEG,
-    backspin: +inputs.backspin.value,
-    sidespin: +inputs.sidespin.value,
-  }) : { yaw: aimYaw, speed: 7, loft: 0.9, backspin: 30, sidespin: 0 };
+  // default raw throw for the debug hooks (window.__petanque.throw / throwJack)
+  const readParams = () => ({ yaw: aimYaw, speed: 7, loft: 0.9, backspin: 30, sidespin: 0 });
 
   // ---- Throw preview and toss input ----
   let rollGuide = false;
@@ -234,11 +187,23 @@ function boot() {
     rollBtn.setAttribute('aria-pressed', String(rollGuide));
   }
 
+  // The toss donnée pulled in to what the human's arm can deliver at this loft (D02)
+  function fitToss(t, from) {
+    const want = t.snappedTo ? snapAim(from, t.donnee) : t.donnee; // a tir lands just short of its target
+    const fit = fitToBudget({ from, landing: want, loft: t.loft, skill: SKILL.human, terrain: world.terrain });
+    return { landing: fit.landing, clamped: fit.clamped, energyFrac: fit.energyFrac };
+  }
+  let reachShown = false;
+
   // Draw the preview for a toss state { donnee, loft, snappedTo }
   function showToss(t, kind) {
     const from = releasePoint(null, t.loft);
-    const landing = t.snappedTo ? snapAim(from, t.donnee) : t.donnee; // a tir lands just short of its target
-    const cone = coneFor({ skill: SKILL.human, from, landing, loft: t.loft });
+    const { landing, clamped, energyFrac } = fitToss(t, from);
+    if (clamped !== reachShown) {
+      reachShown = clamped;
+      if (clamped) say2(`Max reach: about ${Math.hypot(landing.x - from.x, landing.y - from.y).toFixed(1)} m at this loft. Throw lower to go farther.`);
+    }
+    const cone = coneFor({ skill: SKILL.human, from, landing, loft: t.loft, energyFrac });
     const env = coneEnvelope({ from, landing, loft: t.loft, cone, terrain: world.terrain });
     let path = null;
     // the jack rolls on a metre or more after landing, so its guide is on unless the player turned guides off
@@ -261,12 +226,12 @@ function boot() {
       }
     }
     renderer.setThrowPreview({
-      ...env, roll: path, donnee: t.donnee, style: styleForLoft(t.loft, !!t.snappedTo),
-      snapped: !!t.snappedTo, legalZone: kind === 'jack',
+      ...env, roll: path, donnee: clamped ? landing : t.donnee, style: styleForLoft(t.loft, !!t.snappedTo),
+      snapped: !!t.snappedTo && !clamped, legalZone: kind === 'jack',
     });
   }
   function clearToss() {
-    lastToss = null;
+    lastToss = null; reachShown = false;
     clearTimeout(roll.timer); roll.timer = 0;
     renderer.setThrowPreview(null);
     renderer.showJackZone(!!pending && pending.kind === 'jack' && !flying);
@@ -276,7 +241,7 @@ function boot() {
     pick: (x, y) => renderer.pick(x, y),
     getYaw: () => aimYaw,
     getOrigin: () => C.circle,
-    onTurn: (dyaw) => setAim(aimYaw + dyaw, false),
+    onTurn: (dyaw) => setAim(aimYaw + dyaw),
     onPreview: (t) => {
       if (!pending || flying) return;
       audio.unlock();
@@ -292,16 +257,14 @@ function boot() {
   function humanToss(t) {
     if (!pending || flying) { toss.setPhase('off'); return; }
     const from = releasePoint(null, t.loft);
-    const landing = t.snappedTo ? snapAim(from, t.donnee) : t.donnee;
-    const cone = coneFor({ skill: SKILL.human, from, landing, loft: t.loft });
+    const { landing, energyFrac } = fitToss(t, from);
+    const cone = coneFor({ skill: SKILL.human, from, landing, loft: t.loft, energyFrac });
     const res = executeThrow({ from, landing, loft: t.loft, cone, terrain: world.terrain, rand: throwRand });
     clearToss();
     humanThrow(res.throwParams, from, t.loft);
   }
 
   function enableControls(on) {
-    for (const k in inputs) inputs[k].disabled = !on;
-    if (throwBtn) throwBtn.disabled = !on;
     toss.setPhase(on ? 'aim' : 'off');
     reaimBtn.hidden = !on;
     rollBtn.hidden = !on;
@@ -341,9 +304,11 @@ function boot() {
   rollBtn.setAttribute('aria-pressed', 'false');
 
   const hud = createHud(root, document.querySelector('.petanque-hud'), {
-    onStart: (opts) => { audio.unlock(); startGame(opts); },
+    onStart: (opts) => { audio.unlock(); setPlaying(true, true); startGame(opts); },
     onNext: () => nextMene(),
     onPlayAgain: () => toSetup(),
+    onResume: () => setPlaying(true, true),
+    onNewGame: () => { setPlaying(true, true); toSetup(); },
     onChoose: (id) => beginTurn(id),
     onHintDismiss: () => store(HINT_KEY, '1'),
   });
@@ -559,7 +524,7 @@ function boot() {
     match = null; pending = null;
     enableControls(false);
     clearWorld();
-    setAim(0, false);
+    setAim(0);
     placePlayers(debug && SPECS[params.get('who')] ? params.get('who') : 'you');
     aimView();
     if (debug && params.has('topcam')) { // ?debug&topcam[&who=pierre]: top-down on the circle, for checking foot placement
@@ -568,6 +533,7 @@ function boot() {
     }
     hud.hideChooser();
     hud.hideHint();
+    hud.showPaused(false);
     hud.showSetup({ difficulty, cast: ['pierre', 'marcel', 'odette'].map((id) => ({ name: PERSONALITIES[id].name, bio: PERSONALITIES[id].bio, team: PERSONALITIES[id].team })) });
     if (debug && params.has('topcam')) hud.hideOverlay();
   }
@@ -639,10 +605,58 @@ function boot() {
     doThrow(kind, playerId, p, undefined, from, loft);
   }
 
-  if (throwBtn) throwBtn.addEventListener('click', () => humanThrow(readParams()));
   newBtn.addEventListener('click', () => {
     if (match) toSetup();
   });
+
+  // ---- Full-window view: a fixed layer over the page while playing ----
+  let playing = false;
+  let savedScroll = 0;
+  const html = document.documentElement;
+  const fsSupported = !!(root.requestFullscreen);
+  function logScroll(tag) { // ?debug: report whether the page can scroll while playing
+    if (!debug) return;
+    const se = document.scrollingElement || html;
+    console.log(`[play] ${tag} playing=${playing} scrollHeight=${se.scrollHeight} innerHeight=${window.innerHeight} scrollWidth=${se.scrollWidth} innerWidth=${window.innerWidth} canvas=${canvas.clientWidth}x${canvas.clientHeight}`);
+  }
+  function setPlaying(on, gesture) {
+    if (on === playing) {
+      if (on && gesture && fsSupported && !document.fullscreenElement) tryFullscreen();
+      return;
+    }
+    playing = on;
+    if (on) savedScroll = window.scrollY;
+    root.classList.toggle('is-playing', on);
+    html.classList.toggle('petanque-playing', on);
+    hud.showPaused(!on && !!match);
+    exitBtn.hidden = !on;
+    if (on) {
+      window.scrollTo(0, 0);
+      if (gesture && fsSupported) tryFullscreen();
+    } else {
+      if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+      window.scrollTo(0, savedScroll);
+      if (match) root.scrollIntoView({ block: 'start' });
+    }
+    renderer.resize();
+    requestAnimationFrame(() => { renderer.resize(); logScroll(on ? 'enter' : 'leave'); });
+  }
+  function tryFullscreen() {
+    try {
+      const p = root.requestFullscreen({ navigationUI: 'hide' });
+      if (p && p.catch) p.catch(() => { /* rejected (iframe, iOS): the fixed layer is enough */ });
+    } catch (_) { /* ignore */ }
+  }
+  exitBtn.hidden = true;
+  exitBtn.addEventListener('click', () => setPlaying(false));
+  window.addEventListener('keydown', (e) => {
+    // Esc leaves the view, unless the browser is in fullscreen (it handles that Esc) or a toss used the key
+    if (e.key !== 'Escape' || !playing || e.defaultPrevented || document.fullscreenElement) return;
+    setPlaying(false);
+  });
+  document.addEventListener('fullscreenchange', () => { renderer.resize(); logScroll('fullscreenchange'); });
+  window.addEventListener('resize', () => { renderer.resize(); if (playing) logScroll('resize'); });
+  window.addEventListener('orientationchange', () => setTimeout(() => renderer.resize(), 200));
 
   function doThrow(kind, playerId, p, comment, from, loft) {
     pierreChoice = null; thinkToken++;
@@ -693,7 +707,7 @@ function boot() {
     shoulderCam.yaw = yaw;
     shoulderView();
     const skill = scaledSkill(SKILL[player.id] || SKILL.human, difficulty);
-    const cone = coneFor({ skill, from, landing: choice.donnee, loft: choice.loft });
+    const cone = coneFor({ skill, from, landing: choice.donnee, loft: choice.loft, energyFrac: choice.energyFrac });
     const env = coneEnvelope({ from, landing: choice.donnee, loft: choice.loft, cone, terrain: world.terrain });
     const snapped = choice.style === 'tir';
     renderer.setThrowPreview({
@@ -1006,6 +1020,7 @@ function boot() {
     const dt = Math.min((now - last) / 1000, 0.1);
     last = now;
     acc += dt;
+    if (!playing && match) acc = 0; // paused: the page is showing, the game waits
     let n = 0;
     while (acc >= C.dt && n < MAX_STEPS) {
       world.step(); acc -= C.dt; n++;
@@ -1032,11 +1047,14 @@ function boot() {
     window.__petanque = {
       world, terrain, renderer, seed, reset: toSetup, startGame,
       audio,
+      setPlaying,
       get match() { return match; },
       throw: (p) => launchBody(jackBody() && !jackBody().dead ? 'boule' : 'jack', 0, 'you', { ...readParams(), ...p }),
       throwJack: (p) => launchBody('jack', -1, null, { ...readParams(), ...p }),
     };
   }
+
+  if (debug && params.has('play')) setPlaying(true, false); // ?debug&play: enter the full-window view without a click
 
   if (debug && params.has('autotest')) {
     // AI-only quick match, every throw simulated to rest instantly

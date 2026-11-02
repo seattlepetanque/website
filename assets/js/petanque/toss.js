@@ -229,8 +229,15 @@ export function createTossInput(canvas, options) {
     readout.textContent = s.cancel
       ? 'Release to cancel'
       : `${STYLE_NAMES[styleForLoft(s.loft, !!s.snappedTo)]} ${Math.round(s.loft / DEG)}°${s.snappedTo ? ' · lands just short' : ''}`;
-    if (s.px !== undefined) { readout.style.left = `${s.px + 18}px`; readout.style.top = `${s.py - 36}px`; }
-    else { const r = canvas.getBoundingClientRect(); readout.style.left = `${r.left + r.width / 2}px`; readout.style.top = `${r.top + r.height * 0.2}px`; }
+    let x, y;
+    if (s.px !== undefined) { x = s.px + 18; y = s.py - 36; }
+    else { const r = canvas.getBoundingClientRect(); x = r.left + r.width / 2; y = r.top + r.height * 0.2; }
+    // keep the readout inside the viewport (full-window play, small phones)
+    const m = 6, w = readout.offsetWidth, h = readout.offsetHeight;
+    const vw = document.documentElement.clientWidth || window.innerWidth, vh = window.innerHeight;
+    x = Math.max(m, Math.min(x, vw - w - m));
+    y = Math.max(m, Math.min(y, vh - h - m));
+    readout.style.left = `${x}px`; readout.style.top = `${y}px`;
   }
   const mach = createTossMachine({ ...opts, size, onReadout });
 

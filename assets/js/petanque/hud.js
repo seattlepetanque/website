@@ -57,7 +57,19 @@ export function createHud(root, hudEl, cb) {
   const suggestEl = el('p', 'pt-suggest');
   const hintEl = el('div', 'pt-hint');
   hintEl.hidden = true;
-  hudEl.append(board, turnEl, chooser, hintEl);
+  // Dock: hint toast, turn banner, chooser and status line (a compact strip at the bottom while playing)
+  const dock = el('div', 'pt-dock');
+  dock.append(hintEl, turnEl, chooser);
+  if (status) dock.append(status);
+  // Paused bar (shown on the page after leaving the full-window view mid-game)
+  const pausedEl = el('div', 'pt-paused');
+  pausedEl.hidden = true;
+  pausedEl.setAttribute('role', 'group');
+  pausedEl.setAttribute('aria-label', 'Game paused');
+  const resumeBtn = button('Resume game', 'pt-btn pt-resume', () => cb.onResume && cb.onResume());
+  pausedEl.append(el('span', 'pt-paused-text', 'Game paused.'), resumeBtn,
+    button('New game', 'pt-btn pt-btn-alt pt-paused-new', () => cb.onNewGame && cb.onNewGame()));
+  hudEl.append(pausedEl, board, dock);
 
   let setupState = { target: 13, difficulty: 'medium' };
 
@@ -175,6 +187,11 @@ export function createHud(root, hudEl, cb) {
   }
   function hideHint() { hintEl.hidden = true; }
 
+  function showPaused(on) {
+    pausedEl.hidden = !on;
+    if (on) focusSoon(resumeBtn);
+  }
+
   // info: { text, detail, scores, nextLabel }
   function showMeneEnd(info) {
     const c = card(info.text, 'pt-mene-end');
@@ -195,5 +212,5 @@ export function createHud(root, hudEl, cb) {
     focusSoon(again);
   }
 
-  return { say, showSetup, hideOverlay, update, showChooser, setSuggestion, hideChooser, showHint, hideHint, showMeneEnd, showGameOver };
+  return { say, showSetup, hideOverlay, update, showChooser, setSuggestion, hideChooser, showHint, hideHint, showPaused, showMeneEnd, showGameOver };
 }

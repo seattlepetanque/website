@@ -84,6 +84,7 @@ Debug URLs (add the query to `/game.html`):
 - `?debug&autotest`: AI-only quick match, with no delays.
 - `?debug&humanturn`: stops at your first boule. Use `?debug&humanturn=chooser` to stop at the who-throws chooser, or `?debug&humanturn=jack` to throw the jack yourself.
 - `?debug&humanturn&demo`: a scripted toss preview, for screenshots.
+- `?debug&play`: enters the full-window view without a click (combine with the others, e.g. `?debug&play&humanturn&demo`); logs scroll metrics to the console.
 - `?debug&aispot`: holds the view on the AI's spot, for screenshots.
 - `?debug&topcam`: top-down view of the circle (`&who=pierre|marcel|odette`, `&topdist=`, `&topel=`, `&topaz=` for a side view), for checking foot placement.
 - `?debug&preview`: static throw preview with made-up paths, for screenshots.

@@ -261,7 +261,7 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 
 | ID | Status | Model | Deps | Title |
 |---|---|---|---|---|
-| D01 | in-progress | sonnet | — | Full-window game view; no page scrolling while playing |
+| D01 | done | sonnet | — | Full-window game view; no page scrolling while playing |
 | D02 | done | sonnet | — | Throw energy limit: far lobs pulled closer, higher lobs less accurate |
 | D03 | todo | haiku | — | Hide the planned trajectory for AI players |
 | D04 | todo | sonnet | — | Make the cochonnet easy to see |
@@ -296,6 +296,10 @@ A ball is out of bounds when, seen from above, the whole ball is outside the str
 ### D07 Measuring lines and scoring circle (sonnet)
 - **Between throws:** during the interstitial camera moves (after a throw settles and before the next aim), show measuring lines from the cochonnet to the closest boule of each team, labelled with distances. Use the team colours, and clear them when aiming starts.
 - **At mène end:** the camera shows a transparent filled circle on the ground, centred on the jack, just large enough to contain every scoring boule. Each scoring boule is numbered 1, 2, 3… in order of closeness. Show the opponent's best boule just outside the circle, unnumbered, for comparison. Fit the camera so the circle and numbers read clearly, and make sure the mène-end card doesn't cover them (move the card or shrink it).
+
+### D01 notes
+- Start/Resume enters a fixed full-viewport layer (plus requestFullscreen where allowed); Exit or Esc returns to the page with a "Game paused" bar (Resume / New game). Debug sliders and "Throw (raw)" removed at the user's request; `?debug&play` enters the layer for screenshots; the sounds audition panel is a collapsible drawer.
+- Not done: `viewport-fit=cover` isn't set (iOS letterboxes instead of using the notch area; setting it in baseof.html affects every page). While paused, AI timers still run, so an AI throw can launch and sit frozen until Resume. On phone landscape the mène-end card and first-time hint cover a fair share of the court (D07 reworks the card).
 
 ### D02 notes
 - Effort = launch speed × loft weight (0.76 at 8° → 1.55 at 75°) against `SKILL.*.maxSpeed` (human 11.6, Marcel 11.3, Odette 12.4, Pierre 12.2). Human reach: demi-portée to 10 m fine; 60° tops out ≈ 8.4 m, 65° ≈ 6.3 m, 70° ≈ 4.6 m.
