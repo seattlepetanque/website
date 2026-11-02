@@ -269,12 +269,13 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D05 | done | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
 | D06 | done | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
 | D07 | todo | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
-| D08 | todo | sonnet | D01–D07, D09–D13 | Round 3 review |
+| D08 | todo | sonnet | D01–D07, D09–D14 | Round 3 review |
 | D09 | todo | sonnet | — | Flight camera follows every moving object, the cochonnet first when it moves fast |
 | D10 | done | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
 | D11 | todo | sonnet | D10 | Players fetch dead balls and walk the cochonnet to its spot |
 | D12 | todo | sonnet | — | Paused game: frozen, sepia, UI inert, free orbit camera |
 | D13 | todo | sonnet | — | AI tactics system: design first, then implement |
+| D14 | todo | sonnet | — | Placed cochonnet: legal region runs out to the strings; settle the ground under it |
 
 ### D00 Invalid jack: the other team places it (sonnet)
 Current rule (FIPJP): if the jack throw is invalid (out of bounds, closer than 6 m, further than 10 m, or within 1 m of a line), the opposing team places the jack by hand anywhere valid. The team that threw the jack still plays the first boule. Replace the current hand-over (other team throws again):
@@ -387,6 +388,14 @@ Today the AI picks a throw by Monte Carlo over candidates, scoring each end stat
 - **Testing:** a scenario test table, each a fixed court state with the expected decision (point or shoot, target), plus full-match statistics: AI vs AI and AI vs a scripted human, win rates by difficulty, and the mix of decisions.
 
 **Step 2: implement** the agreed design in `ai.js` (or a new `tactics.js`), with scenario tests and updated measurements. Make sure decision time stays within budget (medium ≤ ~50 ms), and that Pierre's suggestions and the commentary use the tactical reason.
+
+### D14 Placed cochonnet: legal region runs out to the strings (sonnet)
+After a bad initial throw, the placing team may put the cochonnet anywhere 6–10 m from the circle, right out to the string lines, without the 1 m margin that applies to a thrown jack. Keep the thrown-jack validity rule (`jackValid`, with its 1 m margin) unchanged.
+- **Rules:** add a placement validity check (e.g. `jackPlaceValid`): 6–10 m from the circle centre, with the whole jack inside the strings, and no margin. `jackPlaced` uses it. Tests for spots near each side string, just inside and just outside.
+- **Rendering:** during placement, draw the legal zone across the full court width. The 6 m and 10 m arcs run string to string, optionally with a faint fill between them, clipped to the strings. Draw the green ring and red X per the new rule. Don't change the zone drawn for the thrown jack.
+- **AI placement:** `chooseJackPlacement` may use the full width, but keeps its personality preferences.
+- **Physics near the edge:** a jack placed near a string must stay exactly where it was put, not glance off a pebble or roll on a slope out of bounds. When placing, settle the ground locally: remove stones within ~0.15 m of the spot, and flatten the height field in a small radius (a gentle local "pad" blended into the surroundings, recorded like a divot so it resets each mène). Then set the jack at rest directly, without the drop bounce, or keep the drop and guarantee no lateral motion. Test that a jack placed 1 cm inside a string on a steep seeded terrain stays put and stays live.
+- `?debug&jackplace` should show the full-width zone.
 
 ### D08 Round 3 review (sonnet)
 Run `npm test`, the build check and the full-match test, take screenshots on desktop and phone, review the code for bugs, and add a "Round 3 remaining issues" list at the end of this file.
