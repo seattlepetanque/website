@@ -343,6 +343,45 @@ export function chooseJackThrow({ world, difficulty = 'medium', rand, player, fr
   };
 }
 
+// Placement tastes: preferred distance from the circle (m) and lateral offset (m) per player
+const PLACE_TASTE = { marcel: { dist: 6.9, side: -0.35 }, odette: { dist: 8.6, side: 0.3 }, pierre: { dist: 8.0, side: 0.1 } };
+const PLACE_NOISE = { easy: 1, medium: 0.5, hard: 0.2 };
+
+// The AI places an invalid jack by hand: a valid spot (6-10 m, inside the lines) at a distance and side the
+// placer likes, away from big rocks and slopes on the terrain it can see, with a little randomness.
+// Pure given `rand`. Returns { x, y, distance, label }.
+export function chooseJackPlacement({ match, player, difficulty = 'medium', rand = Math.random, terrain } = {}) {
+  const geometry = match && match.geometry;
+  const taste = PLACE_TASTE[player && player.id] || { dist: 8, side: 0 };
+  const noise = PLACE_NOISE[difficulty] ?? PLACE_NOISE.medium;
+  const view = terrain && terrain.perceived ? terrain.perceived() : terrain;
+  const c = C.circle;
+  const pad = 0.1; // keep clear of the legal edges
+  let best = null;
+  for (let d = C.jackMinDist + pad; d <= C.jackMaxDist - pad + 1e-9; d += 0.25) {
+    for (let dx = -1.0; dx <= 1.0 + 1e-9; dx += 0.25) {
+      const x = c.x + dx, y = c.y + Math.sqrt(Math.max(0, d * d - dx * dx));
+      const spot = { x, y };
+      if (!jackValid(spot, geometry)) continue;
+      const dist = Math.hypot(x - c.x, y - c.y);
+      let score = -Math.abs(dist - taste.dist) * 0.5 - Math.abs(dx - taste.side) * 0.4;
+      if (view) {
+        const s = view.sample(x, y);
+        score -= 6 * Math.hypot(s.nx || 0, s.ny || 0) + 1.5 * (s.loose || 0);
+        for (const st of view.stonesNear(x, y, 0.5)) score -= st.r > C.pebbleR[1] ? 1.2 : 0.05;
+      }
+      score += (rand() - 0.5) * 2 * noise;
+      if (!best || score > best.score) best = { x, y, score, distance: dist };
+    }
+  }
+  if (!best) best = { x: c.x, y: c.y + 8, distance: 8 }; // unreachable with the default geometry
+  const name = player ? player.name : 'The AI';
+  return {
+    x: best.x, y: best.y, distance: best.distance,
+    label: `${name} places the cochonnet at ${best.distance.toFixed(1)} m`,
+  };
+}
+
 function flatStub() {
   const mu = (C.rollResistPacked + C.rollResistLoose) / 2;
   const s = { h: 0, nx: 0, ny: 0, nz: 1, friction: mu, loose: 0.5 };

@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { mulberry32, gauss } from '../../assets/js/petanque/rng.js';
 import { createBody, launch, createWorld, simulate } from '../../assets/js/petanque/physics.js';
 import { createMatch, jackValid } from '../../assets/js/petanque/rules.js';
 import { LOFT_MIN, LOFT_MAX, styleForLoft, SKILL, energyFor } from '../../assets/js/petanque/donnee.js';
-import { chooseThrow, chooseThrowAsync, chooseJackThrow } from '../../assets/js/petanque/ai.js';
+import { chooseThrow, chooseThrowAsync, chooseJackThrow, chooseJackPlacement } from '../../assets/js/petanque/ai.js';
 
 // Flat packed terrain, no stones
 function flat() {
@@ -200,4 +201,33 @@ test('the AI never plans a throw beyond its energy budget', () => {
     const r = chooseJackThrow({ world: s.world, difficulty: 'medium', rand: mulberry32(3), player: s.match.players.find((p) => p.id === id), from });
     assert.ok(energyFor({ from: r.from, landing: r.donnee, loft: r.loft, skill: SKILL[id], terrain: s.world.terrain }) <= 1.005);
   }
+});
+
+test('chooseJackPlacement always returns a valid spot and varies with personality', () => {
+  const s = setup();
+  const byId = (id) => s.match.players.find((p) => p.id === id);
+  const dists = {};
+  for (const id of ['marcel', 'odette', 'pierre']) {
+    for (const difficulty of ['easy', 'medium', 'hard']) {
+      for (let i = 0; i < 12; i++) {
+        const terrain = createTerrain(i + 1);
+        const r = chooseJackPlacement({ match: s.match, player: byId(id), difficulty, rand: mulberry32(i), terrain });
+        assert.ok(jackValid({ x: r.x, y: r.y }), `${id} ${difficulty} ${i}: ${r.x},${r.y}`);
+        assert.ok(/places the cochonnet at \d+\.\d m/.test(r.label));
+        (dists[id] ||= []).push(r.distance);
+      }
+    }
+  }
+  const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+  assert.ok(mean(dists.odette) > mean(dists.marcel) + 0.8, `${mean(dists.odette)} vs ${mean(dists.marcel)}`);
+  // deterministic for the same rand, different for different rand on easy
+  const a = chooseJackPlacement({ match: s.match, player: byId('marcel'), difficulty: 'easy', rand: mulberry32(5), terrain: flat() });
+  const b = chooseJackPlacement({ match: s.match, player: byId('marcel'), difficulty: 'easy', rand: mulberry32(5), terrain: flat() });
+  assert.deepEqual(a, b);
+  const spots = new Set();
+  for (let i = 0; i < 10; i++) {
+    const r = chooseJackPlacement({ match: s.match, player: byId('marcel'), difficulty: 'easy', rand: mulberry32(i), terrain: flat() });
+    spots.add(`${r.x},${r.y}`);
+  }
+  assert.ok(spots.size >= 2);
 });

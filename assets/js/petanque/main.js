@@ -5,10 +5,10 @@ import { createTerrain } from './terrain.js';
 import { createWorld, createBody, launch } from './physics.js';
 import { createRenderer } from './render.js';
 import {
-  createMatch, defaultPlayers, apply, nextTeam, playersWithBoules, holdingTeam,
+  createMatch, defaultPlayers, apply, nextTeam, playersWithBoules, holdingTeam, jackValid, jackFault,
 } from './rules.js';
 import { createHud } from './hud.js';
-import { chooseThrowAsync, chooseJackThrow } from './ai.js';
+import { chooseThrowAsync, chooseJackThrow, chooseJackPlacement } from './ai.js';
 import { createTossInput } from './toss.js';
 import {
   SKILL, scaledSkill, coneFor, coneEnvelope, executeThrow, solveLaunch, predictRoll, styleForLoft, releaseFrom, snapAim, fitToBudget,
@@ -94,6 +94,7 @@ function boot() {
   let throwEvents = []; // physics events of the current throw (hits, for commentary)
   let preThrow = new Map(); // id -> { x, y } of boules before the current throw
   let pending = null; // { kind, playerId } while waiting for the human to throw
+  let dropping = null; // { token } while a placed jack settles after its drop
   let aimYaw = 0;
   let throwerYaw = 0; // yaw of whoever stands in the circle
   const throwRand = mulberry32(seed ^ 0x2545f491);
@@ -251,6 +252,12 @@ function boot() {
     },
     onThrow: (t) => humanToss(t),
     onCancel: () => clearToss(),
+    // placing an invalid jack by hand: marker preview, valid click places, invalid click gives a hint
+    placeValid: (p) => !!match && jackValid(p, match.geometry),
+    placeStart: { x: 2, y: 9 },
+    onPlacePreview: (m) => renderer.setPlaceMarker(m ? { x: m.point.x, y: m.point.y, valid: m.valid } : null),
+    onPlace: (p) => placeJack(p),
+    onPlaceInvalid: (p) => say2(`Not there: ${faultText(jackFault(p, match && match.geometry))} Pick a green spot 6 to 10 m out, 1 m inside the lines.`),
     targets: () => world.bodies.filter((b) => !b.dead).map((b) => ({ id: b.id, x: b.x, y: b.y, r: b.r })),
   });
 
@@ -560,6 +567,7 @@ function boot() {
     const thrower = (debug && match.players.find((p) => p.id === params.get('thrower') && p.team === team)) ||
       match.players.find((p) => p.team === team && (p.isHuman || team === 1)) ||
       match.players.find((p) => p.team === team);
+    if (debug && first && params.has('jackplace')) { forceInvalidJack(team); return; }
     const lead = first ? `${TEAM_NAMES[team]} won the toss. ` : '';
     refreshHud({ team, playerId: thrower.id, text: `${thrower.isHuman ? 'You' : thrower.name} throw${thrower.isHuman ? '' : 's'} the jack` });
     aimView();
@@ -906,6 +914,106 @@ function boot() {
     return out.filter(Boolean).join(' ');
   }
 
+  // ---- Invalid jack: the other team places it by hand ----
+  function faultText(f) {
+    if (!f) return '';
+    const d = f.dist.toFixed(1);
+    if (f.reason === 'short') return `Too short: ${d} m.`;
+    if (f.reason === 'far') return `Too far: ${d} m.`;
+    if (f.reason === 'line') return `Too close to a line (${d} m out).`;
+    return 'Out of bounds.';
+  }
+  // Wide view over the whole 6 to 10 m zone, with the legal-zone arcs
+  function placeView() {
+    renderer.showJackZone(true);
+    renderer.setCamera('head', { target: { x: 2, y: 8.6 }, points: [{ x: 0.6, y: 5.8 }, { x: 3.4, y: 11.6 }] });
+  }
+  function jackFailed(jack, note) {
+    const placing = match.placingTeam;
+    const why = faultText(jackFault(jack, match.geometry));
+    const aiPlaces = placing === 1 || !match.players.some((p) => p.team === placing && p.isHuman);
+    pending = null;
+    refreshHud({ team: placing, playerId: null, text: aiPlaces ? 'Placing the jack' : 'Place the jack' });
+    placeView();
+    if (aiPlaces) {
+      say2(`${why} ${TEAM_NAMES[placing]} place the cochonnet.`);
+      later(() => aiPlaceJack(why).catch((err) => console.error(err)), 1300);
+    } else {
+      say2(`${why} You and Pierre place the cochonnet: click a green spot between the yellow arcs (6 to 10 m out).`);
+      later(() => humanPlaceJack(), 1300);
+    }
+  }
+  function removeJack() {
+    const old = jackBody();
+    if (old) world.bodies.splice(world.bodies.indexOf(old), 1);
+    renderer.sync(world);
+  }
+  function humanPlaceJack() {
+    if (!match || match.phase !== 'jackPlace') return;
+    removeJack();
+    enableControls(false);
+    placeView();
+    toss.setPhase('place');
+    if (debug && params.has('px')) { // ?debug&px=2&py=8.5: show the marker without a pointer
+      const p = { x: +params.get('px'), y: +params.get('py') || 8.5 };
+      renderer.setPlaceMarker({ ...p, valid: jackValid(p, match.geometry) });
+    }
+  }
+  async function aiPlaceJack(why) {
+    const t = token;
+    if (!match || match.phase !== 'jackPlace') return;
+    const cands = match.players.filter((p) => p.team === match.placingTeam && !p.isHuman);
+    const placer = cands[Math.floor(chance() * cands.length)] || cands[0];
+    removeJack();
+    const spot = chooseJackPlacement({ match, player: placer, difficulty, rand: aiRand, terrain: world.terrain });
+    const quip = talk.say(placer.id, 'jackPlace');
+    say2(`${why} ${spot.label}.${quip ? ' ' + quip : ''}`);
+    if (!instant) {
+      placeView();
+      renderer.setPlaceMarker({ x: spot.x, y: spot.y, valid: true });
+    }
+    await sleep(debug && params.has('jphold') ? 1e8 : 2000); // ?debug&jackplace=ai&jphold keeps the marker up for screenshots
+    if (t !== token) return;
+    placeJack(spot);
+  }
+  // Apply the placement and drop the jack onto the ground; play starts once it has settled
+  function placeJack(spot) {
+    if (!match || match.phase !== 'jackPlace') return;
+    const next = apply(match, { type: 'jackPlaced', team: match.placingTeam, jack: spot });
+    if (next.phase !== 'play') return;
+    match = next;
+    removeJack();
+    renderer.setPlaceMarker(null);
+    renderer.showJackZone(false);
+    toss.setPhase('off');
+    const h = terrain.sample(spot.x, spot.y).h;
+    const body = createBody('jack', { team: -1, x: spot.x, y: spot.y, z: h + C.jack.r + (instant ? 0 : 0.1), state: instant ? 'resting' : 'airborne' });
+    world.add(body);
+    renderer.sync(world);
+    if (instant) { onDropped(true); return; }
+    dropping = { token };
+  }
+  function onDropped(fromInstant) {
+    if (!fromInstant && (!dropping || dropping.token !== token)) { dropping = null; return; }
+    dropping = null;
+    const j = jackBody();
+    if (!j || !match) return;
+    match = { ...match, jack: { x: j.x, y: j.y, dead: j.dead } };
+    headView(j);
+    const first = match.players.filter((p) => p.team === match.jackTeam && p.isHuman).length ? 'You and Pierre play' : `${TEAM_NAMES[match.jackTeam]} play`;
+    say2(`Jack placed at ${Math.hypot(j.x - C.circle.x, j.y - C.circle.y).toFixed(1)} m. ${first} first.`);
+    later(nextTurn, 1400);
+  }
+  // ?debug&jackplace[=ai]: skip the throw and fail the jack, so the placement shows at once
+  function forceInvalidJack(team) {
+    const spot = { x: +params.get('jx') || 2, y: +params.get('jy') || 5.2 };
+    removeJack();
+    world.add(createBody('jack', { team: -1, x: spot.x, y: spot.y }));
+    renderer.sync(world);
+    match = apply(match, { type: 'jackThrown', team, jack: spot });
+    jackFailed(spot, '');
+  }
+
   function onSettled() {
     const was = flying;
     flying = null;
@@ -922,10 +1030,8 @@ function boot() {
     if (was.kind === 'jack') {
       const team = match.jackTeam;
       match = apply(match, { type: 'jackThrown', team, jack: snap.jack });
-      if (match.phase === 'jack') { // invalid: the other team throws it
-        aimView();
-        say2(`${note} Not a legal jack (6 to 10 m, 1 m from the lines). ${TEAM_NAMES[match.jackTeam]} throw it.`);
-        later(() => beginMene(false), 1500);
+      if (match.phase === 'jackPlace') { // invalid: the other team places it
+        jackFailed(snap.jack, note);
         return;
       }
       headView(snap.jack);
@@ -1025,6 +1131,7 @@ function boot() {
     while (acc >= C.dt && n < MAX_STEPS) {
       world.step(); acc -= C.dt; n++;
       if (flying && world.settled()) onSettled();
+      else if (dropping && world.settled()) onDropped();
     }
     if (n === MAX_STEPS) acc = 0; // drop backlog rather than spiral
     if (world.events.length) {
@@ -1059,6 +1166,9 @@ function boot() {
   if (debug && params.has('autotest')) {
     // AI-only quick match, every throw simulated to rest instantly
     startGame({ target: +params.get('target') || 7, difficulty: 'medium', allAI: true, instant: !params.has('animate') }); // &animate: real time
+  } else if (debug && params.has('jackplace')) {
+    // ?debug&jackplace: Marcel's jack fails and you place it; ?debug&jackplace=ai: your jack fails and the AI places it
+    startGame({ target: 7, difficulty: 'medium', firstJackTeam: params.get('jackplace') === 'ai' ? 0 : 1 });
   } else if (debug && params.has('aispot')) {
     // Real-time game where Marcel throws the jack first: screenshot while he shows his spot
     startGame({ target: 7, difficulty: 'medium', firstJackTeam: 1 });

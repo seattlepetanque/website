@@ -50,7 +50,7 @@ export function specFor(id) {
 }
 
 // ---------- commentary pools ----------
-// Events: spotPoint, spotShoot, spotJack (as the AI picks its spot), good (takes or extends the point), great
+// Events: spotPoint, spotShoot, spotJack (as the AI picks its spot), jackPlace (as it places your invalid jack), good (takes or extends the point), great
 // (biberon), carreau, miss, dead (dead boule), oppScores (an opponent just took the point), ownScores (your
 // side took it), meneWon, meneLost, gameWon, gameLost, suggestPoint, suggestShoot, suggestYou (Pierre).
 // Templates: {target} 'the jack' or 'your boule'.
@@ -63,6 +63,10 @@ export const LINES = {
     spotShoot: [
       'Oh là là, must I? Fine, fine.', 'Odette usually does this. Today it is me.', 'A bold one, for an old man.',
       'Let us see if the arm remembers.', 'Pas de panique, just a little tap.',
+    ],
+    jackPlace: [
+      'Here, I think. A gentle spot for a gentle game.', 'Right here. The gravel is kind.', 'Not too far. Marcel does not like walking.',
+      'Voilà. Since 1974 I have known a good place.',
     ],
     spotJack: [
       'Voilà, the cochonnet. Somewhere over there.', 'Not too far, not too near.', 'Right, a nice one for everybody.',
@@ -119,6 +123,10 @@ export const LINES = {
       '{target}. Let us correct this.', 'A small lesson in accuracy.', 'I will take {target}, thank you.',
       'Watch closely. This is the proper way.', 'Straight at {target}. No fuss.',
     ],
+    jackPlace: [
+      'Here. Precisely here.', 'A correct distance. Measure it, if you doubt.', 'I place it where it belongs.',
+      'There. Try not to throw it out this time.',
+    ],
     spotJack: [
       'The cochonnet, within the lines, if you please.', 'Between the lines. Not complicated.', 'There. Exactly where it belongs.',
       'Eight metres, give or take. Precisely.',
@@ -173,6 +181,10 @@ export const LINES = {
     spotShoot: [
       '{target}? I will blast it!', 'Time to shoot! Everyone stand back!', 'Oh, I love this one. Allez!',
       'Bam! You will see, {target} is history.', 'Shoot first, ask questions later!',
+    ],
+    jackPlace: [
+      'Here! Nice and tricky for you.', 'Right there. Let us see you point that!', 'Perfect spot. For us, obviously.',
+      'Allez, here it is. No pressure!',
     ],
     spotJack: [
       'Right, a perfect cochonnet.', 'Over there, I think. Allez!', 'Easy. Watch this.', 'Here it goes, nice and clean.',

@@ -328,6 +328,37 @@ export function createRenderer(canvas, terrain) {
   scene.add(jackZone);
   function showJackZone(on) { jackZone.visible = !!on; }
 
+  // Placement marker for an invalid jack: a green ring on a valid spot, a red X on an invalid one
+  const placeMarker = new THREE.Group();
+  placeMarker.visible = false;
+  {
+    const mk = (color) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, depthTest: false, depthWrite: false, fog: false, side: THREE.DoubleSide });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.3, 40), mk('#3ddc5a'));
+    const dot = new THREE.Mesh(new THREE.CircleGeometry(0.05, 16), mk('#3ddc5a'));
+    const ok = new THREE.Group();
+    ok.add(ring, dot);
+    const bad = new THREE.Group();
+    for (const a of [Math.PI / 4, -Math.PI / 4]) {
+      const bar = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.1), mk('#ff3b30'));
+      bar.rotation.z = a;
+      bad.add(bar);
+    }
+    for (const g of [ok, bad]) g.traverse((o) => { o.renderOrder = 6; });
+    placeMarker.add(ok, bad);
+    placeMarker.userData = { ok, bad };
+  }
+  scene.add(placeMarker);
+  function setPlaceMarker(p) {
+    if (!p) { placeMarker.visible = false; return; }
+    const s = terrain.sample(p.x, p.y);
+    placeMarker.position.set(p.x, p.y, s.h + 0.02);
+    nrm.set(s.nx || 0, s.ny || 0, s.nz || 1).normalize();
+    placeMarker.quaternion.setFromUnitVectors(upZ, nrm);
+    placeMarker.userData.ok.visible = !!p.valid;
+    placeMarker.userData.bad.visible = !p.valid;
+    placeMarker.visible = true;
+  }
+
   // Measuring tape: lines from the jack to each measured boule, with cm labels
   const measure = new THREE.Group();
   scene.add(measure);
@@ -927,5 +958,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { sync, setCamera, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, clearMeasure, showJackZone, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  return { sync, setCamera, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, clearMeasure, showJackZone, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
 }

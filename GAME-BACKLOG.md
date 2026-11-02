@@ -261,6 +261,7 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 
 | ID | Status | Model | Deps | Title |
 |---|---|---|---|---|
+| D00 | done | sonnet | — | Invalid jack: the other team places it |
 | D01 | done | sonnet | — | Full-window game view; no page scrolling while playing |
 | D02 | done | sonnet | — | Throw energy limit: far lobs pulled closer, higher lobs less accurate |
 | D03 | todo | haiku | — | Hide the planned trajectory for AI players |
@@ -269,6 +270,14 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D06 | todo | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
 | D07 | todo | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
 | D08 | todo | sonnet | D01–D07 | Round 3 review |
+
+### D00 Invalid jack: the other team places it (sonnet)
+Current rule (FIPJP): if the jack throw is invalid (out of bounds, closer than 6 m, further than 10 m, or within 1 m of a line), the opposing team places the jack by hand anywhere valid. The team that threw the jack still plays the first boule. Replace the current hand-over (other team throws again):
+- **rules.js:** an invalid `jackThrown` moves to a new phase `'jackPlace'` with `placingTeam = 1 - event.team`, keeping `jackTeam = event.team`. A new event `{ type: 'jackPlaced', team, jack }` must come from `placingTeam` and be valid (otherwise it is ignored). It then moves to `'play'` with the jack set and `jackTeam` unchanged. Update tests.
+- **AI placing:** a pure helper in `ai.js`, `chooseJackPlacement({ match, player, difficulty, rand, terrain })`, picks a valid spot that suits its team: a distance and lateral position the placing team's pointeur likes, away from big rocks and slopes it can see on the perceived terrain, with a little randomness. Show a short line ("Odette places the cochonnet at 7.5 m"), then place it with a small drop animation.
+- **Human placing:** when it's team 0's turn to place, the human clicks or taps on the court. While hovering or dragging, draw a marker on the ground: a green circle where the spot is valid, a red X where it isn't, and the legal-zone arcs. A click or tap on a valid spot places the jack; on an invalid spot it does nothing except a short status hint. Keyboard: arrows move the marker, Enter places. Put the pointer handling in toss.js as a `'place'` phase (callbacks `onPlacePreview({ point, valid })`, `onPlace(point)`), or in a small new module, and the marker drawing in render.js (`setPlaceMarker({ x, y, valid } | null)`).
+- **Status line:** when the jack is invalid, explain why ("Too short: 5.2 m. Marcel & Odette place the cochonnet.").
+- Keep `?debug&autotest` working, and add `?debug&jackplace` that forces an invalid human-team jack so the human placement UI shows, plus `?debug&jackplace=ai` for the AI placing.
 
 ### D01 Full-window game view (sonnet)
 After the setup screen's Start, the game takes over the whole browser window: the canvas and all game UI (scoreboard, whose turn, chooser, buttons, status line, mène and game-over panels, toss readout) fit inside the viewport with no page scrolling, on desktop and on phones in portrait and landscape. Use a fixed full-viewport layer (or the Fullscreen API where available, with the fixed layer as fallback), `100dvh` sizing, and safe-area insets. Overlay the HUD on the canvas or lay it out compactly around it. Keep a clear way out: an Exit or Menu button and Esc go back to the normal page. The site header and footer stay hidden while playing. Respect `prefers-reduced-motion`. Check with screenshots at 1200×800, 1440×900, 390×844 and 844×390 that nothing scrolls and nothing is cut off.
@@ -296,6 +305,10 @@ A ball is out of bounds when, seen from above, the whole ball is outside the str
 ### D07 Measuring lines and scoring circle (sonnet)
 - **Between throws:** during the interstitial camera moves (after a throw settles and before the next aim), show measuring lines from the cochonnet to the closest boule of each team, labelled with distances. Use the team colours, and clear them when aiming starts.
 - **At mène end:** the camera shows a transparent filled circle on the ground, centred on the jack, just large enough to contain every scoring boule. Each scoring boule is numbered 1, 2, 3… in order of closeness. Show the opponent's best boule just outside the circle, unnumbered, for comparison. Fit the camera so the circle and numbers read clearly, and make sure the mène-end card doesn't cover them (move the card or shrink it).
+
+### D00 notes
+- Invalid jack → `'jackPlace'` (rules.js `jackFault()` gives the reason); the other team places it on a wide overhead view with the 6/10 m arcs; green ring = valid, red X = invalid; AI shows its marker ~2 s with a personality line; the jack drops 10 cm and play resumes with the original thrower's team. Debug: `?debug&jackplace`, `?debug&jackplace=ai`, `&jx/&jy`, `&px/&py`, `&jphold`.
+- Not seen in a browser: the drop and the hand-back to play (physics test says it settles in ~1 s and moves < 2.5 cm). A rock under the chosen spot could nudge the jack on the drop.
 
 ### D01 notes
 - Start/Resume enters a fixed full-viewport layer (plus requestFullscreen where allowed); Exit or Esc returns to the page with a "Game paused" bar (Resume / New game). Debug sliders and "Throw (raw)" removed at the user's request; `?debug&play` enters the layer for screenshots; the sounds audition panel is a collapsible drawer.

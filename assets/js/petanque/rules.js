@@ -35,7 +35,8 @@ export function createMatch({ target = 13, players, geometry, firstJackTeam = 0 
     jackTeam: firstJackTeam, // team that throws (or must throw) the jack
     lastThrower: null, // team of the last boule thrown this mène
     inFlight: null, // playerId whose boule is being simulated
-    phase: 'jack', // 'jack' | 'play' | 'meneEnd' | 'gameOver'
+    phase: 'jack', // 'jack' | 'jackPlace' | 'play' | 'meneEnd' | 'gameOver'
+    placingTeam: null, // team that places the jack by hand after an invalid throw (phase 'jackPlace')
     jack: null,
     boules: [],
     result: null, // last mène result: { team, points, void, ... }
@@ -95,6 +96,17 @@ export function meneResult(jack, boules) {
   return { team: win.team, points, measured: measured.map(({ id, dist }) => ({ id, dist })) };
 }
 
+// Why a jack is not legal: { reason: 'out'|'short'|'far'|'line', dist } or null when it is valid.
+export function jackFault(jack, geometry = DEFAULT_GEOMETRY) {
+  const g = { ...DEFAULT_GEOMETRY, ...geometry };
+  if (jackValid(jack, g)) return null;
+  if (!jack || jack.dead) return { reason: 'out', dist: jack ? dist(jack, g.circle) : 0 };
+  const d = dist(jack, g.circle);
+  if (d < g.jackMin - EPS) return { reason: 'short', dist: d };
+  if (d > g.jackMax + EPS) return { reason: 'far', dist: d };
+  return { reason: 'line', dist: d };
+}
+
 // Which team throws next: 0 | 1, or null when not in play or nobody has boules.
 export function nextTeam(match) {
   if (match.phase !== 'play') return null;
@@ -139,10 +151,16 @@ export function apply(match, event) {
       if (match.phase !== 'jack') return match;
       const jack = { x: event.jack.x, y: event.jack.y, dead: !!event.jack.dead };
       if (!jackValid(jack, match.geometry)) {
-        // Invalid: the other team throws the jack next.
-        return { ...match, jackTeam: 1 - event.team, jack: null };
+        // Invalid: the other team places the jack by hand; the thrower's team still plays first.
+        return { ...match, phase: 'jackPlace', jackTeam: event.team, placingTeam: 1 - event.team, jack: null };
       }
-      return { ...match, phase: 'play', jackTeam: event.team, jack, boules: [], lastThrower: null };
+      return { ...match, phase: 'play', jackTeam: event.team, placingTeam: null, jack, boules: [], lastThrower: null };
+    }
+    case 'jackPlaced': {
+      if (match.phase !== 'jackPlace' || event.team !== match.placingTeam) return match;
+      const jack = { x: event.jack.x, y: event.jack.y, dead: false };
+      if (!jackValid(jack, match.geometry)) return match;
+      return { ...match, phase: 'play', placingTeam: null, jack, boules: [], lastThrower: null };
     }
     case 'bouleThrown': {
       if (match.phase !== 'play') return match;
@@ -174,6 +192,7 @@ export function apply(match, event) {
         lastThrower: null,
         inFlight: null,
         phase: 'jack',
+        placingTeam: null,
         jack: null,
         boules: [],
         result: null,
