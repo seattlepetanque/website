@@ -269,7 +269,7 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D05 | done | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
 | D06 | done | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
 | D07 | done | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
-| D08 | todo | sonnet | D01–D07, D09–D19 | Round 3 review |
+| D08 | todo | sonnet | D01–D07, D09–D20 | Round 3 review |
 | D09 | todo | sonnet | — | Flight camera follows every moving object, the cochonnet first when it moves fast |
 | D10 | done | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
 | D11 | todo | sonnet | D10 | Players fetch dead balls and walk the cochonnet to its spot |
@@ -281,6 +281,7 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D17 | done | haiku | — | Bright orange cochonnet; arrow only while the human aims, fading after the throw |
 | D18 | done | haiku | — | No target marking for AI throws (boules or cochonnet) |
 | D19 | in-progress | haiku | — | Roll guide over-predicts low throws (same perceived-terrain bias D16 fixed for the AI) |
+| D20 | todo | haiku | D13 | Centre the "who throws" choice on screen |
 
 ### D00 Invalid jack: the other team places it (sonnet)
 Current rule (FIPJP): if the jack throw is invalid (out of bounds, closer than 6 m, further than 10 m, or within 1 m of a line), the opposing team places the jack by hand anywhere valid. The team that threw the jack still plays the first boule. Replace the current hand-over (other team throws again):
@@ -452,6 +453,9 @@ D03 hid the AI's arc and cone but kept a small donnée ring on the ground. Remov
 
 ### D19 Roll guide over-predicts low throws (haiku)
 The human's roll guide (`predictRoll` in donnee.js) simulates on `terrain.perceived()`, which has no ground jitter, so it over-predicts how far roulettes and low demi-portées roll. This is the bias D16 found for the AI. Apply the same low-loft roughness allowance D16 added in ai.js (`roughness()` / `AI.roughK`; move the helper into donnee.js so both share it) to `predictRoll`. Test that the predicted rest for 14° and 30° throws on seeded gravel matches the mean real rest within ~0.3 m, and leave plombée unchanged.
+
+### D20 Centre the "who throws" choice (haiku)
+The You throw / Pierre throws choice is a critical decision, but in the full-window layout it sits in the bottom-left strip. Make it a centred card over the court: a short heading ("Your team to play"), Pierre's suggestion (D13 adds who he thinks should throw), and two large buttons, "You throw" and "Pierre throws", with the suggested one visually marked (e.g. a "Pierre suggests" tag), not pre-selected. Focus moves to the card for keyboard users; Enter or Space activates and arrow keys switch. Keep the court visible behind it with a translucent backdrop. It must fit on phones in portrait and landscape. The card closes as soon as a choice is made. Remove the old strip version. Depends on D13 because D13 changes the suggestion text in `hud.js`.
 
 ### D08 Round 3 review (sonnet)
 Run `npm test`, the build check and the full-match test, take screenshots on desktop and phone, review the code for bugs, and add a "Round 3 remaining issues" list at the end of this file.
