@@ -269,13 +269,14 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D05 | done | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
 | D06 | done | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
 | D07 | todo | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
-| D08 | todo | sonnet | D01–D07, D09–D14 | Round 3 review |
+| D08 | todo | sonnet | D01–D07, D09–D15 | Round 3 review |
 | D09 | todo | sonnet | — | Flight camera follows every moving object, the cochonnet first when it moves fast |
 | D10 | done | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
 | D11 | todo | sonnet | D10 | Players fetch dead balls and walk the cochonnet to its spot |
 | D12 | todo | sonnet | — | Paused game: frozen, sepia, UI inert, free orbit camera |
 | D13 | todo | sonnet | — | AI tactics system: design first, then implement |
 | D14 | todo | sonnet | — | Placed cochonnet: legal region runs out to the strings; settle the ground under it |
+| D15 | todo | sonnet | — | Surroundings: grass, nearby trees, Seattle skyline with Mount Rainier and the Space Needle |
 
 ### D00 Invalid jack: the other team places it (sonnet)
 Current rule (FIPJP): if the jack throw is invalid (out of bounds, closer than 6 m, further than 10 m, or within 1 m of a line), the opposing team places the jack by hand anywhere valid. The team that threw the jack still plays the first boule. Replace the current hand-over (other team throws again):
@@ -396,6 +397,14 @@ After a bad initial throw, the placing team may put the cochonnet anywhere 6–1
 - **AI placement:** `chooseJackPlacement` may use the full width, but keeps its personality preferences.
 - **Physics near the edge:** a jack placed near a string must stay exactly where it was put, not glance off a pebble or roll on a slope out of bounds. When placing, settle the ground locally: remove stones within ~0.15 m of the spot, and flatten the height field in a small radius (a gentle local "pad" blended into the surroundings, recorded like a divot so it resets each mène). Then set the jack at rest directly, without the drop bounce, or keep the drop and guarantee no lateral motion. Test that a jack placed 1 cm inside a string on a steep seeded terrain stays put and stays live.
 - `?debug&jackplace` should show the full-width zone.
+
+### D15 Surroundings: grass, trees, Seattle skyline (sonnet)
+Give the court a Seattle park setting.
+- **Grass:** replace the dark earth beyond the timbers with grass. Use a procedural grass texture (varied greens, a little noise and clover patches) on the ground out to the horizon, plus a band of instanced grass tufts or blades close to the timbers for depth. Keep it cheap: instanced, with few triangles, and fewer tufts on phones. Leave a strip of worn, bare earth right next to the timbers where people walk. The grass is visual only; the physics outside the timbers stays as D10 set it.
+- **Trees:** a few trees nearby (e.g. 4–8, set back 4–15 m from the court, not blocking the shoulder or head views). Mix Pacific Northwest conifers (Douglas fir, western red cedar shapes) with one or two broadleaf trees (bigleaf maple). Low-poly and stylised to match the stick figures, built procedurally in code (cones, icosahedra, simple trunks) with gentle colour variation. They cast soft shadows; optionally add a slight sway.
+- **Sky and skyline:** a sky background (a large cylinder or sphere, or `scene.background` with an equirectangular canvas texture) painted procedurally on a canvas at runtime. It has a soft Pacific Northwest sky gradient with light clouds, Mount Rainier (a broad, snow-capped stratovolcano silhouette, hazy with distance) and a Seattle skyline with a recognisable Space Needle silhouette (the saucer top on a tapering waisted tower) among generic downtown towers. Place them in the direction the shoulder camera usually faces (down the court), so Rainier and the Needle show in the background of normal play. Don't use photos or third-party images, so there are no licensing questions. Match the haze and fog colour to the sky, and the sun direction to the existing shadows. Make sure the skyline reads at phone resolution.
+- **Performance:** keep the frame rate on phones (pixel ratio ≤ 2), use texture sizes around 2048×512 for the panorama, and don't add per-frame cost beyond the instanced grass.
+- Check with screenshots from the shoulder view (Rainier and the Needle visible beyond the court), the head view, and a phone portrait view.
 
 ### D08 Round 3 review (sonnet)
 Run `npm test`, the build check and the full-match test, take screenshots on desktop and phone, review the code for bugs, and add a "Round 3 remaining issues" list at the end of this file.
