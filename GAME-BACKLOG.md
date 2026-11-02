@@ -266,12 +266,12 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D02 | done | sonnet | — | Throw energy limit: far lobs pulled closer, higher lobs less accurate |
 | D03 | done | haiku | — | Hide the planned trajectory for AI players |
 | D04 | todo | sonnet | — | Make the cochonnet easy to see |
-| D05 | todo | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
+| D05 | done | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
 | D06 | done | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
 | D07 | todo | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
 | D08 | todo | sonnet | D01–D07, D09–D11 | Round 3 review |
 | D09 | todo | sonnet | — | Flight camera follows every moving object, the cochonnet first when it moves fast |
-| D10 | todo | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
+| D10 | in-progress | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
 | D11 | todo | sonnet | D10 | Players fetch dead balls and walk the cochonnet to its spot |
 
 ### D00 Invalid jack: the other team places it (sonnet)

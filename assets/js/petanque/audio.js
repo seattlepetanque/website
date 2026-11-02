@@ -6,7 +6,7 @@
 //   // once per frame:
 //   const byId = new Map(world.bodies.map((b) => [b.id, b]));
 //   audio.handleEvents(world.events, byId);        // impacts (events may be empty)
-//   audio.update(byId);                            // rolling/scrape loops follow body speeds
+//   audio.update(byId, dt);                        // schedules rolling pebble ticks from body speeds
 //
 // unlock() must run inside a user gesture. Before that, when muted, or without Web Audio,
 // everything is a silent no-op and never throws. Mute is stored in localStorage ('petanque-muted').
@@ -18,7 +18,10 @@
 //   jackHit   light wooden tick (louder with speed)
 //   click     boule-boule, a lower billiard-ball knock: dry band-passed noise ~1.5 kHz + low-passed
 //             noise body, faint very short tone. Direct hits louder and lower; grazes quieter, higher.
-//   roll      per rolling body: barely audible band-passed noise + crackle, gain follows speed
+//   roll      per rolling body: very faint, sparse, dry pebble ticks (1-3 ms band-passed noise bursts,
+//             random centre 1.5-4 kHz, 2-6 ms decay, some duller gravel ticks, rare 2-3 tick clatter).
+//             Poisson-ish scheduling on AudioContext time; rate and level follow speed. No noise floor.
+//   stone     one slightly louder pebble tick when the physics reports a stone contact
 
 // All tuning numbers live here. Gains are linear (0..1 before the compressor).
 export const SOUND = {
@@ -67,17 +70,29 @@ export const SOUND = {
     gainGraze: 0.45, gainDirect: 1, // level factor, graze to head-on
   },
   carreauAccent: 0.5, // extra click level for accent('carreau')
-  roll: {
+  roll: { // rolling = sparse pebble ticks, scheduled per rolling body (no continuous noise)
     minSpeed: 0.05, // m/s: silent below this
-    fullSpeed: 3, // m/s at which scrape reaches full gain
-    gain: 0.003, // boule scrape level: barely audible
-    freq: 1700, q: 0.9, // band-pass centre/Q for boule
-    modDepth: 0.35, // slow random modulation of centre freq (fraction)
-    modRate: 1.5, // modulation speed (higher = more restless)
-    crackleGain: 0.1, // relative level of the crackle (pebble clicks) layer
-    curve: 1.6, // >1 keeps slow rolls near silent
-    jackGain: 0.35, jackFreq: 4200, // jack: much lighter and higher
-    fade: 0.06, // s: gain smoothing time constant (no clicks)
+    fullSpeed: 3, // m/s at which rate and level reach their maximum
+    fadeSpeed: 0.3, // m/s above minSpeed over which rate/level fade in: slow rolls = a few ticks, then silence
+    rateMin: 3, rateMax: 30, // ticks per second per body: slow roll .. fast roll (Poisson-ish, random gaps)
+    rateCurve: 1.5, // >1 keeps mid speeds sparse
+    lookahead: 0.07, // s: ticks are scheduled this far ahead of the audio clock inside each update()
+    maxPerSec: 120, // cap on ticks per second across all bodies (clatter ticks count too)
+    gain: 0.035, // level of a fast boule tick (compare: soft landing thud peaks ~0.3)
+    levelMin: 0.35, // level factor at the slowest roll (rising to 1 at fullSpeed)
+    levelSpread: [0.3, 1], // random per-tick level factor
+    freqLo: 1500, freqHi: 4000, q: [0.7, 1.2], // Hz band-pass centre range and Q (low = soft, dry)
+    burst: [0.001, 0.003], // s: noise burst length
+    attack: 0.0005, // s: soft onset
+    decay: [0.002, 0.006], // s: fast decay (dry, no ringing)
+    dullChance: 0.25, // fraction of boule ticks that are lower and duller (gravel grinding)
+    dullFreqLo: 450, dullFreqHi: 1100, dullDecay: [0.005, 0.01], dullGain: 1.3,
+    clatterChance: 0.12, // chance a tick becomes a pair/triple (small pebble clatter)
+    clatterGap: [0.004, 0.02], clatterFall: 0.65, // s between ticks; level factor per extra tick
+    jackFreqLo: 3000, jackFreqHi: 6000, jackGain: 0.5, jackRate: 0.8, // jack: higher, lighter, quieter, a bit sparser
+    deadGain: 0.7, // level factor for dead/ghost balls rolling outside the court
+    stoneGain: 2.5, // stone event tick: level factor over a normal tick, also scaled by speed
+    stoneSpeed: 3, // m/s of a stone contact that gives the full stone tick level
   },
 };
 
@@ -114,30 +129,16 @@ export function createAudio(opts = {}) {
   let ctx = null;
   let master = null; // gain -> limiter -> destination; sounds connect here
   let white = null; // shared 2 s white noise
-  let grain = null; // shared 1 s sparse crackle (tiny pebble clicks)
   let voices = 0;
+  let tickWin = 0, tickCount = 0; // ticks scheduled in the current 1 s window (cap)
   let frame = 0;
-  const rolls = new Map(); // key -> rolling voice
+  const rolls = new Map(); // key -> rolling tick scheduler { next, seen, silent }
   const buttons = new Set();
 
   function makeWhite(c) {
     const buf = c.createBuffer(1, c.sampleRate * 2, c.sampleRate);
     const d = buf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-    return buf;
-  }
-
-  // Sparse random clicks: each is a ~1 ms noise burst with decaying amplitude.
-  function makeGrain(c) {
-    const buf = c.createBuffer(1, c.sampleRate, c.sampleRate);
-    const d = buf.getChannelData(0);
-    const burst = Math.round(c.sampleRate * 0.0012);
-    for (let i = 0; i < d.length - burst; i++) {
-      if (Math.random() < 90 / c.sampleRate) {
-        const a = 0.3 + Math.random() * 0.7;
-        for (let k = 0; k < burst; k++) d[i + k] += (Math.random() * 2 - 1) * a * (1 - k / burst);
-      }
-    }
     return buf;
   }
 
@@ -151,7 +152,6 @@ export function createAudio(opts = {}) {
     lim.attack.value = L.attack; lim.release.value = L.release;
     master.connect(lim).connect(ctx.destination);
     white = makeWhite(ctx);
-    grain = makeGrain(ctx);
   }
 
   // Create the AudioContext on first call. Safe to call again.
@@ -294,70 +294,81 @@ export function createAudio(opts = {}) {
 
   // ---------- rolling / scraping ----------
 
-  function startRoll(key, kind) {
+  // One dry pebble tick: tiny band-passed noise burst, soft attack, very fast decay.
+  // kind: 'boule' | 'jack'. Returns false when the per-second cap is reached.
+  function pebble(t, kind, level, dullChance) {
     const R = SOUND.roll;
+    if (t >= tickWin + 1 || t < tickWin) { tickWin = t; tickCount = 0; }
+    if (tickCount >= R.maxPerSec) return false;
+    tickCount++;
     const jack = kind === 'jack';
-    const t = ctx.currentTime;
-    const src = ctx.createBufferSource();
-    src.buffer = white; src.loop = true;
-    const bp = filt('bandpass', jack ? R.jackFreq : R.freq, R.q);
-    const gs = ctx.createGain(); gs.gain.value = 1;
-    src.connect(bp).connect(gs);
-    const cr = ctx.createBufferSource();
-    cr.buffer = grain; cr.loop = true;
-    const crf = filt('bandpass', jack ? 5000 : 3000, 0.8);
-    const cg = ctx.createGain(); cg.gain.value = R.crackleGain * 3;
-    cr.connect(crf).connect(cg).connect(gs);
-    const out = ctx.createGain(); out.gain.value = 0;
-    gs.connect(out).connect(master);
-    src.start(t, Math.random() * 1.5);
-    cr.start(t, Math.random() * 0.8);
-    const v = { src, cr, bp, crf, out, jack, seen: frame, mod: Math.random() * 10, modTarget: 0, modVal: 0, silent: 0 };
-    rolls.set(key, v);
-    return v;
+    const dull = !jack && Math.random() < dullChance;
+    const f = dull ? rnd(R.dullFreqLo, R.dullFreqHi) : jack ? rnd(R.jackFreqLo, R.jackFreqHi) : rnd(R.freqLo, R.freqHi);
+    const decay = dull ? rnd(...R.dullDecay) : rnd(...R.decay);
+    const gain = R.gain * level * (jack ? R.jackGain : dull ? R.dullGain : 1) * rnd(...R.levelSpread);
+    const src = noiseSrc(t, rnd(...R.burst));
+    src.connect(filt('bandpass', f, rnd(...R.q))).connect(envGain(t, gain, decay, R.attack)).connect(master);
+    return true;
+  }
+
+  // A tick, sometimes a pair or triple of quick, fading ticks (little clatter).
+  function pebbleGroup(t, kind, level, clatterChance = SOUND.roll.clatterChance) {
+    const R = SOUND.roll;
+    if (!pebble(t, kind, level, R.dullChance)) return;
+    if (Math.random() < clatterChance) {
+      const n = Math.random() < 0.3 ? 2 : 1;
+      let gt = t, lv = level;
+      for (let i = 0; i < n; i++) {
+        gt += rnd(...R.clatterGap); lv *= R.clatterFall;
+        if (!pebble(gt, kind, lv, R.dullChance)) break;
+      }
+    }
+  }
+
+  // Poisson-ish gap to the next tick for a given rate (ticks/s).
+  const gapFor = (rate) => Math.min(0.6, Math.max(0.002, -Math.log(1 - Math.random()) / Math.max(rate, 0.5)));
+
+  // Rate (ticks/s) and level factor for a horizontal speed, 0 below minSpeed.
+  function rollParams(kind, speed) {
+    const R = SOUND.roll;
+    if (!(speed >= R.minSpeed)) return null;
+    const f = clamp01((speed - R.minSpeed) / (R.fullSpeed - R.minSpeed));
+    const fade = clamp01((speed - R.minSpeed) / R.fadeSpeed);
+    const rate = (R.rateMin + (R.rateMax - R.rateMin) * Math.pow(f, R.rateCurve)) * fade * (kind === 'jack' ? R.jackRate : 1);
+    const level = (R.levelMin + (1 - R.levelMin) * f) * (0.4 + 0.6 * fade);
+    return { rate, level };
   }
 
   function stopRoll(key) {
-    const v = rolls.get(key);
-    if (!v) return;
     rolls.delete(key);
-    try {
-      const t = ctx.currentTime;
-      v.out.gain.cancelScheduledValues(t);
-      v.out.gain.setTargetAtTime(0, t, 0.04);
-      v.src.stop(t + 0.3);
-      v.cr.stop(t + 0.3);
-    } catch (e) { /* already stopped */ }
   }
 
-  // Drive one rolling voice from a horizontal speed (m/s).
-  function rollTick(key, kind, speed, dt = 1 / 60) {
+  // Drive one rolling body from its horizontal speed (m/s): schedule ticks inside the lookahead window.
+  function rollTick(key, kind, speed, dt = 1 / 60, gainMul = 1) {
     const R = SOUND.roll;
     let v = rolls.get(key);
-    if (speed < R.minSpeed) {
+    const p = rollParams(kind, speed);
+    if (!p) {
       if (v) {
         v.seen = frame;
-        v.out.gain.setTargetAtTime(0, ctx.currentTime, R.fade);
         if ((v.silent += dt) > 0.4) stopRoll(key);
       }
       return;
     }
+    const now = ctx.currentTime;
     if (!v) {
       if (rolls.size >= SOUND.maxRolling) return;
-      v = startRoll(key, kind);
+      v = { next: now + gapFor(p.rate) * Math.random(), seen: frame, silent: 0 };
+      rolls.set(key, v);
     }
     v.seen = frame; v.silent = 0;
-    const t = ctx.currentTime;
-    // fade in above the threshold, full at fullSpeed
-    const lvl = Math.pow(clamp01((speed - R.minSpeed) / (R.fullSpeed - R.minSpeed)), R.curve);
-    v.out.gain.setTargetAtTime((v.jack ? R.jackGain : 1) * R.gain * lvl, t, R.fade);
-    // slow random modulation of filter centre: random walk toward a drifting target
-    if (Math.random() < dt * R.modRate) v.modTarget = rnd(-1, 1);
-    v.modVal += (v.modTarget - v.modVal) * Math.min(1, dt * 4);
-    const base = v.jack ? R.jackFreq : R.freq;
-    const f = base * (0.8 + 0.4 * lvl) * (1 + R.modDepth * v.modVal);
-    v.bp.frequency.setTargetAtTime(f, t, 0.05);
-    v.crf.frequency.setTargetAtTime(f * 1.8, t, 0.05);
+    if (v.next < now) v.next = now + gapFor(p.rate) * Math.random(); // fell behind (tab hidden, long frame)
+    const horizon = now + R.lookahead;
+    let guard = 12;
+    while (v.next < horizon && guard-- > 0) {
+      pebbleGroup(v.next, kind === 'jack' ? 'jack' : 'boule', p.level * gainMul);
+      v.next += gapFor(p.rate);
+    }
   }
 
   // Call once per frame. Starts, drives and stops rolling voices for grounded moving bodies.
@@ -371,8 +382,8 @@ export function createAudio(opts = {}) {
     try {
       const list = bodiesById instanceof Map ? bodiesById.values() : Object.values(bodiesById || {});
       for (const b of list) {
-        if (!b || b.dead || b.state !== 'rolling') continue;
-        rollTick(b.id, b.kind, Math.hypot(b.vx, b.vy), dt || 1 / 60);
+        if (!b || b.state !== 'rolling') continue; // dead/ghost balls still roll: a little quieter
+        rollTick(b.id, b.kind, Math.hypot(b.vx, b.vy), dt || 1 / 60, b.dead || b.ghost ? SOUND.roll.deadGain : 1);
       }
       for (const [k, v] of [...rolls]) {
         if (!String(k).startsWith('aud:') && v.seen !== frame) stopRoll(k); // stopped rolling, airborne or removed
@@ -409,7 +420,9 @@ export function createAudio(opts = {}) {
           if (a && a.kind === 'jack') jackLand(t, ev.speed);
           else land(t, ev.speed);
         } else if (ev.type === 'stone') {
-          tick(t, ev.speed * 0.4); // pebble knocked up: tiny click
+          const a = bodyOf(bodiesById, ev.a); // real pebble contact: one slightly louder tick, still quiet
+          const R = SOUND.roll;
+          pebble(t, a && a.kind === 'jack' ? 'jack' : 'boule', R.stoneGain * (0.4 + 0.6 * clamp01(ev.speed / R.stoneSpeed)), R.dullChance);
         }
       }
     } catch (e) {
