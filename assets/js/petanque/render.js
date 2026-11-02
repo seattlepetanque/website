@@ -344,14 +344,72 @@ export function createRenderer(canvas, terrain) {
       e.mesh.position.set(b.x, b.y, b.z);
       if (e.ring) e.ring.position.set(b.x, b.y, terrain.sample(b.x, b.y).h + 0.004);
       e.mesh.visible = true; // dead bodies stay visible at their spot beyond the far line, greyed
-      e.mesh.material = b.dead ? (b.kind === 'jack' ? deadJackMat : deadBouleMat) : (b.kind === 'jack' ? jackMat : bouleMats[b.team ? 1 : 0]);
+      e.mesh.material = b.dead ? (b.kind === 'jack' ? deadJackMat : deadBouleMat) : (b.kind === 'jack' ? (jv.c ? jackBright : jackMat) : bouleMats[b.team ? 1 : 0]);
+      if (b.kind === 'jack') jackLive = e;
     }
     for (const [id, e] of meshes) {
       if (seen.has(id)) continue;
       scene.remove(e.mesh);
       if (e.ring) scene.remove(e.ring);
+      if (e === jackLive) jackLive = null;
       meshes.delete(id);
     }
+  }
+
+  // Jack finder: at 6-10 m the jack is a few pixels, so a bobbing chevron (constant screen size) floats over it,
+  // and a soft ground halo shows in the head view. ?debug&jackvis=a|b|c|ab|ac|bc|abc|none compares the options.
+  const jackVisParam = (() => {
+    try { const q = new URLSearchParams(location.search); return q.has('debug') ? q.get('jackvis') : null; } catch (e) { return null; }
+  })();
+  const jv = jackVisParam === null ? { a: true, b: false, c: true, headRing: true }
+    : { a: jackVisParam.includes('a'), b: jackVisParam.includes('b'), c: jackVisParam.includes('c'), headRing: false };
+  const jackBright = new THREE.MeshStandardMaterial({ color: '#ffc02e', metalness: 0, roughness: 0.4, emissive: '#ff9a10', emissiveIntensity: 0.75 });
+  const jackChevron = (() => {
+    const cv = makeCanvas(64, 96), g = cv.getContext('2d');
+    g.lineJoin = 'round';
+    g.beginPath(); g.moveTo(32, 90); g.lineTo(6, 44); g.lineTo(20, 44); g.lineTo(20, 8); g.lineTo(44, 8); g.lineTo(44, 44); g.lineTo(58, 44); g.closePath(); // down arrow
+    g.lineWidth = 9; g.strokeStyle = '#241608'; g.stroke();
+    g.fillStyle = '#ffd84a'; g.fill();
+    const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+    const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false, depthWrite: false, fog: false, sizeAttenuation: false }));
+    spr.center.set(0.5, 0); spr.scale.set(0.026, 0.039, 1); spr.renderOrder = 20; spr.visible = false; spr.frustumCulled = false;
+    scene.add(spr);
+    return spr;
+  })();
+  const jackHalo = (() => {
+    const cv = makeCanvas(128, 128), g = cv.getContext('2d');
+    const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    gr.addColorStop(0, 'rgba(255,241,194,0)'); gr.addColorStop(0.5, 'rgba(255,241,194,0)');
+    gr.addColorStop(0.68, 'rgba(255,241,194,0.95)'); gr.addColorStop(0.82, 'rgba(255,241,194,0.35)'); gr.addColorStop(1, 'rgba(255,241,194,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+    const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, fog: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
+    m.renderOrder = 10; m.visible = false;
+    scene.add(m);
+    return m;
+  })();
+  let jackLive = null, jackT = 0;
+  function updateJackMark(dt) {
+    jackT += dt;
+    const e = jackLive, on = e && !e.body.dead && mode !== 'inspect' && !measure.children.length && !placeMarker.visible;
+    if (!on) { jackChevron.visible = false; jackHalo.visible = false; return; }
+    const p = e.mesh.position, dist = camera.position.distanceTo(p);
+    const k = Math.max(0, Math.min(1, (dist - 1.5) / 1.5)); // fade out inside ~1.5 m, fully on by 3 m
+    const ndcH = dist * Math.tan(camera.fov * Math.PI / 360); // metres per unit of NDC height at the jack
+    if (jv.a && k > 0) {
+      const bob = reduce() ? 0 : 0.5 + 0.5 * Math.sin(jackT * 4.5);
+      jackChevron.position.set(p.x, p.y, p.z + e.body.r + ndcH * (0.03 + 0.03 * bob));
+      jackChevron.material.opacity = k;
+      jackChevron.visible = true;
+    } else jackChevron.visible = false;
+    const kh = Math.max(0, Math.min(1, (dist - 0.9) / 0.8)); // the halo is a ground mark, so it can stay closer in
+    if ((jv.b || (jv.headRing && mode === 'head')) && kh > 0) {
+      const gz = terrain.sample(p.x, p.y).h + 0.012;
+      jackHalo.position.set(p.x, p.y, gz);
+      jackHalo.scale.setScalar(Math.max(0.2, ndcH * 0.07));
+      jackHalo.material.opacity = kh * 0.9;
+      jackHalo.visible = true;
+    } else jackHalo.visible = false;
   }
 
   // Divot decals: a pool of soft dark discs just above the ground, reused in a ring
@@ -1010,6 +1068,7 @@ export function createRenderer(canvas, terrain) {
     }
     updateCamera(dt);
     updatePreview();
+    updateJackMark(dt);
     renderer.render(scene, camera);
   }
 

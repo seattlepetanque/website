@@ -265,7 +265,7 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D01 | done | sonnet | — | Full-window game view; no page scrolling while playing |
 | D02 | done | sonnet | — | Throw energy limit: far lobs pulled closer, higher lobs less accurate |
 | D03 | done | haiku | — | Hide the planned trajectory for AI players |
-| D04 | in-progress | sonnet | — | Make the cochonnet easy to see |
+| D04 | done | sonnet | — | Make the cochonnet easy to see |
 | D05 | done | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
 | D06 | done | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
 | D07 | todo | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
