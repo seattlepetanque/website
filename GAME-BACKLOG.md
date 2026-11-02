@@ -269,11 +269,12 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D05 | done | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
 | D06 | done | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
 | D07 | todo | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
-| D08 | todo | sonnet | D01–D07, D09–D12 | Round 3 review |
+| D08 | todo | sonnet | D01–D07, D09–D13 | Round 3 review |
 | D09 | todo | sonnet | — | Flight camera follows every moving object, the cochonnet first when it moves fast |
 | D10 | in-progress | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
 | D11 | todo | sonnet | D10 | Players fetch dead balls and walk the cochonnet to its spot |
 | D12 | todo | sonnet | — | Paused game: frozen, sepia, UI inert, free orbit camera |
+| D13 | todo | sonnet | — | AI tactics system: design first, then implement |
 
 ### D00 Invalid jack: the other team places it (sonnet)
 Current rule (FIPJP): if the jack throw is invalid (out of bounds, closer than 6 m, further than 10 m, or within 1 m of a line), the opposing team places the jack by hand anywhere valid. The team that threw the jack still plays the first boule. Replace the current hand-over (other team throws again):
@@ -360,6 +361,25 @@ When the game is paused (Exit in the game, or Esc, per D01):
 - **Free camera:** any drag on the scene orbits the camera around a point on the ground (the point under the screen centre when the pause began, or the jack). The wheel or a pinch zooms toward that point. Clamp it to stay above the ground and within a sensible distance. On Resume the camera eases back to where it was before the pause.
 - Respect `prefers-reduced-motion` (no animated sepia fade). Check that the paused game shown on the normal page (not full window) still looks right.
 - Add `?debug&paused` to enter the paused state for screenshots. Tests for the pause clock: timers don't fire while paused, and fire with the remaining delay after resume.
+
+### D13 AI tactics system (sonnet)
+Today the AI picks a throw by Monte Carlo over candidates, scoring each end state, plus a few hand-tuned bonuses (shoot bonus, style preferences). It has no real game sense. Build a coherent tactics layer.
+
+**Step 1: design (write it before any code).** Add a "Tactics" section to GAME-PLAN.md and get it reviewed (the orchestrator shows it to the user before step 2). It must cover:
+- **The situation the AI reads:** score and target, mène number, who holds the point and by how much, boules in hand for each team (the boule advantage), boules on the ground and their spread, the jack's position and risk (near a line, could be shot out), the player's role, skill and personality, and who's left to throw on each team.
+- **The decisions:** point vs shoot vs shoot the jack (*tirer le bouchon*). Which boule to shoot. Where to point (in front of the jack as a "blocker", or behind it as a safety). Who on the team throws next (also used for Pierre's suggestion).
+- **Principles to encode**, each with a short rationale:
+  - **Boule advantage:** when down on boules compared with the other team, play defensively: point rather than shoot, and avoid gambling.
+  - **Up on boules:** you can afford to shoot or try for more points.
+  - **Shooting to bring in more:** shoot an opponent boule when it would bring your more distant boules into scoring, or remove several of their points.
+  - **Risk to your own boules:** don't shoot when a miss or a carreau-gone-wrong could knock away your own good boules, or move the jack toward the opponent's boules.
+  - **Last boules and score pressure:** near 13, or with the last boules of the mène, value securing a point over a big gamble. Facing a big loss, consider shooting the jack out to void the mène, which only works if the other team has no boules left.
+  - **Placing a defensive boule:** a boule in front of the jack can block, or one behind it covers a shot jack.
+- **The architecture:** how tactics plug into the existing Monte Carlo. Options: tactics set candidate weights or priors and a risk-aversion level, and the evaluator scores end states with tactics-aware terms such as expected points this mène, the boule advantage after the throw, and the probability of losing the point. Keep the decision explainable, so it can feed commentary ("Odette shoots — we're up on boules").
+- **Personality and difficulty:** e.g. Marcel cautious and Pierre reckless; Easy makes more tactical mistakes, Hard plays near-optimally.
+- **Testing:** a scenario test table, each a fixed court state with the expected decision (point or shoot, target), plus full-match statistics: AI vs AI and AI vs a scripted human, win rates by difficulty, and the mix of decisions.
+
+**Step 2: implement** the agreed design in `ai.js` (or a new `tactics.js`), with scenario tests and updated measurements. Make sure decision time stays within budget (medium ≤ ~50 ms), and that Pierre's suggestions and the commentary use the tactical reason.
 
 ### D08 Round 3 review (sonnet)
 Run `npm test`, the build check and the full-match test, take screenshots on desktop and phone, review the code for bugs, and add a "Round 3 remaining issues" list at the end of this file.
