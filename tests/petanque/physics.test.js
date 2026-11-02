@@ -241,3 +241,128 @@ test('100 random throws never produce NaN', () => {
     assert.ok(w.bodies.every(finite), `throw ${i}`);
   }
 });
+
+// --- D06: out of bounds on every side, dead balls relocated beyond the far line ---
+const rolling = (b, vx, vy) => {
+  b.state = 'rolling'; b.vx = vx; b.vy = vy; b.wx = -vy / b.r; b.wy = vx / b.r;
+  return b;
+};
+
+test('out on each side only once the whole ball is across the line', () => {
+  const W = C.terrainW, L = C.terrainL, r = C.boule.r;
+  const cases = [
+    ['left', 0.3, 5, -1, 0], ['right', W - 0.3, 5, 1, 0],
+    ['far', 2, L - 0.3, 0, 1], ['back', 2, 0.3, 0, -1],
+  ];
+  for (const [name, x, y, dx, dy] of cases) {
+    const w = createWorld(stub(), rand());
+    const b = rolling(w.add(boule(x, y)), dx * 2, dy * 2);
+    let deadAt = null;
+    for (let i = 0; i < 4000 && !b.dead; i++) {
+      w.step();
+      if (b.dead) deadAt = w.events.find((e) => e.type === 'dead');
+    }
+    assert.ok(b.dead, `${name} side goes dead`);
+    // position at the moment it went out: just past the line by r (not earlier)
+    const d = name === 'left' ? -deadAt.x : name === 'right' ? deadAt.x - W : name === 'far' ? deadAt.y - L : -deadAt.y;
+    assert.ok(d > r && d < r + 0.02, `${name}: out at ${d.toFixed(4)} m past the line`);
+    assert.ok(finite(b));
+  }
+  // straddling the line is still in play
+  const w = createWorld(stub(), rand());
+  const s = w.add(boule(-r + 0.001, 5));
+  w.step();
+  assert.equal(s.dead, false);
+});
+
+test('a ball rolling back past the line behind the circle goes dead', () => {
+  const w = createWorld(stub(), rand());
+  const b = w.add(boule(2, 0.4));
+  b.state = 'rolling'; b.vy = -1.5; b.wx = 1.5 / b.r;
+  simulate(w, 5);
+  assert.ok(b.dead, `y=${b.y}`);
+});
+
+test('a ball rolling diagonally out a corner goes dead and is relocated', () => {
+  for (const [x, y, vx, vy] of [[0.2, 0.2, -2, -2], [3.8, 14.8, 2, 2], [0.2, 14.8, -2, 2], [3.8, 0.2, 2, -2]]) {
+    const w = createWorld(stub(), rand());
+    const b = rolling(w.add(boule(x, y)), vx, vy);
+    simulate(w, 5);
+    assert.ok(b.dead && finite(b), `corner ${x},${y}`);
+    assert.ok(b.y > C.terrainL, 'moved beyond the far line');
+  }
+});
+
+test('nothing on the real terrain stops a ball crossing a line and going well beyond', () => {
+  const t = createTerrain(7);
+  const W = C.terrainW, L = C.terrainL;
+  const dirs = [[-1, 0, 0.2, 7], [1, 0, W - 0.2, 7], [0, 1, 2, L - 0.2], [0, -1, 2, 0.2]];
+  for (const [dx, dy, x, y] of dirs) {
+    for (const seed of [1, 2, 3]) {
+      const w = createWorld(t, mulberry32(seed));
+      w.isClone = true;
+      const b = rolling(w.add(boule(x, y)), dx * 3, dy * 3);
+      // without the dead check, the ball must keep rolling out to 0.45 m past the line
+      let crossed = 0;
+      for (let i = 0; i < 2000 && !b.dead; i++) {
+        w.step();
+        if (!b.dead) crossed = Math.max(crossed, dx < 0 ? -b.x : dx > 0 ? b.x - W : dy > 0 ? b.y - L : -b.y);
+      }
+      assert.ok(b.dead, `dir ${dx},${dy} seed ${seed}`);
+      assert.ok(crossed > 0, 'crossed the line before being marked');
+    }
+  }
+  // sampling just beyond the padded grid is finite and stays continuous with the edge
+  for (const [x, y] of [[-0.45, 5], [W + 0.45, 5], [2, L + 0.45], [2, -0.45], [-1, -1], [W + 1, L + 1]]) {
+    const s = t.sample(x, y);
+    assert.ok(Number.isFinite(s.h) && Number.isFinite(s.nx) && Math.abs(s.h) < 0.06 && s.nz > 0.99, `${x},${y}`);
+  }
+});
+
+test('dead boules line up beyond the far line, spaced apart, in the order they died', () => {
+  const w = createWorld(stub(), rand());
+  const bs = [];
+  for (let i = 0; i < 6; i++) {
+    const b = w.add(boule(0.3, 3 + i * 0.5));
+    rolling(b, -2, 0);
+    bs.push(b);
+    simulate(w, 3);
+  }
+  const jack = w.add(createBody('jack', { x: 3.7, y: 6 }));
+  rolling(jack, 2, 0);
+  simulate(w, 3);
+  for (const b of bs) {
+    assert.ok(b.dead && b.state === 'resting' && b.vx === 0 && b.wx === 0);
+    assert.ok(b.y > C.terrainL && b.y < C.terrainL + 0.4 && b.x >= 0 && b.x <= C.terrainW);
+    assert.equal(b.z, b.r); // resting on the (flat) ground
+  }
+  for (let i = 1; i < bs.length; i++) assert.ok(bs[i].x - bs[i - 1].x >= 0.0999, 'in order of death, ~0.1 m apart');
+  for (let i = 0; i < bs.length; i++) {
+    for (let j = i + 1; j < bs.length; j++) assert.ok(Math.hypot(bs[i].x - bs[j].x, bs[i].y - bs[j].y) > 2 * C.boule.r, 'no overlap');
+  }
+  assert.ok(jack.dead && jack.y === C.terrainL + 0.4 && jack.x === C.terrainW / 2);
+  for (const b of bs) assert.ok(Math.hypot(b.x - jack.x, b.y - jack.y) > b.r + jack.r, 'jack spot is separate');
+  const ev = w.events.filter((e) => e.type === 'dead');
+  assert.equal(ev.length, 7);
+  assert.ok(ev[0].x < 0 && Number.isFinite(ev[0].toX) && ev[0].toY > C.terrainL, 'event x/y is where it went out, plus the new spot');
+});
+
+test('dead bodies are skipped by collisions and clones keep slots', () => {
+  const w = createWorld(stub(), rand());
+  const dead = w.add(boule(0.3, 3));
+  rolling(dead, -2, 0);
+  simulate(w, 3);
+  assert.ok(dead.dead);
+  const live = w.add(boule(dead.x - 0.05, dead.y - 0.02)); // overlapping the dead one
+  rolling(live, 0, 0.1);
+  const before = { x: dead.x, y: dead.y };
+  const hits = w.events.length;
+  for (let i = 0; i < 60; i++) w.step();
+  assert.deepEqual({ x: dead.x, y: dead.y }, before);
+  assert.ok(!w.events.slice(hits).some((e) => e.type === 'hit'));
+  const c = w.clone();
+  const n = c.add(boule(0.3, 5));
+  rolling(n, -2, 0);
+  simulate(c, 3);
+  assert.ok(n.dead && n.x > dead.x + 0.0999, 'clone continues the line');
+});

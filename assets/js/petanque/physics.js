@@ -269,12 +269,30 @@ function collide(w, a, b) {
   if (b.state === 'resting') { b.state = 'rolling'; b.restT = 0; }
 }
 
+// Where a dead body goes: beyond the far string line, out of the way of play. Boules line up along x in the
+// order they died; the jack sits apart, centred, a little further out.
+function deadSpot(w, b) {
+  if (b.kind === 'jack') return { x: C.terrainW / 2, y: C.terrainL + 0.4 };
+  let slot = 0;
+  for (const o of w.bodies) if (o !== b && o.dead && o.deadSlot !== undefined) slot = Math.max(slot, o.deadSlot + 1);
+  b.deadSlot = slot;
+  const perRow = Math.floor((C.terrainW - 0.4) / C.deadSpacing) + 1;
+  return { x: 0.2 + (slot % perRow) * C.deadSpacing, y: C.terrainL + 0.25 + Math.floor(slot / perRow) * 0.1 };
+}
+
 function checkDead(w, b) {
   const m = b.r + C.deadMargin;
   if (b.x < -m || b.x > C.terrainW + m || b.y > C.terrainL + m || b.y < -m) {
+    const ev = { type: 'dead', t: w.t, a: b.id, x: b.x, y: b.y, speed: 0 };
+    const p = deadSpot(w, b);
     b.dead = true;
+    b.outX = b.x; b.outY = b.y; // where it crossed the line (AI sims aim by this)
+    b.x = p.x; b.y = p.y;
+    b.z = w.terrain.sample(p.x, p.y).h + b.r;
     b.vx = b.vy = b.vz = 0; b.wx = b.wy = b.wz = 0;
-    w.events.push({ type: 'dead', t: w.t, a: b.id, x: b.x, y: b.y, speed: 0 });
+    b.state = 'resting'; b.restT = 0;
+    ev.toX = p.x; ev.toY = p.y;
+    w.events.push(ev);
   }
 }
 

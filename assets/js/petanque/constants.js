@@ -58,6 +58,7 @@ export const C = Object.freeze({
 
   // Out of bounds: dead once fully across a line (see plan §3)
   deadMargin: 0, // extra slack beyond r
+  deadSpacing: 0.1, // m between dead boules lined up beyond the far string line
 
   // Terrain: macro heightfield
   macroAmp: 0.025, // max |h| from noise, m

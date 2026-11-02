@@ -228,6 +228,9 @@ export function createRenderer(canvas, terrain) {
     new THREE.MeshStandardMaterial({ color: '#a9bde0', metalness: 1, roughness: 0.3, bumpMap: grooves[0], bumpScale: 1.5, envMapIntensity: 2.2 }),
     new THREE.MeshStandardMaterial({ color: '#e8aa6a', metalness: 1, roughness: 0.3, bumpMap: grooves[1], bumpScale: 1.5, envMapIntensity: 2.2 }),
   ];
+  // Dead (out of play) bodies: greyed and dulled
+  const deadBouleMat = new THREE.MeshStandardMaterial({ color: '#6c6f76', metalness: 0.8, roughness: 0.55, envMapIntensity: 0.9 });
+  const deadJackMat = new THREE.MeshStandardMaterial({ color: '#8a7a5e', metalness: 0, roughness: 0.6 });
   const jackMat = new THREE.MeshStandardMaterial({ color: '#ffa81c', metalness: 0, roughness: 0.45, emissive: '#3a1c00' });
   const bouleGeo = new THREE.SphereGeometry(1, 40, 24);
   bouleGeo.rotateX(Math.PI / 2); // texture poles along z; any orientation is fine
@@ -264,7 +267,8 @@ export function createRenderer(canvas, terrain) {
       e.body = b;
       e.mesh.position.set(b.x, b.y, b.z);
       if (e.ring) e.ring.position.set(b.x, b.y, terrain.sample(b.x, b.y).h + 0.004);
-      e.mesh.visible = !(b.dead && b.z < -1);
+      e.mesh.visible = true; // dead bodies stay visible at their spot beyond the far line, greyed
+      e.mesh.material = b.dead ? (b.kind === 'jack' ? deadJackMat : deadBouleMat) : (b.kind === 'jack' ? jackMat : bouleMats[b.team ? 1 : 0]);
     }
     for (const [id, e] of meshes) {
       if (seen.has(id)) continue;
@@ -926,7 +930,7 @@ export function createRenderer(canvas, terrain) {
         tmpQ.setFromAxisAngle(tmpV, wl * dt);
         e.mesh.quaternion.premultiply(tmpQ);
       }
-      if (e.ring) e.ring.visible = mode === 'head';
+      if (e.ring) e.ring.visible = mode === 'head' && !e.body.dead;
     }
     updateCamera(dt);
     updatePreview();

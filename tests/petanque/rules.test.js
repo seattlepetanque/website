@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createMatch, apply, nextTeam, meneResult, jackValid, jackFault, playersWithBoules,
+  createMatch, apply, nextTeam, meneResult, holdingTeam, jackValid, jackFault, playersWithBoules,
 } from '../../assets/js/petanque/rules.js';
 
 const jackAt = { x: 2, y: 8 };
@@ -191,4 +191,13 @@ test('7-point game ends at 7', () => {
   assert.equal(m.phase, 'gameOver');
   assert.equal(m.winner, 1);
   assert.deepEqual(m.scores, [5, 8]);
+});
+
+test('dead boules relocated beyond the far line are not counted or measured', () => {
+  const jack = { x: 2, y: 8, dead: false };
+  // a dead boule sitting at its relocated spot, right beside the jack's mirror, must not score or hold
+  const boules = [b(1, 0, 2, 8.5), b(2, 1, 0.3, 15.25, true), b(3, 1, 1.2, 15.25, true)];
+  assert.equal(holdingTeam(jack, boules), 0);
+  assert.equal(meneResult(jack, boules).team, 0);
+  assert.equal(meneResult(jack, boules).points, 1);
 });
