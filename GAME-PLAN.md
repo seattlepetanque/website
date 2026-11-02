@@ -151,11 +151,16 @@ Real players pick a landing spot (the *donnée*) and then decide how high to thr
 - **Positions:** the thrower stands in the circle; the partner waits behind, the opponents to one side.
 - **Stage 1, stick figure (`character.js`):** a procedural skeleton (pelvis, spine, neck, head, shoulders, elbows, wrists, hips, knees, ankles) drawn as simple capsules. Procedural animations: idle (breathing, weight shift), turn, pointer's crouch or shooter's stance, backswing, release, follow-through, watch, celebrate, dismay, walk to and from the circle. The boule leaves from the hand at the release frame, and arm angle at release follows loft.
 - **Stage 2, skinned meshes (opt-in with `?figures=mesh`; the user prefers the stick figures, which stay the default):** CC0 rigged humans (first choice: Quaternius or Kenney packs, licences verified and recorded in a credits file), loaded with three.js's GLTFLoader, driven by the same skeleton API. Mixamo and Ready Player Me are out because of their licence terms. The stick figure stays as the fallback if a model fails to load.
+- **Moving like people:** players simulate how people really move during a game, walking to the circle, fetching dead balls, carrying the cochonnet to the placer, walking out to place it, rather than objects or people teleporting. These walks are sped up or skipped in fast/test modes and under reduced motion.
 - **Personalities** (looks, stance, idle quirks, reactions, commentary, skill):
   - **Marcel:** old Provençal pointeur, flat cap and belly, crouches low, unhurried, grumbles at bad luck.
   - **Odette:** retired schoolteacher and sharp tireur, sun hat, stands tall, precise and dry.
   - **Pierre** (your partner): young, enthusiastic, a bit overconfident, celebrates loudly.
   - **You:** a neutral default look, chosen to stand out from the others.
+
+## 10b. Court surround
+
+The court is ringed with 6×6 timbers a short way outside the string lines. Out-of-bounds balls turn grey, ghost through live balls, bounce off the timbers, and roll only a little on the heavy ground outside them, until a player fetches them.
 
 ## 11. Later: terrain styles (not scheduled)
 

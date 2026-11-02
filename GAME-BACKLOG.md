@@ -269,8 +269,10 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D05 | todo | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
 | D06 | done | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
 | D07 | todo | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
-| D08 | todo | sonnet | D01–D07, D09 | Round 3 review |
+| D08 | todo | sonnet | D01–D07, D09–D11 | Round 3 review |
 | D09 | todo | sonnet | — | Flight camera follows every moving object, the cochonnet first when it moves fast |
+| D10 | todo | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
+| D11 | todo | sonnet | D10 | Players fetch dead balls and walk the cochonnet to its spot |
 
 ### D00 Invalid jack: the other team places it (sonnet)
 Current rule (FIPJP): if the jack throw is invalid (out of bounds, closer than 6 m, further than 10 m, or within 1 m of a line), the opposing team places the jack by hand anywhere valid. The team that threw the jack still plays the first boule. Replace the current hand-over (other team throws again):
@@ -328,6 +330,26 @@ Today the flight camera tracks only the thrown boule. Instead, while anything is
 - Keep the camera above the ground and outside characters, keep the court orientation readable (no flipping behind the play), respect `prefers-reduced-motion` (fewer, gentler moves), and work on phone aspect ratios.
 - Put the logic in a pure helper (e.g. `frameMoving(bodies, jack, aspect, fov, prev) → { target, distance, yaw, pitch }`) with tests: one boule tracked; two diverging bodies both in view; a fast jack chosen as primary; and smoothing that bounds the per-frame change.
 - Add a debug path that scripts a shot knocking the jack hard, e.g. `?debug&jackshot`, and check it with screenshots or a short frame sequence.
+
+### D10 Lumber surround and ghost out-of-bounds balls (sonnet)
+Replaces D06's instant relocation of dead balls.
+- **Lumber:** 6×6 timbers (actual 0.14 m × 0.14 m) round the whole court, outside the string lines, with a gap of about 0.3–0.5 m between line and timber. Pick the distance so a ball can clearly be out before it reaches the wood. Make it a constant. Render it as weathered wood (a procedural grain texture, slightly uneven tops, butt joints at the corners), casting shadows. Extend the terrain or ground plane outside the timbers.
+- **Out-of-bounds physics:** when a ball goes out (whole ball past the string, as now), it turns grey at once and becomes a ghost. It keeps being simulated against the ground, stones and the lumber, but no longer collides with any live boule or the cochonnet, and live balls pass through it. It doesn't affect scoring, measuring or the AI.
+- **Lumber collisions:** ghosts and live balls bounce off the timbers (box collision with sensible restitution, about 0.3–0.4 for wood, plus friction). A live ball can't reach the timber without first being out, so in practice only ghosts hit it. A thrown ball that flies over the timber lands outside it and keeps rolling. Out there the ground has strong drag (a high-rolling-resistance zone), so it stops within a metre or two.
+- **Settling:** a throw is settled when every body, ghosts included, is at rest (or a ghost has rolled for more than ~3 s). Dead balls stay where they stop; D11 has the players carry them away.
+- Update `physics.js` (static lumber boxes, ghost flag, outside drag zone), `terrain.js` (ground outside the timbers), `render.js` (lumber, ghost look), and the tests: ghosts pass through live balls, bounce off timbers, stop quickly outside them, never count, no NaN. Remove D06's relocation, and drop its tests where they no longer apply. Keep AI sims (`world.clone`) consistent.
+
+### D11 Players fetch dead balls and place the cochonnet (sonnet)
+Design principle (GAME-PLAN §10): simulate how people really move about during a game, walking to things, picking them up, handing them over, rather than objects teleporting.
+- **Fetching:** after a throw settles, the thrower's teammate (or the thrower if alone) walks to each dead ball that has come to rest. They bend and pick it up (the ball attaches to the hand), then carry it to its place:
+  - a dead boule goes to the row of out-of-play balls just beyond the far string, set down in its slot;
+  - a dead cochonnet goes to the player who will place it (D00 rules), handed over hand to hand.
+  Use `walkTo`, a new bend/pick-up and put-down pose in `character.js`, and the hand position.
+- **AI placing the cochonnet:** the placing character walks out to the chosen spot, crouches, sets the jack down (attached to the hand until release), and walks back.
+- **Human placing:** after the click, the human's character walks out and places it, and the human can skip the walk. Keep the game responsive: the next throw may start while the fetcher is still walking back, if they're out of the shoulder view.
+- **Timing:** walks at a natural pace (about 1.2–1.5 m/s), skipped or sped up in `instant`/autotest and under `prefers-reduced-motion` (teleport with a short fade). Characters avoid walking through the court's live boules where cheap (step around or along the side), and step over the lumber.
+- **Camera:** stays on the head or follows the fetcher loosely while a fetch runs; never blocks the human's next aim.
+- Add a `?debug&fetch` path that scripts a boule and a jack going out, and check the walk, pick-up and carry with a few frame screenshots.
 
 ### D08 Round 3 review (sonnet)
 Run `npm test`, the build check and the full-match test, take screenshots on desktop and phone, review the code for bugs, and add a "Round 3 remaining issues" list at the end of this file.
