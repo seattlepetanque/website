@@ -269,7 +269,7 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D05 | done | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
 | D06 | done | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
 | D07 | done | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
-| D08 | todo | sonnet | D01–D07, D09–D20 | Round 3 review |
+| D08 | todo | sonnet | D01–D07, D09–D21 | Round 3 review |
 | D09 | todo | sonnet | — | Flight camera follows every moving object, the cochonnet first when it moves fast |
 | D10 | done | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
 | D11 | todo | sonnet | D10 | Players fetch dead balls and walk the cochonnet to its spot |
@@ -282,6 +282,7 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D18 | done | haiku | — | No target marking for AI throws (boules or cochonnet) |
 | D19 | in-progress | haiku | — | Roll guide over-predicts low throws (same perceived-terrain bias D16 fixed for the AI) |
 | D20 | todo | haiku | D13 | Centre the "who throws" choice on screen |
+| D21 | todo | sonnet | D13 | Simpler, steadier roll guide: a gist of direction and distance, flaring with uncertainty |
 
 ### D00 Invalid jack: the other team places it (sonnet)
 Current rule (FIPJP): if the jack throw is invalid (out of bounds, closer than 6 m, further than 10 m, or within 1 m of a line), the opposing team places the jack by hand anywhere valid. The team that threw the jack still plays the first boule. Replace the current hand-over (other team throws again):
@@ -456,6 +457,14 @@ The human's roll guide (`predictRoll` in donnee.js) simulates on `terrain.percei
 
 ### D20 Centre the "who throws" choice (haiku)
 The You throw / Pierre throws choice is a critical decision, but in the full-window layout it sits in the bottom-left strip. Make it a centred card over the court: a short heading ("Your team to play"), Pierre's suggestion (D13 adds who he thinks should throw), and two large buttons, "You throw" and "Pierre throws", with the suggested one visually marked (e.g. a "Pierre suggests" tag), not pre-selected. Focus moves to the card for keyboard users; Enter or Space activates and arrow keys switch. Keep the court visible behind it with a translucent backdrop. It must fit on phones in portrait and landscape. The card closes as soon as a choice is made. Remove the old strip version. Depends on D13 because D13 changes the suggestion text in `hud.js`.
+
+### D21 Simpler, steadier roll guide (sonnet)
+Today the roll guide traces one noiseless simulated path on the perceived terrain. Every pebble and slope bends it, so it draws a complex wiggly shape that jumps with every pixel of drag. Replace it with a gist:
+- **Shape:** a smooth, gently curved band from the landing ellipse to the expected rest point, showing roughly where and how far the boule will roll. It flares out toward the end to show the spread of likely rest positions (e.g. a soft wedge or teardrop ending in a small rest ellipse). No pebble-by-pebble wiggles.
+- **Computing it:** run a handful of jittered sims (e.g. 8–12 across the landing cone and terrain jitter, cheap and cached) or use a smoothed analytic roll-out (direction from the throw and the large-scale slope, distance from the roll table with D19's roughness allowance). Draw the mean path, smoothed, plus the spread of rest points. Keep it under a few ms per update.
+- **Stability:** the guide must change smoothly as you drag. Debounce or throttle updates (e.g. recompute when the donnée moves more than ~5 cm or loft changes more than ~1°), interpolate between results, and keep a fixed random seed per throw so it doesn't flicker.
+- **Looks:** keep the orange-dashes palette but as a soft translucent band with a dashed centre line and a faint rest ellipse, readable from the shoulder view, distinct from the cone.
+- It depends on D13, which touches `predictRoll` in `donnee.js` for D19. Tests: the band's mean rest is within ~0.3 m of the average real rest on seeded gravel for 14°, 30° and 55° throws, and a 1-pixel drag changes the drawn rest point by at most a few cm.
 
 ### D08 Round 3 review (sonnet)
 Run `npm test`, the build check and the full-match test, take screenshots on desktop and phone, review the code for bugs, and add a "Round 3 remaining issues" list at the end of this file.
