@@ -269,7 +269,8 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D05 | todo | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
 | D06 | todo | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
 | D07 | todo | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
-| D08 | todo | sonnet | D01–D07 | Round 3 review |
+| D08 | todo | sonnet | D01–D07, D09 | Round 3 review |
+| D09 | todo | sonnet | — | Flight camera follows every moving object, the cochonnet first when it moves fast |
 
 ### D00 Invalid jack: the other team places it (sonnet)
 Current rule (FIPJP): if the jack throw is invalid (out of bounds, closer than 6 m, further than 10 m, or within 1 m of a line), the opposing team places the jack by hand anywhere valid. The team that threw the jack still plays the first boule. Replace the current hand-over (other team throws again):
@@ -318,6 +319,15 @@ A ball is out of bounds when, seen from above, the whole ball is outside the str
 - Effort = launch speed × loft weight (0.76 at 8° → 1.55 at 75°) against `SKILL.*.maxSpeed` (human 11.6, Marcel 11.3, Odette 12.4, Pierre 12.2). Human reach: demi-portée to 10 m fine; 60° tops out ≈ 8.4 m, 65° ≈ 6.3 m, 70° ≈ 4.6 m.
 - Cone: lateral ×(1 + 0.25·t), long ×(1 + 0.85·t) with loft fraction t, all × (1 + 9·max(0, energyFrac − 0.7)²). Coverage test unchanged. `difficultyScale` now 2.3 / 1.35 / 0.65.
 - AI jack legality on Easy fell to 82% (Medium/Hard ≈ 97%). The "Max reach" status line isn't cleared when you unclamp. The main.js preview hook (`fitToss`) was committed with D01 because both edited main.js at once.
+
+### D09 Flight camera follows all moving objects (sonnet)
+Today the flight camera tracks only the thrown boule. Instead, while anything is moving, frame every moving body: the thrown boule, any boule it knocks, and the cochonnet.
+- Each frame, gather the live bodies that are airborne or rolling above a small speed threshold, plus the thrown boule until it settles. Fit the camera (position, target and distance) so all of them stay in view with a margin. Smooth it with damping and limits on pan, zoom and rotation speed, so it never jitters or jumps when a body starts or stops.
+- If the cochonnet is moving fast (above a threshold, or projected to reach a string line), make it the primary focus. Aim at where it is heading (current position plus velocity times a short look-ahead, clamped near the court bounds), so the viewer sees whether it goes out of bounds. Keep the other moving boules in frame when possible, giving the jack priority when they can't all fit.
+- When everything has stopped, hand over smoothly to the head view as now.
+- Keep the camera above the ground and outside characters, keep the court orientation readable (no flipping behind the play), respect `prefers-reduced-motion` (fewer, gentler moves), and work on phone aspect ratios.
+- Put the logic in a pure helper (e.g. `frameMoving(bodies, jack, aspect, fov, prev) → { target, distance, yaw, pitch }`) with tests: one boule tracked; two diverging bodies both in view; a fast jack chosen as primary; and smoothing that bounds the per-frame change.
+- Add a debug path that scripts a shot knocking the jack hard, e.g. `?debug&jackshot`, and check it with screenshots or a short frame sequence.
 
 ### D08 Round 3 review (sonnet)
 Run `npm test`, the build check and the full-match test, take screenshots on desktop and phone, review the code for bugs, and add a "Round 3 remaining issues" list at the end of this file.
