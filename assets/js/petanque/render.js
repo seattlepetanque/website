@@ -3,6 +3,7 @@ import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
+import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeSkyPanorama, isPhone } from './scenery.js';
 
 const TRANSITION = 0.6; // seconds for camera moves
 
@@ -155,8 +156,9 @@ export function createRenderer(canvas, terrain) {
   const scene = new THREE.Scene();
   const FOG = new THREE.Color('#cfdcea');
   scene.background = FOG;
-  scene.fog = new THREE.Fog(FOG, 14, 60);
+  scene.fog = new THREE.Fog(FOG, 30, 170);
   scene.add(makeSky());
+  scene.add(makeSkyPanorama(C.terrainW / 2, C.terrainL / 2, '#cfdcea', '207,220,234'));
   scene.environment = makeEnvMap(renderer);
 
   const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 300);
@@ -178,18 +180,25 @@ export function createRenderer(canvas, terrain) {
   const grid = terrain.heightGrid(0.05);
   const { w: gw, h: gh } = grid;
   const pos = new Float32Array(gw * gh * 3), uv = new Float32Array(gw * gh * 2), colr = new Float32Array(gw * gh * 3);
+  const WHITE = new THREE.Color('#ffffff');
+  let edgeZ = 0; // the grass plane sits just below the lowest terrain point; the mesh eases down to it past the timbers
+  for (let k = 0; k < grid.data.length; k++) edgeZ = Math.min(edgeZ, grid.data[k]);
+  edgeZ -= 0.004;
   const earth = new THREE.Color('#8f8365'), packed = new THREE.Color('#e6d9bd'), loose = new THREE.Color('#fff0d2'), tint = new THREE.Color();
   for (let j = 0; j < gh; j++) {
     for (let i = 0; i < gw; i++) {
       const k = j * gw + i, x = grid.x0 + i * grid.step, y = grid.y0 + j * grid.step;
       const s = terrain.sample(x, y);
-      pos.set([x, y, grid.data[k]], k * 3);
+      const gd = Math.hypot(Math.max(-C.lumberGap - C.lumberSize - x, x - C.terrainW - C.lumberGap - C.lumberSize, 0), Math.max(-C.lumberGap - C.lumberSize - y, y - C.terrainL - C.lumberGap - C.lumberSize, 0));
+      const ez = smooth(Math.max(0, Math.min(1, (gd - 1.0) / 0.9)));
+      pos.set([x, y, grid.data[k] + (edgeZ + 0.003 - grid.data[k]) * ez], k * 3);
       uv.set([x * 2, y * 2], k * 2);
       tint.copy(packed).lerp(loose, Math.max(0, Math.min(1, s.loose)));
       // beyond the timbers the ground is darker, rougher earth
       const o = C.lumberGap + C.lumberSize;
       const ox = Math.max(-o - x, x - C.terrainW - o, 0), oy = Math.max(-o - y, y - C.terrainL - o, 0);
       tint.lerp(earth, smooth(Math.max(0, Math.min(1, Math.hypot(ox, oy) / 0.5))) * 0.75);
+      tint.lerp(WHITE, smooth(Math.max(0, Math.min(1, (Math.hypot(ox, oy) - 0.8) / 0.6)))); // grass takes over (see scenery.js)
       colr.set([tint.r, tint.g, tint.b], k * 3);
     }
   }
@@ -212,16 +221,15 @@ export function createRenderer(canvas, terrain) {
     map: gravel, vertexColors: true, roughness: 0.95, metalness: 0, envMapIntensity: 0.4,
   }));
   terrainMesh.receiveShadow = true;
+  const grass = grassTexture();
+  blendGrassIntoTerrain(terrainMesh.material, grass);
   scene.add(terrainMesh);
 
-  // Darker surroundings
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(400, 400),
-    new THREE.MeshStandardMaterial({ color: '#7a6e52', roughness: 1, metalness: 0, envMapIntensity: 0.2 }),
-  );
-  ground.position.set(C.terrainW / 2, C.terrainL / 2, -0.03);
-  ground.receiveShadow = true;
+  // Grass beyond the terrain mesh, out to the horizon (the mesh blends into it past the timbers)
+  const ground = makeGrassPlane(grass, C.terrainW / 2, C.terrainL / 2, 600, edgeZ);
   scene.add(ground);
+  scene.add(makeTufts(terrain, isPhone()));
+  scene.add(makeTrees(terrain));
 
   // Lumber surround: weathered 6x6 timbers, one mesh per board section (long sides split with butt joints,
   // slightly different tone and top height per board), casting and receiving shadows
