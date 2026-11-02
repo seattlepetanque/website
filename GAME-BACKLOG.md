@@ -265,7 +265,7 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D01 | done | sonnet | — | Full-window game view; no page scrolling while playing |
 | D02 | done | sonnet | — | Throw energy limit: far lobs pulled closer, higher lobs less accurate |
 | D03 | done | haiku | — | Hide the planned trajectory for AI players |
-| D04 | todo | sonnet | — | Make the cochonnet easy to see |
+| D04 | in-progress | sonnet | — | Make the cochonnet easy to see |
 | D05 | done | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
 | D06 | done | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
 | D07 | todo | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
@@ -274,10 +274,10 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D10 | done | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
 | D11 | todo | sonnet | D10 | Players fetch dead balls and walk the cochonnet to its spot |
 | D12 | todo | sonnet | — | Paused game: frozen, sepia, UI inert, free orbit camera |
-| D13 | todo | sonnet | — | AI tactics system: design first, then implement |
+| D13 | todo | sonnet | D04, D16 | AI tactics system: design done (GAME-PLAN §12, decisions in §12.10); step 2 implement next |
 | D14 | todo | sonnet | — | Placed cochonnet: legal region runs out to the strings; settle the ground under it |
 | D15 | todo | sonnet | — | Surroundings: grass, nearby trees, Seattle skyline with Mount Rainier and the Space Needle |
-| D16 | todo | sonnet | — | Investigate AI throws that fall far short, and why Pierre misses most shots |
+| D16 | in-progress | sonnet | — | Investigate AI throws that fall far short, and why Pierre misses most shots |
 
 ### D00 Invalid jack: the other team places it (sonnet)
 Current rule (FIPJP): if the jack throw is invalid (out of bounds, closer than 6 m, further than 10 m, or within 1 m of a line), the opposing team places the jack by hand anywhere valid. The team that threw the jack still plays the first boule. Replace the current hand-over (other team throws again):

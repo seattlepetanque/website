@@ -390,7 +390,15 @@ Order of work:
 6. Reason codes, commentary pools, Pierre's suggestion and `whoThrows`.
 7. Harness statistics, tuning, update the measurements in the plan.
 
-### 12.10 Open questions
+### 12.10 Decisions (2026-11-01)
+
+- **Pierre's advice:** the blend. Half Pierre's own appetite, half neutral, with Hard-level tactical sense, simulated with the human's skill cone.
+- **Easy mistakes:** Easy makes visible tactical mistakes, about 30% of the time (Medium 8%, Hard 2%), on top of wider cones.
+- **Chooser:** Pierre's chooser suggestion names who should throw as well as the shot (e.g. "You point, I'll shoot after"). The human still chooses.
+- **EPnet:** a heuristic fitted to rollouts in step 2, not an offline lookup table.
+
+### 12.11 Open questions (resolved above)
+
 
 - Should Pierre's advice use his own recklessness (more fun, sometimes bad advice) or the neutral advice profile proposed here?
 - Is a visible tactical error rate on Easy acceptable (the AI occasionally shoots when it should not), or should Easy stay physically weak only?
