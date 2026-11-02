@@ -252,3 +252,50 @@ C13 outcome (numbers from `measure-human.js 160`, `measure-release.js`, real sti
 - **Not done:** the bundle always includes `GLTFLoader` (about 110 KB unminified) even though the models only download with `?figures=mesh` (Hugo's js.Build does not split chunks); mesh mode is otherwise as C11 left it (odd scale, bun under the sun hat, short arms so plombées start low); in all-AI debug matches Sam still speaks as "You" in commentary; waiting characters have no shadow; the AI launch table is still built on the first AI turn; the mène-end card covers the boules by the jack in the gathered view (the head view just before it shows them with labels).
 - **A human should play-test:** the toss on a mouse, trackpad and phone (pull length for loft, dwell to start a toss, thumb dragging without scrolling the page, cancelling by dragging back up); cone fairness at 6 to 10 m (about 86% of throws inside the outer ellipse, 39% inside the inner one); how the roulette run-out feels now that crouched releases are low (touchy: about 3.5 m of rest per metre of donnée); walk-in, reaction and gathering timing (CAST_SPEED 2.4 m/s, 800 ms reaction cut, 2.2 s before the gathered shot) and whether the reaction cut is too short or interrupts the next turn; the shoulder view with Odette or Pierre standing (their bodies fill the lower left); the commentary tone and repetition across a whole game; audio levels by ear (clack, crunch, roll); phone layout of the toss readout and the setup card in portrait and landscape.
 - From the C13 mène-end screenshot: in all-AI debug matches the scoreboard says "Sam" but quotes still read "You: …". The mène-end card covers the boules by the jack in the gathering shot.
+
+---
+
+# Round 3 backlog
+
+From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: units, axes, `constants.js`, the test and build checks, agents don't commit, and don't edit files owned by another in-progress item. D01, D03, D04 and D07 all touch `main.js` and/or `render.js`, so run them one after another, or split the files clearly.
+
+| ID | Status | Model | Deps | Title |
+|---|---|---|---|---|
+| D01 | todo | sonnet | — | Full-window game view; no page scrolling while playing |
+| D02 | todo | sonnet | — | Throw energy limit: far lobs pulled closer, higher lobs less accurate |
+| D03 | todo | haiku | — | Hide the planned trajectory for AI players |
+| D04 | todo | sonnet | — | Make the cochonnet easy to see |
+| D05 | todo | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
+| D06 | todo | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
+| D07 | todo | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
+| D08 | todo | sonnet | D01–D07 | Round 3 review |
+
+### D01 Full-window game view (sonnet)
+After the setup screen's Start, the game takes over the whole browser window: the canvas and all game UI (scoreboard, whose turn, chooser, buttons, status line, mène and game-over panels, toss readout) fit inside the viewport with no page scrolling, on desktop and on phones in portrait and landscape. Use a fixed full-viewport layer (or the Fullscreen API where available, with the fixed layer as fallback), `100dvh` sizing, and safe-area insets. Overlay the HUD on the canvas or lay it out compactly around it. Keep a clear way out: an Exit or Menu button and Esc go back to the normal page. The site header and footer stay hidden while playing. Respect `prefers-reduced-motion`. Check with screenshots at 1200×800, 1440×900, 390×844 and 844×390 that nothing scrolls and nothing is cut off.
+
+### D02 Throw energy limit (sonnet)
+Very high, very accurate lobs are unrealistic and make the game too easy. Add an internal energy budget for a throw: the launch speed (or kinetic energy) a player can deliver with good control, per player in `SKILL` (Odette and Pierre a bit stronger as tireurs, Marcel less). When a toss needs more than the budget (a high lob to a far donnée), pull the donnée toward the thrower along the aim line until the throw fits. Do it live in the preview, so the donnée marker visibly slides closer as you pull for more loft, and show it in the readout (e.g. "max reach"). Also make the cone grow with loft more strongly, and with the fraction of the budget used: near-max throws are less accurate. Apply the same rule to the AI through `donnee.js` (candidates outside the budget get clamped or dropped), and to the human jack throw. Retune so a high plombée at 9–10 m is hard and risky. Re-measure human-vs-AI balance and jack legality.
+
+### D03 Hide the planned trajectory for AI players (haiku)
+Don't show the AI's arc, cone, ellipses or roll guide before it throws. Keep the short pause and the "Marcel picks his spot…" line, and optionally a small marker at its donnée. Remove the cone drawing from the AI turn path in `main.js`, and keep `?debug&aispot` working; it may show the arc only when debug is on.
+
+### D04 Make the cochonnet easy to see (sonnet)
+At 6–10 m the jack is a few pixels. Try and compare, with screenshots, at least:
+- a bouncing arrow or chevron floating above the jack (camera-facing sprite, gently bobbing, constant screen size);
+- a soft ring or halo on the ground around it;
+- a slightly brighter or emissive material.
+
+Optionally try a narrower field of view or an adjusted shoulder camera, but keep the aim view usable. Pick the clearest that doesn't clutter the scene, show it in the shoulder, head and flight views, and hide or fade it when the camera is close to the jack. Make it work on phones.
+
+### D05 Rolling sound as pebble ticks (sonnet)
+The rolling sound still reads as white noise. Replace the continuous filtered noise with sparse, very quiet, dry ticks of the boule against pebbles. Their rate follows rolling speed, with slight random timing and pitch, and an occasional slightly louder tick when the physics reports a stone contact. Keep it near silent overall: barely audible under the landing and collision sounds. The jack's rolling ticks are lighter and higher. Put the tuning in `SOUND.roll` and update the `?debug&sounds` audition buttons.
+
+### D06 Out of bounds on every side (sonnet)
+A ball is out of bounds when, seen from above, the whole ball is outside the string line on any side: left, right, front (far end) or back (behind the circle). Verify `physics.js` applies this on all four sides with tests, including balls that roll back toward the circle, and make sure nothing (terrain padding, boards, clamping in `terrain.sample`) stops a ball reaching or crossing a line. When a boule goes out, it stops being simulated (dead, as now) and is moved to the far end of the court, just beyond the far string line, lined up neatly so dead boules are visible and don't clutter the play area. A dead jack follows the existing dead-jack rules; move it there too if the mène continues. Update scoring and measuring so dead balls are never counted. Update the renderer so dead balls show at their new spot, perhaps slightly greyed.
+
+### D07 Measuring lines and scoring circle (sonnet)
+- **Between throws:** during the interstitial camera moves (after a throw settles and before the next aim), show measuring lines from the cochonnet to the closest boule of each team, labelled with distances. Use the team colours, and clear them when aiming starts.
+- **At mène end:** the camera shows a transparent filled circle on the ground, centred on the jack, just large enough to contain every scoring boule. Each scoring boule is numbered 1, 2, 3… in order of closeness. Show the opponent's best boule just outside the circle, unnumbered, for comparison. Fit the camera so the circle and numbers read clearly, and make sure the mène-end card doesn't cover them (move the card or shrink it).
+
+### D08 Round 3 review (sonnet)
+Run `npm test`, the build check and the full-match test, take screenshots on desktop and phone, review the code for bugs, and add a "Round 3 remaining issues" list at the end of this file.
