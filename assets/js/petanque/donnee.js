@@ -173,8 +173,8 @@ export function solveLaunch({ from = C.throwFrom, landing, loft, terrain }) {
 export const SKILL = Object.freeze({
   human: Object.freeze({ lat: 0.012, long: 0.03, loft: 1.5 * DEG, maxSpeed: 11.6 }),
   marcel: Object.freeze({ lat: 0.011, long: 0.022, loft: 1.2 * DEG, maxSpeed: 11.3 }), // pointeur: tight long, weaker arm
-  odette: Object.freeze({ lat: 0.008, long: 0.03, loft: 1.4 * DEG, maxSpeed: 12.4 }), // tireur: tight lateral, strong
-  pierre: Object.freeze({ lat: 0.01, long: 0.033, loft: 1.6 * DEG, maxSpeed: 12.2 }), // tireur-ish, a bit looser, strong
+  odette: Object.freeze({ lat: 0.008, long: 0.027, loft: 1.4 * DEG, maxSpeed: 12.4 }), // tireur: tight lateral, strong
+  pierre: Object.freeze({ lat: 0.009, long: 0.031, loft: 1.6 * DEG, maxSpeed: 12.2 }), // tireur-ish, a bit looser, strong
 });
 export const difficultyScale = Object.freeze({ easy: 2.3, medium: 1.35, hard: 0.65 });
 const LONG_GROWTH = 1.85; // longitudinal sigma at LOFT_MAX relative to LOFT_MIN
