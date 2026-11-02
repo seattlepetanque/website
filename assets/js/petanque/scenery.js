@@ -269,184 +269,37 @@ export function makeTrees(terrain) {
   return grp;
 }
 
-// ---- Sky panorama ---------------------------------------------------------------------------------------
+// ---- Sky and panorama -----------------------------------------------------------------------------------
 
-// Painted 140 degree strip centred on +y (down the court), RADIUS from the court centre. Columns are linear in
-// azimuth, rows linear in tan(elevation), so a cylinder shows it undistorted.
-const PAN = { span: deg(140), minEl: deg(-5), maxEl: deg(40), W: 2048, H: 800, R: 240, base: deg(0.35) };
+// One sky gradient shared by the sky dome (render.js), the fog and the painted panorama, so nothing mismatches:
+// a light haze at the horizon, deepening to a clear summer blue overhead.
+export const SKY_HAZE = '#d6e5f3';
+const SKY_STOPS = [[0, SKY_HAZE], [3, '#c4dcf2'], [10, '#a0c8ee'], [25, '#6fa9e6'], [50, '#428bdd'], [90, '#2670d0']]
+  .map(([e, h]) => [e, new THREE.Color(h)]);
+export function skyColor(elDeg, out = new THREE.Color()) {
+  const e = Math.max(0, Math.min(90, elDeg));
+  let i = 0;
+  while (i < SKY_STOPS.length - 2 && e > SKY_STOPS[i + 1][0]) i++;
+  const [e0, c0] = SKY_STOPS[i], [e1, c1] = SKY_STOPS[i + 1];
+  const t = (e - e0) / (e1 - e0);
+  return out.copy(c0).lerp(c1, t * t * (3 - 2 * t) * 0.35 + t * 0.65);
+}
 
-export function makeSkyPanorama(cx, cy, fogHex, haze) {
-  const { span, minEl, maxEl, W, H, R } = PAN;
-  const cv = makeCanvas(W, H), g = cv.getContext('2d');
-  const rand = mulberry32(1962);
-  const X = (azDeg) => (deg(azDeg) + span / 2) / span * W;
-  const tmax = Math.tan(maxEl), tmin = Math.tan(minEl);
-  const Y = (elDeg) => (tmax - Math.tan(deg(elDeg))) / (tmax - tmin) * H;
-  const yb = Y(0.35); // the base line: ground haze below, silhouettes above
-  g.clearRect(0, 0, W, H);
+// Rows are linear in tan(elevation) so an inside cylinder shows the painting undistorted
+function rowMap(minEl, maxEl, H) {
+  const tmax = Math.tan(deg(maxEl)), tmin = Math.tan(deg(minEl));
+  return (el) => (tmax - Math.tan(deg(el))) / (tmax - tmin) * H;
+}
 
-  // soft clouds (elevations 2..30 deg), more of them off to the sides so the skyline stays clear
-  for (let i = 0; i < 26; i++) {
-    const az = (rand() - 0.5) * 120, el = 5 + rand() * 24, w = 10 + rand() * 22;
-    const px = X(az), py = Y(el), pw = w * W / 140, ph = pw * (0.07 + rand() * 0.05);
-    for (let k = 0; k < 9; k++) {
-      const ox = (rand() - 0.5) * pw, oy = (rand() - 0.5) * ph * 0.6, r = pw * (0.12 + rand() * 0.14);
-      const gr = g.createRadialGradient(px + ox, py + oy, 0, px + ox, py + oy, r);
-      const a = 0.28 + rand() * 0.22;
-      gr.addColorStop(0, `rgba(255,255,255,${a})`); gr.addColorStop(1, 'rgba(255,255,255,0)');
-      g.fillStyle = gr; g.save(); g.translate(px + ox, py + oy); g.scale(1, ph / pw * 1.8); g.translate(-(px + ox), -(py + oy));
-      g.fillRect(px + ox - r, py + oy - r, 2 * r, 2 * r); g.restore();
-    }
-  }
-
-  // Mount Rainier: broad massif, a flattened summit with a crater rim, snow cap with ragged line and a shaded flank.
-  // Real Rainier is ~5 deg tall from Seattle; this is exaggerated so it reads at phone width.
-  const rc = -12, halfW = 16, peakEl = 8.4, hazeCol = '#aebdd2';
-  const prof = (azDeg) => { // elevation of the outline at an azimuth
-    const u = (azDeg - rc) / halfW;
-    if (Math.abs(u) >= 1) return 0.35;
-    const shape = Math.pow(1 - Math.abs(u), 1.25) * (1 + 0.05 * Math.sin(u * 17) + 0.035 * Math.sin(u * 41 + 1));
-    let e = 0.35 + (peakEl - 0.35) * shape;
-    if (Math.abs(u) < 0.07) e -= 0.35 * (1 - Math.abs(u) / 0.07); // summit crater notch
-    return e;
-  };
-  g.beginPath(); g.moveTo(X(rc - halfW), yb);
-  for (let a = rc - halfW; a <= rc + halfW; a += 0.25) g.lineTo(X(a), Y(prof(a)));
-  g.lineTo(X(rc + halfW), yb); g.closePath();
-  const rg = g.createLinearGradient(0, Y(peakEl), 0, yb);
-  rg.addColorStop(0, '#9fb2cc'); rg.addColorStop(1, '#bccadb');
-  g.fillStyle = rg; g.fill();
-  g.save(); g.clip();
-  // shaded flank (left side faces away from the sun)
-  g.beginPath(); g.moveTo(X(rc - 1), Y(peakEl));
-  for (let a = rc - 1; a >= rc - halfW; a -= 0.5) g.lineTo(X(a), Y(prof(a) * 0.9) + 0);
-  g.lineTo(X(rc - halfW), yb); g.lineTo(X(rc - 3), yb); g.closePath();
-  g.fillStyle = 'rgba(95,115,150,0.38)'; g.fill();
-  // snow cap: everything above a ragged snow line
-  g.beginPath(); g.moveTo(X(rc - halfW), Y(0));
-  const sl = (a) => 3.3 + 0.5 * Math.sin(a * 1.7) + 0.4 * Math.sin(a * 4.3 + 2) + (Math.abs(a - rc) / halfW) * 0.4;
-  for (let a = rc - halfW; a <= rc + halfW; a += 0.25) g.lineTo(X(a), Y(sl(a)));
-  g.lineTo(X(rc + halfW), Y(30)); g.lineTo(X(rc - halfW), Y(30)); g.closePath();
-  const sg = g.createLinearGradient(X(rc - halfW), 0, X(rc + halfW), 0);
-  sg.addColorStop(0, '#d6e0ee'); sg.addColorStop(0.45, '#f6f9fd'); sg.addColorStop(1, '#ffffff');
-  g.fillStyle = sg; g.fill();
-  // glacier ridges: darker streaks running down from the summit
-  g.strokeStyle = 'rgba(120,140,175,0.45)'; g.lineWidth = 3;
-  for (let i = 0; i < 9; i++) {
-    const a0 = rc + (rand() - 0.5) * 4, a1 = rc + (rand() - 0.5) * 24;
-    g.beginPath(); g.moveTo(X(a0), Y(peakEl - 0.6));
-    g.quadraticCurveTo((X(a0) + X(a1)) / 2 + (rand() - 0.5) * 18, Y(5.6), X(a1), Y(sl(a1) - 0.2));
-    g.stroke();
-  }
-  // distance haze across the whole mountain
-  const hg = g.createLinearGradient(0, Y(peakEl), 0, yb);
-  hg.addColorStop(0, 'rgba(214,226,240,0.12)'); hg.addColorStop(1, 'rgba(214,226,240,0.72)');
-  g.fillStyle = hg; g.fillRect(0, 0, W, H);
-  g.restore();
-
-  // low hazy foothills / tree line behind the city
-  g.fillStyle = 'rgba(122,146,150,0.75)';
-  g.beginPath(); g.moveTo(X(-70), yb);
-  for (let a = -70; a <= 70; a += 0.5) g.lineTo(X(a), Y(0.35 + 0.9 + 0.5 * Math.sin(a * 0.31) + 0.35 * Math.sin(a * 0.9 + 1) - Math.max(0, (Math.abs(a) - 58) * 0.08)));
-  g.lineTo(X(70), yb); g.closePath(); g.fill();
-
-  // Seattle skyline: generic towers (hazy blue-grey with lit left faces and window flecks) and the Space Needle
-  const towers = [];
-  const addT = (az, wDeg, hEl, tone) => towers.push({ az, w: wDeg, h: hEl, tone });
-  // downtown cluster between -22 and +4 degrees, tallest near -1 (Columbia Center)
-  let a = -11;
-  while (a < 15) {
-    const w = 0.9 + rand() * 1.3;
-    const centre = a + w / 2, k = 1 - Math.min(1, Math.abs(centre - 7) / 18);
-    addT(centre, w, 0.8 + (0.6 + rand() * 1.4) * (0.45 + 0.7 * k), rand());
-    a += w * (0.55 + rand() * 0.4);
-  }
-  addT(9.5, 1.5, 4.0, 0.6); // Columbia Center-like tallest tower
-  addT(1.8, 1.4, 3.2, 0.2); // a second slab tower
-  addT(-1.2, 1.1, 2.7, 0.7);
-  const needleAz = 5.8, needleTop = 4.5;
-  const paintTower = (t) => {
-    const x0 = X(t.az - t.w / 2), x1 = X(t.az + t.w / 2), top = Y(0.35 + t.h);
-    const lum = 0.30 + t.tone * 0.12;
-    g.fillStyle = `rgb(${Math.round(120 + lum * 40)},${Math.round(142 + lum * 36)},${Math.round(170 + lum * 28)})`;
-    g.fillRect(x0, top, x1 - x0, yb - top);
-    g.fillStyle = 'rgba(255,255,255,0.16)'; g.fillRect(x0, top, (x1 - x0) * 0.4, yb - top); // sunlit face
-    g.fillStyle = 'rgba(52,72,104,0.22)'; g.fillRect(x1 - (x1 - x0) * 0.3, top, (x1 - x0) * 0.3, yb - top);
-    if (t.h > 3.4) { g.fillStyle = 'rgba(120,138,164,0.9)'; g.fillRect(x0 + (x1 - x0) * 0.3, top - 7, (x1 - x0) * 0.4, 8); } // crown step
-    g.fillStyle = 'rgba(255,248,214,0.22)'; // window flecks
-    for (let yy = top + 8; yy < yb - 10; yy += 9) for (let xx = x0 + 3; xx < x1 - 3; xx += 6) if (rand() < 0.28) g.fillRect(xx, yy, 2.2, 2.2);
-  };
-  towers.sort((p, q) => p.h - q.h).forEach(paintTower);
-
-  // Space Needle: three tapering legs pinched to a waist, an observation saucer, a roof cone and a spire
-  {
-    const px = X(needleAz), ppd = W / 140; // pixels per degree
-    const baseY = yb, topY = Y(needleTop);
-    const tot = baseY - topY; // overall height in px
-    const saucerY = topY + tot * 0.17; // saucer centre
-    const waistY = topY + tot * 0.62;
-    const colour = '#dfe7f1', shade = '#4f6786';
-    g.lineCap = 'round'; g.lineJoin = 'round';
-    // spire
-    g.strokeStyle = shade; g.lineWidth = 3; g.beginPath(); g.moveTo(px, topY); g.lineTo(px, saucerY - tot * 0.08); g.stroke();
-    // tower: tapered hourglass (stroked as a filled polygon of two legs)
-    const half = (yy) => { // half-width of the hourglass at a height
-      const t = (yy - saucerY) / (baseY - saucerY);
-      const waist = 0.5 * ppd * 0.42, foot = 0.5 * ppd * 1.8, neck = 0.5 * ppd * 0.7;
-      if (yy < waistY) return neck + (waist - neck) * ((yy - saucerY) / (waistY - saucerY));
-      return waist + (foot - waist) * Math.pow((yy - waistY) / (baseY - waistY), 1.4) + 0 * t;
-    };
-    g.fillStyle = colour; g.strokeStyle = shade; g.lineWidth = 1.6;
-    // two outer legs
-    for (const s of [-1, 1]) {
-      g.beginPath(); g.moveTo(px + s * half(saucerY + 4) * 0.6, saucerY + 4);
-      for (let yy = saucerY + 4; yy <= baseY; yy += 3) g.lineTo(px + s * half(yy), yy);
-      for (let yy = baseY; yy >= saucerY + 4; yy -= 3) g.lineTo(px + s * Math.max(half(yy) - (yy > waistY ? 3.2 + (yy - waistY) * 0.03 : 2.4), 0.6), yy);
-      g.closePath(); g.fill(); g.stroke();
-    }
-    // centre core
-    g.fillStyle = shade; g.fillRect(px - 2.2, saucerY, 4.4, waistY - saucerY + 8);
-    // waist ring and cross braces
-    g.strokeStyle = shade; g.lineWidth = 1.4;
-    g.beginPath(); g.moveTo(px - half(waistY) - 1, waistY); g.lineTo(px + half(waistY) + 1, waistY); g.stroke();
-    g.beginPath(); g.moveTo(px - half(waistY + 14), waistY + 14); g.lineTo(px + half(waistY + 14), waistY + 14); g.stroke();
-    // saucer: a wide flat ellipse with a thin lower skirt, windows band and a small roof dome
-    const sw = ppd * 1.5, sh = tot * 0.055;
-    g.fillStyle = colour; g.strokeStyle = shade; g.lineWidth = 1.6;
-    g.beginPath(); g.ellipse(px, saucerY, sw, sh, 0, 0, TAU); g.fill(); g.stroke();
-    g.beginPath(); g.moveTo(px - sw * 0.82, saucerY + sh * 0.5); g.lineTo(px - sw * 0.42, saucerY + sh * 2.2);
-    g.lineTo(px + sw * 0.42, saucerY + sh * 2.2); g.lineTo(px + sw * 0.82, saucerY + sh * 0.5); g.closePath(); g.fill(); g.stroke(); // lower hull
-    g.fillStyle = '#5d7390'; g.beginPath(); g.ellipse(px, saucerY - sh * 0.1, sw * 0.9, sh * 0.42, 0, 0, TAU); g.fill(); // window band
-    g.fillStyle = colour; g.beginPath(); g.ellipse(px, saucerY - sh * 0.9, sw * 0.52, sh * 0.55, 0, Math.PI, TAU); g.fill(); g.stroke(); // roof
-  }
-
-  // ground haze and the base fog band, matching scene.fog so the court's grass fades straight into it
-  const hz = g.createLinearGradient(0, Y(1.8), 0, yb);
-  hz.addColorStop(0, 'rgba(' + haze + ',0)'); hz.addColorStop(1, 'rgba(' + haze + ',0.6)');
-  g.fillStyle = hz; g.fillRect(0, Y(1.8), W, yb - Y(1.8));
-  g.fillStyle = fogHex; g.fillRect(0, yb - 1, W, H - yb + 1);
-  // fade the clouds and haze out at the left and right ends of the strip
-  g.globalCompositeOperation = 'destination-out';
-  for (const [x0, x1, a0, a1] of [[0, W * 0.1, 1, 0], [W * 0.9, W, 0, 1]]) {
-    const ef = g.createLinearGradient(x0, 0, x1, 0);
-    ef.addColorStop(0, `rgba(0,0,0,${a0})`); ef.addColorStop(1, `rgba(0,0,0,${a1})`);
-    g.fillStyle = ef; g.fillRect(x0, 0, x1 - x0, yb - 2);
-  }
-  g.globalCompositeOperation = 'source-over';
-
-  const tex = new THREE.CanvasTexture(cv);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
-  tex.generateMipmaps = true;
-
-  // inside-facing cylinder strip
-  const segs = 48, hLo = R * Math.tan(minEl), hHi = R * Math.tan(maxEl);
+// An inside-facing cylinder strip, az0..az1 (radians from +y, positive towards +x), minEl..maxEl in degrees
+function cylinderStrip(tex, cx, cy, R, az0, az1, minEl, maxEl, segs, order) {
+  const hLo = R * Math.tan(deg(minEl)), hHi = R * Math.tan(deg(maxEl));
   const pos = [], uv = [], idx = [];
   for (let i = 0; i <= segs; i++) {
-    const u = i / segs, az = (u - 0.5) * span;
+    const u = i / segs, az = az0 + (az1 - az0) * u;
     const x = cx + R * Math.sin(az), y = cy + R * Math.cos(az);
     pos.push(x, y, hLo, x, y, hHi); uv.push(u, 0, u, 1);
-    if (i < segs) { const a0 = i * 2; idx.push(a0, a0 + 2, a0 + 1, a0 + 1, a0 + 2, a0 + 3); }
+    if (i < segs) { const a = i * 2; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -454,6 +307,323 @@ export function makeSkyPanorama(cx, cy, fogHex, haze) {
   geo.setIndex(idx);
   const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide, fog: false, depthWrite: false, toneMapped: false }));
   mesh.frustumCulled = false;
-  mesh.renderOrder = -1;
+  mesh.renderOrder = order;
   return mesh;
+}
+
+function canvasTexture(cv, wrapS) {
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  tex.generateMipmaps = true;
+  if (wrapS) tex.wrapS = THREE.RepeatWrapping;
+  return tex;
+}
+
+const mix = (a, b, t) => {
+  const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16)), pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
+  return '#' + pa.map((v, i) => Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, '0')).join('');
+};
+
+// Base line of the horizon band (degrees): ground haze below, silhouettes above
+const BASE_EL = 0.25;
+
+// ---- 360 degree wrap: sky clouds, distant ridges and the treeline all the way round ----
+const WRAP = { W: 4096, H: 512, minEl: -3, maxEl: 22 };
+
+function paintConifer(g, x, base, w, h, col, kind, rand) {
+  const tiers = kind === 'cedar' ? 6 : 8;
+  const tip = base - h, step = h / tiers;
+  const half = (i) => (w / 2) * (0.22 + 0.78 * i / tiers) * (0.88 + rand() * 0.24);
+  const droop = kind === 'cedar' ? step * 0.35 : step * 0.12;
+  g.fillStyle = col;
+  g.beginPath(); g.moveTo(x, tip);
+  let px = x, py = tip + step * 0.2;
+  const R = [], L = [];
+  for (let i = 1; i <= tiers; i++) {
+    const r = half(i), yb = tip + step * i;
+    R.push([x + r, yb + droop, x + r * 0.55, yb - step * 0.28]);
+    L.push([x - r, yb + droop, x - r * 0.55, yb - step * 0.28]);
+  }
+  void px; void py;
+  for (const s of R) { g.lineTo(s[0], s[1]); g.lineTo(s[2], s[3]); }
+  g.lineTo(x + w * 0.06, base); g.lineTo(x - w * 0.06, base);
+  for (let i = L.length - 1; i >= 0; i--) { g.lineTo(L[i][2], L[i][3]); g.lineTo(L[i][0], L[i][1]); }
+  g.closePath(); g.fill();
+}
+
+function paintMaple(g, x, base, w, h, col, rand) {
+  g.fillStyle = col;
+  g.fillRect(x - w * 0.04, base - h * 0.4, w * 0.08, h * 0.4 + 1);
+  for (let i = 0; i < 6; i++) {
+    const r = w * (0.2 + rand() * 0.12);
+    g.beginPath(); g.arc(x + (rand() - 0.5) * w * 0.55, base - h * (0.55 + rand() * 0.35), r, 0, TAU); g.fill();
+  }
+}
+
+function makeWrapTexture(haze) {
+  const { W, H, minEl, maxEl } = WRAP;
+  const cv = makeCanvas(W, H), g = cv.getContext('2d');
+  const rand = mulberry32(1962);
+  const Y = rowMap(minEl, maxEl, H);
+  const X = (az) => (az + 180) / 360 * W;
+  const yb = Y(BASE_EL);
+  const wrapDraw = (x, r, fn) => { for (const o of [-W, 0, W]) if (x + o > -r && x + o < W + r) fn(x + o); };
+  g.clearRect(0, 0, W, H);
+
+  // a few small fair-weather cumulus: flat shaded bases, puffy white tops
+  const clouds = [[-150, 12, 8], [-118, 17, 6], [-84, 9.5, 9], [-52, 15, 5], [-34, 20, 5.5], [22, 14.5, 7], [48, 10, 6], [70, 17.5, 8],
+    [102, 11, 9], [133, 16, 6], [158, 9, 7], [-176, 18, 6], [176, 13.5, 5], [5, 20, 4.5]];
+  for (const [az, el, wd] of clouds) {
+    const cw = wd * W / 360, ch = cw * 0.2;
+    const c2 = makeCanvas(Math.ceil(cw * 1.5), Math.ceil(ch * 3)), q = c2.getContext('2d');
+    const cx0 = c2.width / 2, cy0 = c2.height * 0.7;
+    q.fillStyle = '#fff';
+    for (let i = 0; i < 11; i++) {
+      const t = (i + rand() * 0.6) / 11 - 0.5, hump = 1 - Math.abs(t) * 1.6;
+      const r = ch * (0.32 + 0.55 * Math.max(0.15, hump) * (0.7 + rand() * 0.5));
+      q.beginPath(); q.arc(cx0 + t * cw * 1.05, cy0 - r * 0.55 * hump - rand() * ch * 0.1, r, 0, TAU); q.fill();
+    }
+    q.fillRect(cx0 - cw * 0.5, cy0 - ch * 0.12, cw, ch * 0.12); // flat base
+    q.globalCompositeOperation = 'source-atop';
+    const sg = q.createLinearGradient(0, cy0 - ch * 1.2, 0, cy0);
+    sg.addColorStop(0, 'rgba(255,255,255,0)'); sg.addColorStop(0.6, 'rgba(214,226,240,0.3)'); sg.addColorStop(1, 'rgba(176,196,222,0.85)');
+    q.fillStyle = sg; q.fillRect(0, 0, c2.width, c2.height);
+    q.globalCompositeOperation = 'destination-out'; // clear everything under the flat base
+    q.fillRect(0, cy0, c2.width, c2.height);
+    wrapDraw(X(az), cw, (x) => { g.globalAlpha = 0.96; g.drawImage(c2, x - cx0, Y(el) - cy0); g.globalAlpha = 1; });
+  }
+
+  // distant blue ridges (Olympics to the west, Cascades to the east), fading out behind the players
+  const ridgeAt = (az) => {
+    const a = Math.abs(az);
+    const k = Math.max(0, Math.min(1, (a - 40) / 25)) * Math.max(0, Math.min(1, (150 - a) / 40));
+    return 0.3 + k * (2.4 + 1.1 * Math.sin(az * 0.21 + 1) + 0.7 * Math.sin(az * 0.63) + 0.35 * Math.sin(az * 1.9 + az * az * 0.002));
+  };
+  g.fillStyle = mix('#9db4cc', haze, 0.4);
+  g.beginPath(); g.moveTo(0, yb);
+  for (let a = -180; a <= 180; a += 0.4) g.lineTo(X(a), Y(ridgeAt(a)));
+  g.lineTo(W, yb); g.closePath(); g.fill();
+
+  // treeline: how tall it stands depends on direction: full behind and at the sides, low towards the city and
+  // mountain (those are painted in the detail strip over the top of it)
+  const env = (az) => {
+    const a = Math.abs(az), k = Math.max(0, Math.min(1, (a - 38) / 80));
+    return 0.28 + 0.72 * k * k * (3 - 2 * k);
+  };
+  const rows = [
+    // far, hazy, taller | mid | near, dark
+    { col: mix('#456f5a', haze, 0.4), hmin: 2.4, hmax: 4.4, wmin: 0.8, wmax: 1.5, base: BASE_EL + 0.18, maple: 0, step: 0.5 },
+    { col: mix('#2f5a43', haze, 0.25), hmin: 1.8, hmax: 3.7, wmin: 0.7, wmax: 1.4, base: BASE_EL + 0.08, maple: 0.06, step: 0.45 },
+    { col: '#1d3f2c', hmin: 1.1, hmax: 3.0, wmin: 0.7, wmax: 1.5, base: BASE_EL, maple: 0.1, step: 0.55 },
+  ];
+  rows.forEach((row, ri) => {
+    for (let a = -182; a < 182; a += row.step * (0.4 + rand() * 0.9)) {
+      const e = env(a), kind = rand() < 0.55 ? 'fir' : 'cedar';
+      let h = (row.hmin + (row.hmax - row.hmin) * Math.pow(rand(), 1.3)) * e;
+      if (ri === 2 && rand() < 0.05) h *= 1.5;
+      const w = row.wmin + rand() * (row.wmax - row.wmin);
+      const hp = Math.abs(Y(h + row.base) - Y(row.base));
+      const wp = w * W / 360 * (kind === 'cedar' ? 1.25 : 0.9) * (0.6 + 0.4 * e);
+      const shade = rand() * 0.18 - 0.09;
+      const col = mix(row.col, shade > 0 ? '#5f8a50' : '#0c1f15', Math.abs(shade) * (ri === 0 ? 0.6 : 1));
+      const x = X(a), base = Y(row.base);
+      wrapDraw(x, wp, (xx) => {
+        if (rand() < row.maple * e * 1.6) paintMaple(g, xx, base, wp * 1.35, hp * 0.7, mix('#3f6a2c', row.col, ri === 2 ? 0.1 : 0.4), rand);
+        else paintConifer(g, xx, base, wp, hp, col, kind, rand);
+      });
+    }
+    // fill below the trees, then a haze veil over this row (stronger further away)
+    g.fillStyle = row.col; g.fillRect(0, Y(row.base), W, yb - Y(row.base) + 1);
+    const vg = g.createLinearGradient(0, Y(row.base + 1.2), 0, Y(row.base));
+    vg.addColorStop(0, 'rgba(' + hazeRgb(haze) + ',0)'); vg.addColorStop(1, 'rgba(' + hazeRgb(haze) + ',' + (0.35 - ri * 0.1) + ')');
+    g.fillStyle = vg; g.fillRect(0, Y(row.base + 1.2), W, Y(row.base) - Y(row.base + 1.2));
+  });
+  // ground haze below the base line
+  const hz = g.createLinearGradient(0, Y(1.6), 0, yb);
+  hz.addColorStop(0, 'rgba(' + hazeRgb(haze) + ',0)'); hz.addColorStop(1, 'rgba(' + hazeRgb(haze) + ',0.55)');
+  g.fillStyle = hz; g.fillRect(0, Y(1.6), W, yb - Y(1.6));
+  g.fillStyle = haze; g.fillRect(0, yb - 1, W, H - yb + 1);
+  return cv;
+}
+
+function hazeRgb(hex) { return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(','); }
+
+// ---- Detail strip down-court (+y): Rainier, the foothills, downtown and the Space Needle at high resolution ----
+const DET = { span: 120, W: 4096, minEl: -1.2, maxEl: 14 };
+DET.H = Math.round((Math.tan(deg(DET.maxEl)) - Math.tan(deg(DET.minEl))) * (DET.W / DET.span) * 180 / Math.PI);
+
+// The Space Needle, drawn as a silhouette from the tip (t = 0) to the foot (t = 1) of a tower `tot` px tall:
+// six slender legs flaring from a wide base to a narrow waist about 64% of the way down, then splaying out again
+// under the wide flat saucer (halo ring plus disc), with a smaller upper deck, roof cone and a thin spire.
+function paintNeedle(g, px, baseY, tot, haze) {
+  const topY = baseY - tot, y = (t) => topY + t * tot;
+  const light = '#f3f5f8', mid = '#d6dde6', edge = '#566d8c', shade = '#8da0b8';
+  const WAIST = 0.64, TOPW = 0.092, WAISTW = 0.034, BASEW = 0.125, TOPT = 0.335;
+  const hw = (t) => (t < WAIST
+    ? WAISTW + (TOPW - WAISTW) * Math.pow((WAIST - t) / (WAIST - TOPT), 1.9)
+    : WAISTW + (BASEW - WAISTW) * Math.pow((t - WAIST) / (1 - WAIST), 1.45)) * tot;
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  const leg = (k, w, col) => {
+    g.strokeStyle = col; g.lineWidth = w; g.beginPath();
+    for (let t = TOPT - 0.01; t <= 1.0001; t += 0.01) { const X = px + k * hw(t); t === TOPT - 0.01 ? g.moveTo(X, y(t)) : g.lineTo(X, y(t)); }
+    g.stroke();
+  };
+  // semi-transparent web between the outer legs so the hourglass reads as a solid shape
+  g.beginPath();
+  for (let t = TOPT - 0.01; t <= 1.0001; t += 0.01) g.lineTo(px - hw(t), y(t));
+  for (let t = 1; t >= TOPT - 0.01; t -= 0.01) g.lineTo(px + hw(t), y(t));
+  g.closePath(); g.fillStyle = 'rgba(236,241,247,0.72)'; g.fill();
+  // cross rings: just under the saucer, at the waist and down the lower flare
+  g.strokeStyle = mid; g.lineWidth = Math.max(1.3, tot * 0.009);
+  for (const t of [0.4, 0.5, WAIST, 0.74, 0.85, 0.95]) { g.beginPath(); g.moveTo(px - hw(t), y(t)); g.lineTo(px + hw(t), y(t)); g.stroke(); }
+  // legs: outer edges bold with a dark rim, inner legs lighter
+  const lw = Math.max(2.4, tot * 0.026);
+  leg(-1, lw + 2, edge); leg(1, lw + 2, edge);
+  leg(-0.55, lw * 0.7, shade); leg(0.55, lw * 0.7, shade); leg(-0.12, lw * 0.6, shade); leg(0.12, lw * 0.6, shade);
+  leg(-1, lw, light); leg(1, lw, mid);
+  // saucer: halo ring, windowed disc and a skirt tapering into the legs
+  const sw = tot * 0.19, t0 = 0.232;
+  g.fillStyle = light; g.strokeStyle = edge; g.lineWidth = Math.max(1.4, tot * 0.01);
+  g.beginPath(); g.moveTo(px - sw * 0.7, y(t0 + 0.005)); g.lineTo(px - sw, y(t0 + 0.028)); g.lineTo(px - sw * 0.86, y(t0 + 0.062));
+  g.lineTo(px - hw(TOPT) * 1.05, y(TOPT + 0.004)); g.lineTo(px + hw(TOPT) * 1.05, y(TOPT + 0.004)); g.lineTo(px + sw * 0.86, y(t0 + 0.062));
+  g.lineTo(px + sw, y(t0 + 0.028)); g.lineTo(px + sw * 0.7, y(t0 + 0.005)); g.closePath(); g.fill(); g.stroke();
+  g.fillStyle = '#8ea3bb'; // window band
+  g.fillRect(px - sw * 0.9, y(t0 + 0.021), sw * 1.8, tot * 0.014);
+  g.fillStyle = light; g.strokeStyle = edge; g.lineWidth = Math.max(1.4, tot * 0.01); // the halo: a thin, wider ring
+  g.beginPath(); g.moveTo(px - sw * 1.12, y(t0 + 0.002)); g.lineTo(px - sw * 0.66, y(t0 - 0.014)); g.lineTo(px + sw * 0.66, y(t0 - 0.014));
+  g.lineTo(px + sw * 1.12, y(t0 + 0.002)); g.lineTo(px + sw * 0.66, y(t0 + 0.012)); g.lineTo(px - sw * 0.66, y(t0 + 0.012)); g.closePath(); g.fill(); g.stroke();
+  // smaller upper deck, roof cone and the spire
+  const dw = tot * 0.075;
+  g.fillStyle = light;
+  g.beginPath(); g.moveTo(px - dw * 0.8, y(t0 - 0.014)); g.lineTo(px - dw, y(t0 - 0.05)); g.lineTo(px + dw, y(t0 - 0.05)); g.lineTo(px + dw * 0.8, y(t0 - 0.014)); g.closePath(); g.fill(); g.stroke();
+  g.fillStyle = '#8ea3bb'; g.fillRect(px - dw * 0.92, y(t0 - 0.038), dw * 1.84, tot * 0.01);
+  g.fillStyle = mid;
+  g.beginPath(); g.moveTo(px - dw * 0.7, y(t0 - 0.05)); g.lineTo(px, y(t0 - 0.085)); g.lineTo(px + dw * 0.7, y(t0 - 0.05)); g.closePath(); g.fill(); g.stroke();
+  g.strokeStyle = edge; g.lineWidth = Math.max(1.8, tot * 0.012);
+  g.beginPath(); g.moveTo(px, y(t0 - 0.083)); g.lineTo(px, topY); g.stroke();
+  // distance haze over the whole tower
+  g.fillStyle = 'rgba(' + hazeRgb(haze) + ',0.06)';
+  g.fillRect(px - sw * 1.3, topY - 2, sw * 2.6, tot + 2);
+}
+
+function makeDetailTexture(haze) {
+  const { span, W, H, minEl, maxEl } = DET;
+  const cv = makeCanvas(W, H), g = cv.getContext('2d');
+  const rand = mulberry32(1962);
+  const X = (az) => (az + span / 2) / span * W;
+  const Y = rowMap(minEl, maxEl, H);
+  const yb = Y(BASE_EL), ppd = W / span;
+  const hz = hazeRgb(haze);
+  g.clearRect(0, 0, W, H);
+
+  // Mount Rainier: broad massif, flat crater summit, ragged snowline, sunlit snow on blue-grey flanks.
+  // Real Rainier is ~4 deg tall from Seattle, a little exaggerated here.
+  const rc = -12, halfW = 16, peakEl = 9;
+  const prof = (az) => {
+    const u = (az - rc) / halfW;
+    if (Math.abs(u) >= 1) return BASE_EL;
+    const shape = Math.pow(1 - Math.abs(u), 1.2) * (1 + 0.045 * Math.sin(u * 17) + 0.03 * Math.sin(u * 41 + 1));
+    let e = BASE_EL + (peakEl - BASE_EL) * shape;
+    if (Math.abs(u) < 0.07) e -= 0.22 * (1 - Math.abs(u) / 0.07);
+    return e;
+  };
+  g.beginPath(); g.moveTo(X(rc - halfW), yb);
+  for (let a = rc - halfW; a <= rc + halfW; a += 0.1) g.lineTo(X(a), Y(prof(a)));
+  g.lineTo(X(rc + halfW), yb); g.closePath();
+  const rg = g.createLinearGradient(0, Y(peakEl), 0, yb);
+  rg.addColorStop(0, '#6f8bb2'); rg.addColorStop(1, '#8aa3c3');
+  g.fillStyle = rg; g.fill();
+  g.save(); g.clip();
+  // shaded flank on the right (the sun is behind us to the left), a darker blue-grey ridge on the left
+  g.beginPath(); g.moveTo(X(rc + 0.5), Y(peakEl));
+  for (let a = rc + 0.5; a <= rc + halfW; a += 0.4) g.lineTo(X(a), Y(prof(a) * 0.93));
+  g.lineTo(X(rc + halfW), yb); g.lineTo(X(rc + 4), yb); g.closePath();
+  g.fillStyle = 'rgba(52,76,118,0.42)'; g.fill();
+  // snow cap above a ragged snow line
+  const sl = (a) => 4.2 + 0.35 * Math.sin(a * 1.7) + 0.3 * Math.sin(a * 4.3 + 2) + (Math.abs(a - rc) / halfW) * 0.45;
+  g.beginPath(); g.moveTo(X(rc - halfW), Y(0));
+  for (let a = rc - halfW; a <= rc + halfW; a += 0.1) g.lineTo(X(a), Y(sl(a)));
+  g.lineTo(X(rc + halfW), Y(12)); g.lineTo(X(rc - halfW), Y(12)); g.closePath();
+  const sg = g.createLinearGradient(X(rc - halfW), 0, X(rc + halfW), 0);
+  sg.addColorStop(0, '#ffffff'); sg.addColorStop(0.55, '#fbfdff'); sg.addColorStop(0.75, '#dbe5f2'); sg.addColorStop(1, '#bccbe0');
+  g.fillStyle = sg; g.fill();
+  // glacier ridges and rock ribs running down from the summit
+  g.strokeStyle = 'rgba(96,120,160,0.4)'; g.lineWidth = 3.2;
+  for (let i = 0; i < 9; i++) {
+    const a0 = rc + (rand() - 0.5) * 3, a1 = rc + (rand() - 0.5) * 22;
+    g.beginPath(); g.moveTo(X(a0), Y(peakEl - 0.4));
+    g.quadraticCurveTo((X(a0) + X(a1)) / 2 + (rand() - 0.5) * 30, Y(5.6), X(a1), Y(sl(a1) - 0.1));
+    g.stroke();
+  }
+  // gentle distance haze, heavier at the foot
+  const hg = g.createLinearGradient(0, Y(peakEl), 0, yb);
+  hg.addColorStop(0, 'rgba(' + hz + ',0.04)'); hg.addColorStop(1, 'rgba(' + hz + ',0.6)');
+  g.fillStyle = hg; g.fillRect(0, 0, W, H);
+  g.restore();
+
+  // foothills and a tree-covered ridge behind the city; faded out towards both ends of the strip
+  const foot = (a) => BASE_EL + 0.9 + 0.5 * Math.sin(a * 0.31) + 0.2 * Math.sin(a * 0.9 + 1);
+  g.fillStyle = mix('#6a8a8c', haze, 0.3);
+  g.beginPath(); g.moveTo(X(-span / 2), yb);
+  for (let a = -span / 2; a <= span / 2; a += 0.2) g.lineTo(X(a), Y(foot(a)));
+  g.lineTo(X(span / 2), yb); g.closePath(); g.fill();
+
+  // downtown: blue-grey towers with lit left faces and window flecks. Low next to the Needle.
+  const towers = [];
+  let a = -11;
+  while (a < 15) {
+    const w = 0.9 + rand() * 1.3, c = a + w / 2, k = 1 - Math.min(1, Math.abs(c - 7) / 18);
+    towers.push({ az: c, w, h: 0.6 + (0.45 + rand() * 1.0) * (0.45 + 0.7 * k), tone: rand() });
+    a += w * (0.55 + rand() * 0.4);
+  }
+  towers.push({ az: 9.5, w: 1.5, h: 3.1, tone: 0.6 }); // Columbia Center-like tallest tower
+  towers.push({ az: 1.8, w: 1.4, h: 2.5, tone: 0.2 });
+  towers.push({ az: -1.2, w: 1.1, h: 2.1, tone: 0.7 });
+  towers.push({ az: 12.5, w: 1.0, h: 1.9, tone: 0.4 });
+  const paintTower = (t) => {
+    const x0 = X(t.az - t.w / 2), x1 = X(t.az + t.w / 2), top = Y(BASE_EL + t.h);
+    const lum = t.tone * 0.5;
+    g.fillStyle = `rgb(${Math.round(112 + lum * 34)},${Math.round(134 + lum * 32)},${Math.round(166 + lum * 24)})`;
+    g.fillRect(x0, top, x1 - x0, yb - top);
+    g.fillStyle = 'rgba(255,255,255,0.2)'; g.fillRect(x0, top, (x1 - x0) * 0.4, yb - top);
+    g.fillStyle = 'rgba(44,64,100,0.26)'; g.fillRect(x1 - (x1 - x0) * 0.3, top, (x1 - x0) * 0.3, yb - top);
+    if (t.h > 2.6) { g.fillStyle = 'rgba(112,134,166,0.95)'; g.fillRect(x0 + (x1 - x0) * 0.3, top - 10, (x1 - x0) * 0.4, 11); }
+    g.fillStyle = 'rgba(255,248,214,0.26)';
+    for (let yy = top + 10; yy < yb - 14; yy += 11) for (let xx = x0 + 4; xx < x1 - 4; xx += 8) if (rand() < 0.28) g.fillRect(xx, yy, 3, 3);
+  };
+  towers.sort((p, q) => p.h - q.h).forEach(paintTower);
+  // haze at the foot of the city
+  const fh = g.createLinearGradient(0, Y(1.2), 0, yb);
+  fh.addColorStop(0, 'rgba(' + hz + ',0)'); fh.addColorStop(1, 'rgba(' + hz + ',0.5)');
+  g.fillStyle = fh; g.fillRect(X(-14), Y(1.2), X(18) - X(-14), yb - Y(1.2));
+
+  // Space Needle: about twice the height of the typical tower
+  paintNeedle(g, X(4.5), yb + 2, yb - Y(BASE_EL + 6.3), haze);
+
+  // ground haze and the fog band, matching scene.fog so the grass fades straight into it
+  const hgz = g.createLinearGradient(0, Y(1.4), 0, yb);
+  hgz.addColorStop(0, 'rgba(' + hz + ',0)'); hgz.addColorStop(1, 'rgba(' + hz + ',0.55)');
+  g.fillStyle = hgz; g.fillRect(0, Y(1.4), W, yb - Y(1.4));
+  g.fillStyle = haze; g.fillRect(0, yb - 1, W, H - yb + 1);
+  // fade this strip out at both ends (the 360 degree wrap shows through)
+  g.globalCompositeOperation = 'destination-out';
+  for (const [x0, x1, a0, a1] of [[0, W * 0.16, 1, 0], [W * 0.84, W, 0, 1]]) {
+    const ef = g.createLinearGradient(x0, 0, x1, 0);
+    ef.addColorStop(0, `rgba(0,0,0,${a0})`); ef.addColorStop(1, `rgba(0,0,0,${a1})`);
+    g.fillStyle = ef; g.fillRect(x0, 0, x1 - x0, yb - 2);
+  }
+  g.globalCompositeOperation = 'source-over';
+  void ppd;
+  return cv;
+}
+
+// Panorama group: the 360 degree wrap (sky features and treeline) and the down-court detail strip over it.
+// Cylinders are centred on the court; fog is off and colours are exact (not tone mapped), like the sky dome.
+export function makeSkyPanorama(cx, cy, fogHex = SKY_HAZE) {
+  const grp = new THREE.Group();
+  const wrap = cylinderStrip(canvasTexture(makeWrapTexture(fogHex), true), cx, cy, 240, -Math.PI, Math.PI, WRAP.minEl, WRAP.maxEl, 144, -2);
+  const det = cylinderStrip(canvasTexture(makeDetailTexture(fogHex), false), cx, cy, 236, deg(-DET.span / 2), deg(DET.span / 2), DET.minEl, DET.maxEl, 48, -1);
+  grp.add(wrap, det);
+  return grp;
 }

@@ -3,7 +3,7 @@ import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
-import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeSkyPanorama, isPhone } from './scenery.js';
+import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeSkyPanorama, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 
 const TRANSITION = 0.6; // seconds for camera moves
 
@@ -103,21 +103,18 @@ function grooveTexture(team) {
 
 // Sky dome with a vertical colour gradient
 function makeSky() {
-  const geo = new THREE.SphereGeometry(200, 24, 16);
-  const pos = geo.attributes.position, col = new Float32Array(pos.count * 3);
-  const top = new THREE.Color('#2f7ae0'), hor = new THREE.Color('#cfe0f2'), c = new THREE.Color();
+  // clear summer sky: deeper blue overhead fading to a pale haze at the horizon (same gradient as the panorama and fog)
+  const geo = new THREE.SphereGeometry(200, 48, 64);
+  // sphere's pole is +y; rotate so +z is up
+  geo.rotateX(Math.PI / 2);
+  const pos = geo.attributes.position, col = new Float32Array(pos.count * 3), c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
-    const t = Math.max(0, Math.min(1, pos.getZ(i) / 120));
-    c.copy(hor).lerp(top, Math.pow(t, 0.45));
+    skyColor(Math.asin(Math.max(-1, Math.min(1, pos.getZ(i) / 200))) * 180 / Math.PI, c);
     col.set([c.r, c.g, c.b], i * 3);
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  // sphere's pole is +y; rotate so +z is up
-  geo.rotateX(Math.PI / 2);
-  return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
+  return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false, toneMapped: false }));
 }
-
-// Tiny scene baked to an environment map so the steel has something to reflect
 function makeEnvMap(renderer) {
   const s = new THREE.Scene();
   s.add(makeSky());
@@ -154,11 +151,11 @@ export function createRenderer(canvas, terrain) {
   renderer.toneMappingExposure = 1.0;
 
   const scene = new THREE.Scene();
-  const FOG = new THREE.Color('#cfdcea');
+  const FOG = new THREE.Color(SKY_HAZE);
   scene.background = FOG;
   scene.fog = new THREE.Fog(FOG, 30, 170);
   scene.add(makeSky());
-  scene.add(makeSkyPanorama(C.terrainW / 2, C.terrainL / 2, '#cfdcea', '207,220,234'));
+  scene.add(makeSkyPanorama(C.terrainW / 2, C.terrainL / 2, SKY_HAZE));
   scene.environment = makeEnvMap(renderer);
 
   const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 300);
