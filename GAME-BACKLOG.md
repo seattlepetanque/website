@@ -261,8 +261,8 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 
 | ID | Status | Model | Deps | Title |
 |---|---|---|---|---|
-| D01 | todo | sonnet | — | Full-window game view; no page scrolling while playing |
-| D02 | todo | sonnet | — | Throw energy limit: far lobs pulled closer, higher lobs less accurate |
+| D01 | in-progress | sonnet | — | Full-window game view; no page scrolling while playing |
+| D02 | done | sonnet | — | Throw energy limit: far lobs pulled closer, higher lobs less accurate |
 | D03 | todo | haiku | — | Hide the planned trajectory for AI players |
 | D04 | todo | sonnet | — | Make the cochonnet easy to see |
 | D05 | todo | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
@@ -296,6 +296,11 @@ A ball is out of bounds when, seen from above, the whole ball is outside the str
 ### D07 Measuring lines and scoring circle (sonnet)
 - **Between throws:** during the interstitial camera moves (after a throw settles and before the next aim), show measuring lines from the cochonnet to the closest boule of each team, labelled with distances. Use the team colours, and clear them when aiming starts.
 - **At mène end:** the camera shows a transparent filled circle on the ground, centred on the jack, just large enough to contain every scoring boule. Each scoring boule is numbered 1, 2, 3… in order of closeness. Show the opponent's best boule just outside the circle, unnumbered, for comparison. Fit the camera so the circle and numbers read clearly, and make sure the mène-end card doesn't cover them (move the card or shrink it).
+
+### D02 notes
+- Effort = launch speed × loft weight (0.76 at 8° → 1.55 at 75°) against `SKILL.*.maxSpeed` (human 11.6, Marcel 11.3, Odette 12.4, Pierre 12.2). Human reach: demi-portée to 10 m fine; 60° tops out ≈ 8.4 m, 65° ≈ 6.3 m, 70° ≈ 4.6 m.
+- Cone: lateral ×(1 + 0.25·t), long ×(1 + 0.85·t) with loft fraction t, all × (1 + 9·max(0, energyFrac − 0.7)²). Coverage test unchanged. `difficultyScale` now 2.3 / 1.35 / 0.65.
+- AI jack legality on Easy fell to 82% (Medium/Hard ≈ 97%). The "Max reach" status line isn't cleared when you unclamp. The main.js preview hook (`fitToss`) was committed with D01 because both edited main.js at once.
 
 ### D08 Round 3 review (sonnet)
 Run `npm test`, the build check and the full-match test, take screenshots on desktop and phone, review the code for bugs, and add a "Round 3 remaining issues" list at the end of this file.

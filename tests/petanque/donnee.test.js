@@ -7,6 +7,7 @@ import { createBody, launch, createWorld, simulate } from '../../assets/js/petan
 import {
   LOFT_MIN, LOFT_MAX, styleForLoft, backspinForLoft, solveLaunch, SKILL, difficultyScale, coneFor,
   executeThrow, arcPath, coneEnvelope, predictRoll, releaseHeight, releaseFrom, snapAim, SNAP_SHORT,
+  fitToBudget, effortFor, energyFor, energyPenalty,
 } from '../../assets/js/petanque/donnee.js';
 
 const DEG = Math.PI / 180;
@@ -116,7 +117,7 @@ test('coneFor grows with distance and loft; skills and difficulty', () => {
   // human at 10 m: lateral 1.2%, longitudinal 3% rising to 5% at 75 degrees
   const h8 = coneFor({ skill: SKILL.human, from, landing: { x: 2, y: 11 }, loft: LOFT_MIN });
   assert.ok(Math.abs(h8.sigmaLat - 0.12) < 1e-9 && Math.abs(h8.sigmaLong - 0.3) < 1e-9);
-  assert.ok(Math.abs(high.sigmaLong - 0.5) < 1e-9);
+  assert.ok(Math.abs(high.sigmaLong - 0.3 * 1.85) < 1e-9);
   assert.ok(Math.abs(h8.sigmaLoft - 1.5 * DEG) < 1e-9);
   assert.ok(SKILL.marcel.long < SKILL.human.long && SKILL.odette.lat < SKILL.human.lat);
   assert.ok(SKILL.pierre.lat > SKILL.odette.lat);
@@ -282,4 +283,51 @@ test('a tir aims just short of its target along the line', () => {
   // very close target: never aims past the thrower
   const near = snapAim(f, { x: 2, y: 1.2 });
   assert.ok(near.y > 1);
+});
+
+test('fitToBudget clamps far high lobs and leaves easy throws alone', () => {
+  const f = { x: 2, y: 1, z: 0.9 };
+  const easy = fitToBudget({ from: f, landing: { x: 2, y: 8 }, loft: 32 * DEG, skill: SKILL.human, terrain: flat });
+  assert.equal(easy.clamped, false);
+  assert.deepEqual(easy.landing, { x: 2, y: 8 });
+  const demi10 = fitToBudget({ from: f, landing: { x: 2, y: 11 }, loft: 32 * DEG, skill: SKILL.human, terrain: flat });
+  assert.equal(demi10.clamped, false, 'a demi-portée to 10 m is comfortable');
+  const lob = fitToBudget({ from: f, landing: { x: 2.5, y: 9 }, loft: 70 * DEG, skill: SKILL.human, terrain: flat });
+  assert.equal(lob.clamped, true);
+  const d = Math.hypot(lob.landing.x - f.x, lob.landing.y - f.y);
+  assert.ok(d < 6 && d > 3, `70 degree lob reaches ${d}`);
+  // slid along the aim line toward the thrower
+  const cross = (lob.landing.x - f.x) * (9 - f.y) - (lob.landing.y - f.y) * (2.5 - f.x);
+  assert.ok(Math.abs(cross) < 1e-6);
+  const p60 = fitToBudget({ from: f, landing: { x: 2, y: 9 }, loft: 60 * DEG, skill: SKILL.human, terrain: flat });
+  assert.ok(p60.landing.y - f.y > 7 && p60.landing.y - f.y < 9.2, '60 degrees reaches about 8 m');
+});
+
+test('energyFrac is within the budget after fitting, for every skill and loft', () => {
+  const f = { x: 2, y: 1, z: 0.9 };
+  for (const id of ['human', 'marcel', 'odette', 'pierre']) {
+    for (const deg of [10, 20, 32, 45, 55, 65, 75]) {
+      for (const d of [3, 7, 11]) {
+        const r = fitToBudget({ from: f, landing: { x: 2, y: 1 + d }, loft: deg * DEG, skill: SKILL[id], terrain: flat });
+        assert.ok(r.energyFrac <= 1 + 1e-9, `${id} ${deg} ${d}: ${r.energyFrac}`);
+        const e = energyFor({ from: f, landing: r.landing, loft: deg * DEG, skill: SKILL[id], terrain: flat });
+        assert.ok(e <= 1 + 0.01, `${id} ${deg} ${d}: recomputed ${e}`);
+      }
+    }
+  }
+  assert.ok(SKILL.odette.maxSpeed > SKILL.human.maxSpeed && SKILL.pierre.maxSpeed > SKILL.human.maxSpeed);
+  assert.ok(SKILL.marcel.maxSpeed < SKILL.human.maxSpeed);
+  assert.ok(effortFor(10, 70 * DEG) > effortFor(10, 32 * DEG));
+});
+
+test('cone grows with loft and with energyFrac', () => {
+  const landing = { x: 2, y: 8 };
+  const c = (loft, energyFrac) => coneFor({ skill: SKILL.human, from, landing, loft, energyFrac });
+  const lo = c(20 * DEG, 0), hi = c(65 * DEG, 0);
+  assert.ok(hi.sigmaLat > lo.sigmaLat && hi.sigmaLong > lo.sigmaLong);
+  const same = c(20 * DEG), knee = c(20 * DEG, 0.7), mid = c(20 * DEG, 0.85), max = c(20 * DEG, 1);
+  assert.deepEqual(same, lo);
+  assert.deepEqual(knee, lo);
+  assert.ok(mid.sigmaLong > lo.sigmaLong && max.sigmaLong > mid.sigmaLong && max.sigmaLat > mid.sigmaLat);
+  assert.ok(Math.abs(max.sigmaLong / lo.sigmaLong - energyPenalty(1)) < 1e-9 && energyPenalty(1) > 1.5);
 });

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mulberry32, gauss } from '../../assets/js/petanque/rng.js';
 import { createBody, launch, createWorld, simulate } from '../../assets/js/petanque/physics.js';
 import { createMatch, jackValid } from '../../assets/js/petanque/rules.js';
-import { LOFT_MIN, LOFT_MAX, styleForLoft } from '../../assets/js/petanque/donnee.js';
+import { LOFT_MIN, LOFT_MAX, styleForLoft, SKILL, energyFor } from '../../assets/js/petanque/donnee.js';
 import { chooseThrow, chooseThrowAsync, chooseJackThrow } from '../../assets/js/petanque/ai.js';
 
 // Flat packed terrain, no stones
@@ -181,4 +181,23 @@ test('Marcel does not always throw plombées', () => {
     styles.add(r.style);
   }
   assert.ok(styles.size >= 2, [...styles].join());
+});
+
+test('the AI never plans a throw beyond its energy budget', () => {
+  const from = { x: 2, y: 1, z: 0.9 };
+  for (const [id, jy] of [['marcel', 8.5], ['marcel', 10.5], ['odette', 10.5], ['pierre', 7]]) {
+    for (const difficulty of ['easy', 'hard']) {
+      const s = setup({ jack: { x: 2.2, y: jy }, boules: [{ x: 2.3, y: jy + 0.1, team: 0 }] });
+      const player = s.match.players.find((p) => p.id === id);
+      const r = chooseThrow({ world: s.world, match: s.match, player, difficulty, rand: mulberry32(11), from });
+      const e = energyFor({ from: r.from, landing: r.donnee, loft: r.loft, skill: SKILL[id], terrain: s.world.terrain });
+      assert.ok(e <= 1.005, `${id} ${difficulty} jack ${jy}: ${e}`);
+      assert.ok(r.energyFrac <= 1.000001);
+    }
+  }
+  const s = setup({ jack: { x: 2, y: 8.5 } });
+  for (const id of ['marcel', 'odette']) {
+    const r = chooseJackThrow({ world: s.world, difficulty: 'medium', rand: mulberry32(3), player: s.match.players.find((p) => p.id === id), from });
+    assert.ok(energyFor({ from: r.from, landing: r.donnee, loft: r.loft, skill: SKILL[id], terrain: s.world.terrain }) <= 1.005);
+  }
 });

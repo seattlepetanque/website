@@ -168,34 +168,80 @@ export function solveLaunch({ from = C.throwFrom, landing, loft, terrain }) {
   return { yaw, speed: r.speed, loft: useLoft, backspin: backspinForLoft(loft), sidespin: 0 };
 }
 
-// Base sigmas: lat and long are fractions of throw distance (long is the low-loft value), loft in radians
+// Base sigmas: lat and long are fractions of throw distance (long is the low-loft value), loft in radians.
+// maxSpeed is the throw "effort" (m/s, see effortFor) the player can deliver with good control (D02).
 export const SKILL = Object.freeze({
-  human: Object.freeze({ lat: 0.012, long: 0.03, loft: 1.5 * DEG }),
-  marcel: Object.freeze({ lat: 0.011, long: 0.022, loft: 1.2 * DEG }), // pointeur: tight long
-  odette: Object.freeze({ lat: 0.008, long: 0.03, loft: 1.4 * DEG }), // tireur: tight lateral
-  pierre: Object.freeze({ lat: 0.01, long: 0.033, loft: 1.6 * DEG }), // tireur-ish, a bit looser
+  human: Object.freeze({ lat: 0.012, long: 0.03, loft: 1.5 * DEG, maxSpeed: 11.6 }),
+  marcel: Object.freeze({ lat: 0.011, long: 0.022, loft: 1.2 * DEG, maxSpeed: 11.3 }), // pointeur: tight long, weaker arm
+  odette: Object.freeze({ lat: 0.008, long: 0.03, loft: 1.4 * DEG, maxSpeed: 12.4 }), // tireur: tight lateral, strong
+  pierre: Object.freeze({ lat: 0.01, long: 0.033, loft: 1.6 * DEG, maxSpeed: 12.2 }), // tireur-ish, a bit looser, strong
 });
-export const difficultyScale = Object.freeze({ easy: 2.8, medium: 1.6, hard: 0.75 });
-const LONG_GROWTH = 5 / 3; // longitudinal sigma at LOFT_MAX relative to LOFT_MIN
+export const difficultyScale = Object.freeze({ easy: 2.3, medium: 1.35, hard: 0.65 });
+const LONG_GROWTH = 1.85; // longitudinal sigma at LOFT_MAX relative to LOFT_MIN
+const LAT_GROWTH = 1.25; // lateral sigma at LOFT_MAX relative to LOFT_MIN
+// Near-max throws are less accurate: both sigmas are multiplied by 1 + ENERGY_K * max(0, energyFrac - ENERGY_KNEE)^2
+export const ENERGY_KNEE = 0.7, ENERGY_K = 9;
+export const energyPenalty = (energyFrac) => 1 + ENERGY_K * Math.max(0, energyFrac - ENERGY_KNEE) ** 2;
 
-// Scale an AI skill by difficulty (the human is never scaled)
+// Scale an AI skill by difficulty (the human is never scaled); strength is not scaled
 export function scaledSkill(skill, difficulty = 'medium') {
   const s = typeof skill === 'string' ? SKILL[skill] : skill;
   const f = difficultyScale[difficulty] || 1;
-  return { lat: s.lat * f, long: s.long * f, loft: s.loft * f };
+  return { lat: s.lat * f, long: s.long * f, loft: s.loft * f, maxSpeed: s.maxSpeed };
 }
 
-// Sigmas in metres, metres, radians; grow with distance and (longitudinally) with loft.
-// `skill` is a { lat, long, loft } object or a SKILL name.
-export function coneFor({ skill, from = C.throwFrom, landing, loft }) {
+// Sigmas in metres, metres, radians; grow with distance, with loft, and with the fraction of the throw budget used.
+// `skill` is a { lat, long, loft } object or a SKILL name; energyFrac defaults to no penalty.
+export function coneFor({ skill, from = C.throwFrom, landing, loft, energyFrac = 0 }) {
   const s = typeof skill === 'string' ? SKILL[skill] : skill;
   const dist = Math.hypot(landing.x - from.x, landing.y - from.y);
   const t = Math.max(0, Math.min(1, (loft - LOFT_MIN) / (LOFT_MAX - LOFT_MIN)));
+  const pen = energyPenalty(energyFrac);
   return {
-    sigmaLat: dist * s.lat,
-    sigmaLong: dist * s.long * (1 + (LONG_GROWTH - 1) * t),
-    sigmaLoft: s.loft,
+    sigmaLat: dist * s.lat * (1 + (LAT_GROWTH - 1) * t) * pen,
+    sigmaLong: dist * s.long * (1 + (LONG_GROWTH - 1) * t) * pen,
+    sigmaLoft: s.loft * pen,
   };
+}
+
+// --- Throw energy budget (D02) -------------------------------------------------------------
+// Effort is launch speed weighted by how hard the loft is to deliver: a low roulette is cheap for its speed, a
+// high lob costs more (more of the throw goes into height). Knots [loft deg, weight].
+const EFFORT_KNOTS = [[8, 0.76], [20, 0.86], [32, 1], [45, 1.05], [55, 1.14], [60, 1.21], [70, 1.42], [75, 1.55]];
+export function effortFor(speed, loft) {
+  const d = loft / DEG, k = EFFORT_KNOTS;
+  let w = k[k.length - 1][1];
+  if (d <= k[0][0]) w = k[0][1];
+  else for (let i = 1; i < k.length; i++) {
+    if (d <= k[i][0]) { w = k[i - 1][1] + (d - k[i - 1][0]) / (k[i][0] - k[i - 1][0]) * (k[i][1] - k[i - 1][1]); break; }
+  }
+  return speed * w;
+}
+export const maxEffortOf = (skill) => (typeof skill === 'string' ? SKILL[skill] : skill).maxSpeed || SKILL.human.maxSpeed;
+
+// Fraction of the budget the throw needs (may exceed 1)
+export function energyFor({ from = C.throwFrom, landing, loft, skill, terrain }) {
+  const sl = solveLaunch({ from, landing, loft, terrain });
+  return effortFor(sl.speed, sl.loft) / maxEffortOf(skill);
+}
+
+// Pull the donnée toward the thrower along the aim line until the throw fits the budget.
+// Returns { landing, clamped, energyFrac } where energyFrac is for the final throw (<= 1 when it fits).
+export function fitToBudget({ from = C.throwFrom, landing, loft, skill, terrain }) {
+  const e0 = energyFor({ from, landing, loft, skill, terrain });
+  if (e0 <= 1) return { landing, clamped: false, energyFrac: e0 };
+  const dx = landing.x - from.x, dy = landing.y - from.y;
+  const at = (k) => ({ x: from.x + dx * k, y: from.y + dy * k });
+  let lo = 0, hi = 1; // lo fits (or is the thrower), hi does not
+  const minK = Math.min(1, 0.5 / (Math.hypot(dx, dy) || 1));
+  if (energyFor({ from, landing: at(minK), loft, skill, terrain }) > 1) return { landing: at(minK), clamped: true, energyFrac: 1 };
+  lo = minK;
+  for (let i = 0; i < 14; i++) {
+    const mid = (lo + hi) / 2;
+    if (energyFor({ from, landing: at(mid), loft, skill, terrain }) <= 1) lo = mid; else hi = mid;
+  }
+  const out = at(lo);
+  return { landing: out, clamped: true, energyFrac: Math.min(1, energyFor({ from, landing: out, loft, skill, terrain })) };
 }
 
 // Unit vectors along the throw and to its right (toward +x at yaw 0)

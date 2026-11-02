@@ -6,7 +6,7 @@ import { C } from './constants.js';
 import { mulberry32 } from './rng.js';
 import { createBody, launch, createWorld, simulate } from './physics.js';
 import { meneResult, boulesInHand, jackValid } from './rules.js';
-import { SKILL, scaledSkill, coneFor, executeThrow, solveLaunch, styleForLoft, releaseFrom } from './donnee.js';
+import { SKILL, scaledSkill, coneFor, executeThrow, solveLaunch, styleForLoft, releaseFrom, fitToBudget } from './donnee.js';
 
 const DEG = Math.PI / 180;
 
@@ -188,8 +188,8 @@ const clampDonnee = (d) => ({
 });
 
 // One noisy throw through the same model as the human's: the player's cone, on the given terrain
-function throwThrough({ from, donnee, loft, skill, terrain, rand }) {
-  const cone = coneFor({ skill, from, landing: donnee, loft });
+function throwThrough({ from, donnee, loft, skill, terrain, rand, energyFrac = 0 }) {
+  const cone = coneFor({ skill, from, landing: donnee, loft, energyFrac });
   const tp = executeThrow({ from, landing: donnee, loft, cone, terrain, rand }).throwParams;
   tp.from = from; // launch() uses it, so the boule leaves from the same release point the solver assumed
   return tp;
@@ -205,15 +205,16 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
   const cands = buildCandidates(world, match, player);
   const finish = (donnee, loft, intent, label, score, snapped, labelKey) => {
     const rel = releaseFrom(from, loft);
-    const throwParams = throwThrough({ from: rel, donnee, loft, skill, terrain: world.terrain, rand });
-    return { throwParams, from: rel, intent, label, labelKey, score, donnee, loft, style: styleForLoft(loft, snapped) };
+    const fit = fitToBudget({ from: rel, landing: donnee, loft, skill, terrain: world.terrain });
+    const throwParams = throwThrough({ from: rel, donnee: fit.landing, loft, skill, terrain: world.terrain, rand, energyFrac: fit.energyFrac });
+    return { throwParams, from: rel, intent, label, labelKey, score, donnee: fit.landing, loft, style: styleForLoft(loft, snapped), energyFrac: fit.energyFrac };
   };
   if (!cands.length) {
     // no jack to aim at: just lob towards the middle of the lane
     return finish({ x: C.circle.x, y: 8 }, AI.lofts.demi, 'point', `${player.name} points a demi-portée`, 0, false, { event: 'spotPoint', style: 'demi-portee' });
   }
   const seeds = cands.map(() => seedFrom(rand));
-  let best = null;
+  let best = null, fallback = null;
   for (let i = 0; i < cands.length; i++) {
     const k = cands[i];
     const fk = releaseFrom(from, k.loft);
@@ -227,10 +228,17 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
       if (!donnee) continue;
     }
     donnee = clampDonnee(donnee);
+    // candidates beyond the throw budget are dropped (the first one is kept, pulled in, in case nothing fits)
+    const fit = fitToBudget({ from: fk, landing: donnee, loft: k.loft, skill, terrain: perceived });
+    if (fit.clamped) {
+      if (!fallback) fallback = { k, donnee: fit.landing, score: -9 };
+      continue;
+    }
+    const energyFrac = fit.energyFrac;
     let sum = 0, sum2 = 0;
     for (let s = 0; s < nSims; s++) {
       const w = world.clone(perceived, mulberry32(seedFrom(srand)));
-      const tp = throwThrough({ from: fk, donnee, loft: k.loft, skill, terrain: perceived, rand: srand });
+      const tp = throwThrough({ from: fk, donnee, loft: k.loft, skill, terrain: perceived, rand: srand, energyFrac });
       const b = launch(createBody('boule', { team, owner: player.id }), tp, fk);
       w.add(b);
       simulate(w, AI.maxSimSeconds);
@@ -245,6 +253,8 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
     if (!best || score > best.score) best = { k, donnee, score };
     yield;
   }
+  if (!best) best = fallback;
+  if (!best) return finish({ x: C.circle.x, y: 8 }, AI.lofts.demi, 'point', `${player.name} points a demi-portée`, 0, false, { event: 'spotPoint', style: 'demi-portee' });
   const { k, donnee } = best;
   return finish(donnee, k.loft, k.intent, makeLabel(player, k), best.score, k.intent === 'shoot', labelKeyFor(k));
 }
@@ -300,23 +310,32 @@ export function chooseJackThrow({ world, difficulty = 'medium', rand, player, fr
   for (const k of cands) {
     const srand = mulberry32(seedFrom(rand));
     const from = releaseFrom(base, k.loft);
-    const donnee = refineDonnee(world, 'jack', from, k.want, k.loft, k.donnee, perceived, srand);
+    const refined = refineDonnee(world, 'jack', from, k.want, k.loft, k.donnee, perceived, srand);
+    const fit = fitToBudget({ from, landing: refined, loft: k.loft, skill, terrain: perceived });
+    if (fit.clamped) continue; // beyond the throw budget
+    const donnee = refined, energyFrac = fit.energyFrac;
     let ok = 0;
     for (let s = 0; s < nSims; s++) {
       const w = world.clone(perceived, mulberry32(seedFrom(srand)));
       w.bodies.length = 0;
-      const tp = throwThrough({ from, donnee, loft: k.loft, skill, terrain: perceived, rand: srand });
+      const tp = throwThrough({ from, donnee, loft: k.loft, skill, terrain: perceived, rand: srand, energyFrac });
       const b = launch(createBody('jack', {}), tp, from);
       w.add(b);
       simulate(w, AI.maxSimSeconds);
       if (jackValid(b)) ok++;
     }
     const score = ok - 0.1 * Math.abs(k.want.y - C.circle.y - AI.jackTarget);
-    if (!best || score > best.score) best = { k, donnee, score };
+    if (!best || score > best.score) best = { k, donnee, energyFrac, score };
+  }
+  if (!best) { // nothing fits the budget: the low jack at the nearest distance
+    const k = cands[0] || { loft: AI.lofts.jackLow, want: { x: C.circle.x, y: C.circle.y + AI.jackTarget - 1 } };
+    const from = releaseFrom(base, k.loft);
+    const f = fitToBudget({ from, landing: k.want, loft: k.loft, skill, terrain: perceived });
+    best = { k, donnee: f.landing, energyFrac: f.energyFrac };
   }
   const { k, donnee } = best;
   const from = releaseFrom(base, k.loft);
-  const throwParams = throwThrough({ from, donnee, loft: k.loft, skill, terrain: world.terrain, rand });
+  const throwParams = throwThrough({ from, donnee, loft: k.loft, skill, terrain: world.terrain, rand, energyFrac: best.energyFrac });
   return {
     throwParams, from, intent: 'jack', label: `${player ? player.name : 'The AI'} throws the cochonnet`,
     labelKey: { event: 'spotJack' },
