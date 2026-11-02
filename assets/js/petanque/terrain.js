@@ -123,7 +123,8 @@ export function createTerrain(seed, opts = {}) {
 
   // Stones: rocks first (rare), then pebbles, kept out of rocks' footprints
   const stones = [];
-  const x0 = X0, y0 = Y0, x1 = C.terrainW + pad, y1 = C.terrainL + pad;
+  const sp = C.stonePad;
+  const x0 = -sp, y0 = -sp, x1 = C.terrainW + sp, y1 = C.terrainL + sp;
   const area = (x1 - x0) * (y1 - y0);
   const nRocks = Math.round(C.rockCount[0] + rand() * (C.rockCount[1] - C.rockCount[0]) * (area / 80));
   const rocks = poisson(rand, x0, y0, x1, y1, C.rockMinSpacing, nRocks, null);

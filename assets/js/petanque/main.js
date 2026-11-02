@@ -2,7 +2,7 @@
 import { C } from './constants.js';
 import { mulberry32 } from './rng.js';
 import { createTerrain } from './terrain.js';
-import { createWorld, createBody, launch } from './physics.js';
+import { createWorld, createBody, launch, placeDeadBall } from './physics.js';
 import { createRenderer } from './render.js';
 import {
   createMatch, defaultPlayers, apply, nextTeam, playersWithBoules, holdingTeam, jackValid, jackFault,
@@ -1236,6 +1236,23 @@ function boot() {
     for (const ch of figures) ch.update(0.5);
     requestAnimationFrame(tickC);
     window.__characters = figures;
+  } else if (debug && params.has('lumber')) {
+    // --- ?debug&lumber: ghosts resting against the timbers and beyond them, plus live boules (for screenshots);
+    // &lx=&ly=&dist=&az=&el= place the inspect camera ---
+    clearWorld();
+    hud.hideHint();
+    const put = (kind, team, x, y) => { const b = createBody(kind, { team, x, y }); b.z = b.r; return world.add(b); };
+    put('jack', -1, 2.1, 8.45);
+    put('boule', 0, 1.9, 8.3);
+    put('boule', 1, 2.3, 8.6);
+    const gi = C.terrainW + C.lumberGap - C.boule.r - 0.003;
+    placeDeadBall(world, put('boule', 0, 0, 0), gi, 9);
+    placeDeadBall(world, put('boule', 1, 0, 0), gi - 0.5, 9.6);
+    placeDeadBall(world, put('boule', 1, 0, 0), C.terrainW + C.lumberGap + C.lumberSize + 0.4, 9.2);
+    placeDeadBall(world, put('boule', 0, 0, 0), 2.5, C.terrainL + C.lumberGap - C.boule.r - 0.003);
+    renderer.sync(world);
+    placePlayers('you');
+    renderer.setCamera('inspect', { target: { x: +params.get('lx') || 4.3, y: +params.get('ly') || 9.2 }, dist: +params.get('dist') || 3, az: +params.get('az') || 1.2, el: +params.get('el') || 0.35 });
   } else if (debug && params.has('preview')) {
     // --- ?debug&preview: static throw preview with made-up paths (for screenshots) ---
     clearWorld();

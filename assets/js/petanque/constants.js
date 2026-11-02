@@ -9,7 +9,8 @@ export const C = Object.freeze({
   // Terrain layout (x across, y along, z up)
   terrainW: 4,
   terrainL: 15,
-  terrainPad: 0.5, // grid extends this far past the string lines
+  terrainPad: 2.5, // grid extends this far past the string lines (well past the lumber)
+  stonePad: 0.6, // stones, pebbles and rocks are scattered this far past the lines; the ground beyond is bare
   gridStep: 0.05, // macro height/friction grid spacing
   circle: Object.freeze({ x: 2, y: 1, r: 0.25 }),
   throwFrom: Object.freeze({ x: 2, y: 1, z: 0.9 }),
@@ -56,9 +57,19 @@ export const C = Object.freeze({
   divotMinSpeed: 1, // no divot below this landing speed
   lowAirZ: 0.06, // above this ground clearance an airborne body skips terrain/stone checks
 
-  // Out of bounds: dead once fully across a line (see plan §3)
+  // Out of bounds: dead once fully across a line (see plan §3); the ball then ghosts on until it stops
   deadMargin: 0, // extra slack beyond r
-  deadSpacing: 0.1, // m between dead boules lined up beyond the far string line
+  deadSpacing: 0.1, // m between dead boules lined up beyond the far string line (D11 fetches them there)
+  ghostMaxTime: 3, // s: a ghost still moving this long after going out is stopped where it is
+
+  // Lumber surround: 6x6 timbers (0.14 m actual) round the court, lumberGap from the string lines to the inner face
+  lumberSize: 0.14,
+  lumberGap: 0.4,
+  lumberRestitution: 0.35,
+  lumberFriction: 0.4, // Coulomb mu against wood
+  outsideRollResist: 0.8, // mu_r beyond the timbers (heavy ground)
+  outsideLandDrag: 0.6, // fraction of tangential speed lost at any landing beyond the timbers
+  outsideLandSpin: 0.7, // fraction of spin lost there
 
   // Terrain: macro heightfield
   macroAmp: 0.025, // max |h| from noise, m

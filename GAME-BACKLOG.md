@@ -271,7 +271,7 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D07 | todo | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
 | D08 | todo | sonnet | D01–D07, D09–D13 | Round 3 review |
 | D09 | todo | sonnet | — | Flight camera follows every moving object, the cochonnet first when it moves fast |
-| D10 | in-progress | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
+| D10 | done | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
 | D11 | todo | sonnet | D10 | Players fetch dead balls and walk the cochonnet to its spot |
 | D12 | todo | sonnet | — | Paused game: frozen, sepia, UI inert, free orbit camera |
 | D13 | todo | sonnet | — | AI tactics system: design first, then implement |
@@ -314,6 +314,10 @@ A ball is out of bounds when, seen from above, the whole ball is outside the str
 ### D00 notes
 - Invalid jack → `'jackPlace'` (rules.js `jackFault()` gives the reason); the other team places it on a wide overhead view with the 6/10 m arcs; green ring = valid, red X = invalid; AI shows its marker ~2 s with a personality line; the jack drops 10 cm and play resumes with the original thrower's team. Debug: `?debug&jackplace`, `?debug&jackplace=ai`, `&jx/&jy`, `&px/&py`, `&jphold`.
 - Not seen in a browser: the drop and the hand-back to play (physics test says it settles in ~1 s and moves < 2.5 cm). A rock under the chosen spot could nudge the jack on the drop.
+
+### D10 notes
+- Timbers 0.14 m square, 0.4 m outside the strings (`lumberGap`), exported as `LUMBER`; restitution 0.35. Out balls become ghosts (`dead` + `ghost`), collide only with ground, stones and timbers; outside the timbers μr = 0.8 with heavy landing loss; a ghost still moving after 3 s (`ghostMaxTime`) is stopped. In AI sims an out ball stops on the spot (keeps decisions ≈ 50 ms). `terrainPad` is now 2.5 m. D11 helpers: `deadRowSlot(i)`, `deadJackSpot()`, `placeDeadBall()`. New `lumber` physics event (no sound yet). `?debug&lumber` scene.
+- Not done: the ground beyond the timbers still reads much like the court gravel (darker earth tint is subtle; soft diagonal patches); string lines are flat at z = 0.012 and break up over terrain bumps (old issue); a ghost stopped by the 3 s timer can overlap a live boule until D11 fetches it; timber collision isn't swept (fine below ~30 m/s); `?debug&timerframes&play` now hangs headless Chrome (use `?debug&play` with a 4–8 s budget).
 
 ### D01 notes
 - Start/Resume enters a fixed full-viewport layer (plus requestFullscreen where allowed); Exit or Esc returns to the page with a "Game paused" bar (Resume / New game). Debug sliders and "Throw (raw)" removed at the user's request; `?debug&play` enters the layer for screenshots; the sounds audition panel is a collapsible drawer.

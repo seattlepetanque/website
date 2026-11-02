@@ -2,6 +2,7 @@
 import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
 import { mulberry32 } from './rng.js';
+import { LUMBER } from './physics.js';
 
 const TRANSITION = 0.6; // seconds for camera moves
 
@@ -31,6 +32,47 @@ function gravelTexture() {
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
+  return t;
+}
+
+// Weathered grey-brown timber: grain streaks run along u, with a few knots and splits
+function woodTexture() {
+  const W = 512, H = 128, cv = makeCanvas(W, H), g = cv.getContext('2d');
+  const rand = mulberry32(21);
+  g.fillStyle = '#cdc4b4';
+  g.fillRect(0, 0, W, H);
+  for (let i = 0; i < 90; i++) { // broad tonal bands
+    g.fillStyle = `hsla(${28 + rand() * 12}, ${8 + rand() * 18}%, ${38 + rand() * 30}%, ${0.12 + rand() * 0.2})`;
+    g.fillRect(0, rand() * H, W, 1 + rand() * 7);
+  }
+  for (let i = 0; i < 260; i++) { // fine wavy grain lines (wrap at the tile edges)
+    const y0 = rand() * H, amp = 0.4 + rand() * 1.6, ph = rand() * 6.28, fr = 0.01 + rand() * 0.02;
+    g.strokeStyle = `hsla(${24 + rand() * 12}, ${10 + rand() * 15}%, ${22 + rand() * 25}%, ${0.15 + rand() * 0.3})`;
+    g.lineWidth = 0.5 + rand() * 1.3;
+    g.beginPath();
+    for (let x = 0; x <= W; x += 8) { const y = y0 + Math.sin(x * fr * 6.2832 + ph) * amp; if (x) g.lineTo(x, y); else g.moveTo(x, y); }
+    g.stroke();
+  }
+  for (let i = 0; i < 4; i++) { // knots
+    const x = rand() * W, y = 20 + rand() * (H - 40), rx = 6 + rand() * 9;
+    for (let k = 4; k >= 1; k--) {
+      g.strokeStyle = `hsla(25, 25%, ${18 + k * 4}%, 0.45)`; g.lineWidth = 1.2;
+      g.beginPath(); g.ellipse(x, y, rx * k / 2.2, rx * k / 5, 0, 0, 6.283); g.stroke();
+    }
+  }
+  for (let i = 0; i < 5; i++) { // checks (splits) along the grain
+    const x = rand() * W, y = rand() * H;
+    g.strokeStyle = 'rgba(40,28,18,0.65)'; g.lineWidth = 1.1;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + 25 + rand() * 50, y + (rand() - 0.5) * 3); g.stroke();
+  }
+  for (let i = 0; i < 1500; i++) { // silvery weathering speckle
+    g.fillStyle = `rgba(${200 + rand() * 40}, ${195 + rand() * 40}, ${185 + rand() * 40}, ${rand() * 0.12})`;
+    g.fillRect(rand() * W, rand() * H, 1 + rand() * 3, 1);
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
   return t;
 }
 
@@ -136,7 +178,7 @@ export function createRenderer(canvas, terrain) {
   const grid = terrain.heightGrid(0.05);
   const { w: gw, h: gh } = grid;
   const pos = new Float32Array(gw * gh * 3), uv = new Float32Array(gw * gh * 2), colr = new Float32Array(gw * gh * 3);
-  const packed = new THREE.Color('#e6d9bd'), loose = new THREE.Color('#fff0d2'), tint = new THREE.Color();
+  const earth = new THREE.Color('#8f8365'), packed = new THREE.Color('#e6d9bd'), loose = new THREE.Color('#fff0d2'), tint = new THREE.Color();
   for (let j = 0; j < gh; j++) {
     for (let i = 0; i < gw; i++) {
       const k = j * gw + i, x = grid.x0 + i * grid.step, y = grid.y0 + j * grid.step;
@@ -144,6 +186,10 @@ export function createRenderer(canvas, terrain) {
       pos.set([x, y, grid.data[k]], k * 3);
       uv.set([x * 2, y * 2], k * 2);
       tint.copy(packed).lerp(loose, Math.max(0, Math.min(1, s.loose)));
+      // beyond the timbers the ground is darker, rougher earth
+      const o = C.lumberGap + C.lumberSize;
+      const ox = Math.max(-o - x, x - C.terrainW - o, 0), oy = Math.max(-o - y, y - C.terrainL - o, 0);
+      tint.lerp(earth, smooth(Math.max(0, Math.min(1, Math.hypot(ox, oy) / 0.5))) * 0.75);
       colr.set([tint.r, tint.g, tint.b], k * 3);
     }
   }
@@ -171,11 +217,41 @@ export function createRenderer(canvas, terrain) {
   // Darker surroundings
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(400, 400),
-    new THREE.MeshStandardMaterial({ color: '#7b6f56', roughness: 1, metalness: 0, envMapIntensity: 0.2 }),
+    new THREE.MeshStandardMaterial({ color: '#7a6e52', roughness: 1, metalness: 0, envMapIntensity: 0.2 }),
   );
   ground.position.set(C.terrainW / 2, C.terrainL / 2, -0.03);
   ground.receiveShadow = true;
   scene.add(ground);
+
+  // Lumber surround: weathered 6x6 timbers, one mesh per board section (long sides split with butt joints,
+  // slightly different tone and top height per board), casting and receiving shadows
+  const woodMap = woodTexture();
+  const lumberGroup = new THREE.Group();
+  {
+    const lr = mulberry32(31), tones = ['#ffffff', '#f0e6d8', '#fff4e6', '#e6dac8', '#f5ecde'];
+    const sz = C.lumberSize;
+    for (const bx of LUMBER) {
+      const alongY = bx.y1 - bx.y0 > bx.x1 - bx.x0;
+      const len = alongY ? bx.y1 - bx.y0 : bx.x1 - bx.x0;
+      const n = Math.max(1, Math.round(len / 4.4)), seg = len / n;
+      for (let i = 0; i < n; i++) {
+        const gapJ = 0.004;
+        const l = seg - (n > 1 ? gapJ : 0);
+        const hTop = sz + (lr() - 0.5) * 0.01; // uneven tops, up to +-5 mm
+        const geo = new THREE.BoxGeometry(l, sz, hTop + 0.1);
+        const uv = geo.attributes.uv, uo = lr(), vo = lr();
+        for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) * l / 1.6 + uo, uv.getY(k) * 0.9 + vo);
+        const mat = new THREE.MeshStandardMaterial({ map: woodMap, color: tones[Math.floor(lr() * tones.length)], roughness: 0.92, metalness: 0, envMapIntensity: 0.3 });
+        const m = new THREE.Mesh(geo, mat);
+        const c0 = (alongY ? bx.y0 : bx.x0) + seg * (i + 0.5);
+        const zc = hTop - (hTop + 0.1) / 2;
+        if (alongY) { m.rotation.z = Math.PI / 2; m.position.set((bx.x0 + bx.x1) / 2, c0, zc); } else m.position.set(c0, (bx.y0 + bx.y1) / 2, zc);
+        m.castShadow = true; m.receiveShadow = true;
+        lumberGroup.add(m);
+      }
+    }
+  }
+  scene.add(lumberGroup);
 
   // Visible stones
   const stones = terrain.visibleStones();
@@ -229,7 +305,7 @@ export function createRenderer(canvas, terrain) {
     new THREE.MeshStandardMaterial({ color: '#e8aa6a', metalness: 1, roughness: 0.3, bumpMap: grooves[1], bumpScale: 1.5, envMapIntensity: 2.2 }),
   ];
   // Dead (out of play) bodies: greyed and dulled
-  const deadBouleMat = new THREE.MeshStandardMaterial({ color: '#6c6f76', metalness: 0.8, roughness: 0.55, envMapIntensity: 0.9 });
+  const deadBouleMat = new THREE.MeshStandardMaterial({ color: '#a4a8b0', metalness: 0.45, roughness: 0.5, envMapIntensity: 0.9 });
   const deadJackMat = new THREE.MeshStandardMaterial({ color: '#8a7a5e', metalness: 0, roughness: 0.6 });
   const jackMat = new THREE.MeshStandardMaterial({ color: '#ffa81c', metalness: 0, roughness: 0.45, emissive: '#3a1c00' });
   const bouleGeo = new THREE.SphereGeometry(1, 40, 24);

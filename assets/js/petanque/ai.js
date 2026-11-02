@@ -93,7 +93,7 @@ function meanEnd(world, kind, from, donnee, loft, terrain, rand) {
     const b = launch(createBody(kind, { team: -1 }), tp, from);
     w.add(b);
     simulate(w, AI.maxSimSeconds);
-    // a dead body has been moved beyond the far line: aim by where it went out
+    // a dead (ghost) body may have stopped anywhere outside: aim by where it went out
     mx += (b.dead ? b.outX : b.x) / n; my += (b.dead ? b.outY : b.y) / n;
   }
   return { x: mx, y: my };
