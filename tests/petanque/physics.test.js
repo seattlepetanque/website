@@ -475,3 +475,35 @@ test('random throws with ghosts never produce NaN and always settle', () => {
     assert.ok(w.settled(), `throw ${i} settled`);
   }
 });
+
+test('a jack placed 1 cm inside a string on steep terrain stays put and live', () => {
+  for (const seed of [1, 2, 3]) {
+    for (const x of [0.025, 3.975]) {
+      const t = createTerrain(seed, { crown: 0.05 });
+      const y = 1 + Math.sqrt(75 - (2 - x) ** 2);
+      t.settleSpot(x, y);
+      assert.equal(t.stonesNear(x, y, 0.15).length, 0, 'stones cleared');
+      const w = createWorld(t, mulberry32(seed));
+      const j = createBody('jack', { team: -1, x, y, state: 'resting' });
+      w.add(j);
+      for (let i = 0; i < 300; i++) simulate(w);
+      assert.equal(j.x, x); assert.equal(j.y, y);
+      assert.ok(!j.dead && j.state === 'resting');
+      t.resetDivots();
+      assert.ok(t.stonesNear(x, y, 0.15).length >= 0);
+    }
+  }
+});
+
+test('settleSpot flattens locally and resets with the divots', () => {
+  const t = createTerrain(4, { crown: 0.05 });
+  const before = t.stonesNear(2, 8, 0.6).length;
+  const far = t.sample(2.5, 8.5).h;
+  t.settleSpot(2, 8, 0.6);
+  assert.equal(t.stonesNear(2, 8, 0.6).length, 0);
+  const s = t.sample(2, 8), s2 = t.perceived().sample(2.05, 8);
+  assert.ok(Math.hypot(s.nx, s.ny) < 0.05 && Math.abs(s2.h - t.perceived().sample(2, 8).h) < 0.003);
+  assert.equal(t.sample(2.5, 8.5).h, far);
+  t.resetDivots();
+  assert.equal(t.stonesNear(2, 8, 0.6).length, before);
+});

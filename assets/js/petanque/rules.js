@@ -57,6 +57,17 @@ export function jackValid(jack, geometry = DEFAULT_GEOMETRY) {
     jack.y >= m - EPS && jack.y <= g.length - m + EPS;
 }
 
+// D14: a hand-placed jack may go right out to the strings (no 1 m margin): 6-10 m from the circle centre and the
+// whole jack (radius JACK_R) inside the side strings and the far string.
+const JACK_R = 0.015;
+export function jackPlaceValid(jack, geometry = DEFAULT_GEOMETRY) {
+  const g = { ...DEFAULT_GEOMETRY, ...geometry };
+  if (!jack || jack.dead) return false;
+  const d = dist(jack, g.circle);
+  if (d < g.jackMin - EPS || d > g.jackMax + EPS) return false;
+  return jack.x >= JACK_R - EPS && jack.x <= g.width - JACK_R + EPS && jack.y <= g.length - JACK_R + EPS;
+}
+
 export function playersWithBoules(match, team) {
   return match.players.filter((p) => p.team === team && p.boulesLeft > 0);
 }
@@ -100,6 +111,17 @@ export function meneResult(jack, boules) {
 export function jackFault(jack, geometry = DEFAULT_GEOMETRY) {
   const g = { ...DEFAULT_GEOMETRY, ...geometry };
   if (jackValid(jack, g)) return null;
+  if (!jack || jack.dead) return { reason: 'out', dist: jack ? dist(jack, g.circle) : 0 };
+  const d = dist(jack, g.circle);
+  if (d < g.jackMin - EPS) return { reason: 'short', dist: d };
+  if (d > g.jackMax + EPS) return { reason: 'far', dist: d };
+  return { reason: 'line', dist: d };
+}
+
+// Why a hand-placed jack is not legal (same shape as jackFault; 'line' means outside the strings)
+export function jackPlaceFault(jack, geometry = DEFAULT_GEOMETRY) {
+  const g = { ...DEFAULT_GEOMETRY, ...geometry };
+  if (jackPlaceValid(jack, g)) return null;
   if (!jack || jack.dead) return { reason: 'out', dist: jack ? dist(jack, g.circle) : 0 };
   const d = dist(jack, g.circle);
   if (d < g.jackMin - EPS) return { reason: 'short', dist: d };
@@ -159,7 +181,7 @@ export function apply(match, event) {
     case 'jackPlaced': {
       if (match.phase !== 'jackPlace' || event.team !== match.placingTeam) return match;
       const jack = { x: event.jack.x, y: event.jack.y, dead: false };
-      if (!jackValid(jack, match.geometry)) return match;
+      if (!jackPlaceValid(jack, match.geometry)) return match;
       return { ...match, phase: 'play', placingTeam: null, jack, boules: [], lastThrower: null };
     }
     case 'bouleThrown': {

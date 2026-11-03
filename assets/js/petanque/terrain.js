@@ -82,6 +82,7 @@ export function createTerrain(seed, opts = {}) {
     }
   }
   const divots = new Float32Array(gw * gh); // depth (positive = lower ground)
+  const pads = new Float32Array(gw * gh); // D14: height change from placement pads (reset with the divots)
 
   const jf = C.jitterFreq, ja = C.jitterAmp, je = 0.004;
 
@@ -94,8 +95,8 @@ export function createTerrain(seed, opts = {}) {
         const i = Math.floor(fx), j = Math.floor(fy);
         const tx = fx - i, ty = fy - j;
         const k = j * gw + i;
-        const h00 = base[k] - divots[k], h10 = base[k + 1] - divots[k + 1];
-        const h01 = base[k + gw] - divots[k + gw], h11 = base[k + gw + 1] - divots[k + gw + 1];
+        const h00 = base[k] - divots[k] + pads[k], h10 = base[k + 1] - divots[k + 1] + pads[k + 1];
+        const h01 = base[k + gw] - divots[k + gw] + pads[k + gw], h11 = base[k + gw + 1] - divots[k + gw + 1] + pads[k + gw + 1];
         let h = h00 + (h10 - h00) * tx + (h01 - h00) * ty + (h00 - h10 - h01 + h11) * tx * ty;
         let gx = ((h10 - h00) * (1 - ty) + (h11 - h01) * ty) / step;
         let gy = ((h01 - h00) * (1 - tx) + (h11 - h10) * tx) / step;
@@ -117,6 +118,7 @@ export function createTerrain(seed, opts = {}) {
       heightGrid,
       addDivot,
       resetDivots,
+      settleSpot,
     };
     return view;
   }
@@ -175,7 +177,7 @@ export function createTerrain(seed, opts = {}) {
         if (!b) continue;
         for (const s of b) {
           const dx = s.x - x, dy = s.y - y, m = radius + s.r;
-          if (dx * dx + dy * dy <= m * m) out.push({ x: s.x, y: s.y, r: s.r, h: s.h });
+          if (!s.gone && dx * dx + dy * dy <= m * m) out.push({ x: s.x, y: s.y, r: s.r, h: s.h });
         }
       }
     }
@@ -213,7 +215,35 @@ export function createTerrain(seed, opts = {}) {
     }
   }
 
-  function resetDivots() { divots.fill(0); }
+  // D14: ground for a hand-placed jack. Removes stones within `clear` of the spot and flattens the height field
+  // to the height under the spot (flat core, smooth blend out to `radius`), stored like a divot.
+  const removed = [];
+  function settleSpot(x, y, clear = 0.15, radius = 0.35, core = 0.15) {
+    for (const st of stonesNear(x, y, clear)) {
+      const real = (hash.get(key(Math.floor(st.x / cell), Math.floor(st.y / cell))) || []).find((q) => q.x === st.x && q.y === st.y && !q.gone);
+      if (real) { real.gone = true; removed.push(real); }
+    }
+    const target = perceivedView.sample(x, y).h;
+    const i0 = Math.max(0, Math.floor((x - radius - X0) / step)), i1 = Math.min(gw - 1, Math.ceil((x + radius - X0) / step));
+    const j0 = Math.max(0, Math.floor((y - radius - Y0) / step)), j1 = Math.min(gh - 1, Math.ceil((y + radius - Y0) / step));
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        const d = Math.hypot(X0 + i * step - x, Y0 + j * step - y);
+        if (d >= radius) continue;
+        const t = d <= core ? 0 : (d - core) / (radius - core);
+        const wgt = 1 - t * t * (3 - 2 * t);
+        const k = j * gw + i;
+        const cur = base[k] - divots[k] + pads[k];
+        pads[k] += (target - cur) * wgt;
+      }
+    }
+  }
+
+  function resetDivots() {
+    divots.fill(0); pads.fill(0);
+    for (const st of removed) st.gone = false;
+    removed.length = 0;
+  }
 
   const perceivedView = makeView(false);
   const terrain = makeView(true);
