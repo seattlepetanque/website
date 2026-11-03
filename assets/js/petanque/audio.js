@@ -154,6 +154,17 @@ export function createAudio(opts = {}) {
     white = makeWhite(ctx);
   }
 
+  // D12: the game is paused. Suspend the context (scheduled ticks stop with it); unlock() and events don't wake it.
+  let held = false;
+  function setPaused(on) {
+    held = !!on;
+    if (!ctx) return;
+    try {
+      if (held && ctx.state === 'running' && ctx.suspend) ctx.suspend().catch(() => {});
+      else if (!held && ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(() => {});
+    } catch (e) { /* ignore */ }
+  }
+
   // Create the AudioContext on first call. Safe to call again.
   function unlock() {
     try {
@@ -162,7 +173,7 @@ export function createAudio(opts = {}) {
         else if (Ctor) setup(new Ctor());
         else return;
       }
-      if (ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(() => {});
+      if (!held && ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(() => {});
     } catch (e) {
       ctx = null;
       master = null;
@@ -402,7 +413,7 @@ export function createAudio(opts = {}) {
   function handleEvents(events, bodiesById) {
     if (!ctx || muted || !events || !events.length) return;
     if (ctx.state !== 'running') {
-      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      if (!held && ctx.state === 'suspended') ctx.resume().catch(() => {});
       return;
     }
     const t = ctx.currentTime + 0.005;
@@ -501,5 +512,5 @@ export function createAudio(opts = {}) {
     return btn;
   }
 
-  return { unlock, handleEvents, update, accent, play, setMuted, isMuted, createMuteButton };
+  return { unlock, setPaused, handleEvents, update, accent, play, setMuted, isMuted, createMuteButton };
 }

@@ -324,6 +324,7 @@ export function createTossInput(canvas, options) {
 
   return {
     setPhase(p) { clearTimer(); mach.setPhase(p); },
+    getPhase() { return mach.phase; },
     destroy() {
       clearTimer();
       canvas.removeEventListener('pointerdown', onDown);

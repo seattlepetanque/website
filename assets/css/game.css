@@ -279,3 +279,19 @@ html.petanque-playing main { overflow: visible; }
   .petanque.is-playing .pt-hint-close { min-height: 2rem; }
 }
 .petanque.is-playing .pc-bar button:focus-visible, .petanque.is-playing .pt-btn:focus-visible { outline: 3px solid var(--navy, #14284b); outline-offset: 2px; box-shadow: 0 0 0 5px var(--paper, #fffaf0); }
+
+/* ---- Paused game (D12): the scene is drawn in sepia by the renderer; the game widgets get the same look here and are
+   inert (main.js sets the `inert` attribute). The page's paused bar (.pt-paused) is deliberately left alone: full colour,
+   interactive. Works in the full-window layer and on the normal page. ---- */
+.petanque .pt-board, .petanque .pt-dock, .petanque .petanque-controls, .petanque .pt-overlay, .petanque .toss-readout {
+  transition: filter .35s ease;
+}
+.petanque.is-paused .pt-board, .petanque.is-paused .pt-dock, .petanque.is-paused .petanque-controls,
+.petanque.is-paused .pt-overlay, .petanque.is-paused .toss-readout {
+  filter: sepia(.9) saturate(.85) brightness(.95); pointer-events: none;
+}
+.petanque.is-paused canvas { cursor: grab; touch-action: none; }
+.petanque.is-paused canvas:active { cursor: grabbing; }
+@media (prefers-reduced-motion: reduce) {
+  .petanque .pt-board, .petanque .pt-dock, .petanque .petanque-controls, .petanque .pt-overlay, .petanque .toss-readout { transition: none; }
+}
