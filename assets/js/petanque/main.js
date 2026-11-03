@@ -5,7 +5,7 @@ import { createTerrain } from './terrain.js';
 import { createWorld, createBody, launch, placeDeadBall, deadRowSlot, deadJackSpot } from './physics.js';
 import { createRenderer } from './render.js';
 import {
-  createMatch, defaultPlayers, apply, nextTeam, playersWithBoules, holdingTeam, jackValid, jackFault, jackPlaceValid, jackPlaceFault,
+  createMatch, defaultPlayers, apply, nextTeam, playersWithBoules, holdingTeam, jackFault, jackPlaceValid, jackPlaceFault,
 } from './rules.js';
 import { createHud } from './hud.js';
 import { chooseThrowAsync, chooseJackThrow, chooseJackPlacement, whoThrows } from './ai.js';
@@ -79,10 +79,8 @@ function boot() {
     renderer.addObject(ch.root);
     cast.set(id, ch);
   }
-  const CAST_ALL = cast;
   // Skinned meshes load in the background; each character stays a stick figure until its model arrives
-  const meshReady = useMeshes
-    ? attachModels([...cast.entries()].map(([id, ch]) => ({ ch, model: SPECS[id].model })), modelTimeout) : Promise.resolve([]);
+  if (useMeshes) attachModels([...cast.entries()].map(([id, ch]) => ({ ch, model: SPECS[id].model })), modelTimeout).catch((err) => console.warn(err));
   let inCircle = null; // id of whoever stands in the circle
   let arrival = Promise.resolve(); // resolves when the thrower has reached the circle
   let aiYaw = 0; // facing of an AI thrower (towards the jack), fixed before it plans so the release point matches
@@ -96,7 +94,6 @@ function boot() {
   let throwEvents = []; // physics events of the current throw (hits, for commentary)
   let preThrow = new Map(); // id -> { x, y } of boules before the current throw
   let pending = null; // { kind, playerId } while waiting for the human to throw
-  let dropping = null; // { token } while a placed jack settles after its drop
   let aimYaw = 0;
   let throwerYaw = 0; // yaw of whoever stands in the circle
   const throwRand = mulberry32(seed ^ 0x2545f491);
@@ -520,7 +517,8 @@ function boot() {
       }
       if (best) items.push({ x: best.x, y: best.y, r: best.r, label: edgeCm(best, j), color: TEAM_INK[team].line, dark: TEAM_INK[team].dark });
     }
-    if (items.length) renderer.showMeasure({ x: j.x, y: j.y, r: j.r }, items);
+    const others = world.bodies.filter((b) => b.kind === 'boule' && !b.dead).map((b) => ({ x: b.x, y: b.y }));
+    if (items.length) renderer.showMeasure({ x: j.x, y: j.y, r: j.r }, items, others);
     else renderer.clearMeasure();
   }
   // Landing marks from physics 'land' events
@@ -538,13 +536,17 @@ function boot() {
   };
 
   function clearWorld() {
-    cancelFetch(); carry = null; jackFetch = null; placing = null; // D11
+    cancelFetch(); carry = null; jackFetch = null; placing = null; gateSince = 0; lastThrowerId = null; // D11
     world.bodies.length = 0;
     world.events.length = 0;
     terrain.resetDivots();
+    renderer.syncStones(); // stones removed under a placed jack come back (D14)
     renderer.clearDivots();
     renderer.clearMeasure();
+    scoringShown = false;
     renderer.showJackZone(false);
+    renderer.setPlaceMarker(null);
+    renderer.setJackArrow(false);
     throwEvents = [];
     flying = null;
     renderer.sync(world);
@@ -1016,7 +1018,14 @@ function boot() {
   function kickFetch(was) {
     if (!deadTargets().length) return;
     if (instant) { dropAllDead(); return; }
-    if (snapMove()) { later(dropAllDead, 400); return; } // reduced motion: no walking
+    if (snapMove()) { // reduced motion: no walking, the balls fade out where they lie and in again in the row
+      later(() => {
+        const bodies = deadTargets();
+        for (const b of bodies) renderer.fadeBody(b.id, -1, 0.25);
+        later(() => { dropAllDead(); for (const b of bodies) renderer.fadeBody(b.id, 1, 0.25); }, 300);
+      }, 400);
+      return;
+    }
     if (fetchJob || jackFetch) return;
     const thrower = match && match.players.find((p) => p.id === (was && was.owner));
     const mates = thrower ? match.players.filter((p) => p.team === thrower.team && p.id !== thrower.id && p.id !== inCircle) : [];
@@ -1134,6 +1143,7 @@ function boot() {
     gateSince = 0;
   }
   const skipEvent = (ev) => {
+    if (isPaused()) return; // a drag to orbit the paused scene (or Esc) is not a skip
     if (placing && ev.timeStamp - placing.start > 350) skipPlacement();
     else if (!placing && gateSince && fetchJob) skipFetchWait();
   };
@@ -1337,14 +1347,13 @@ function boot() {
     toss.setPhase('off');
     // D14: settle the ground (no stones within 15 cm, a small flat pad) and set the jack at rest exactly on the spot
     terrain.settleSpot(spot.x, spot.y);
+    renderer.syncStones();
     const body = createBody('jack', { team: -1, x: spot.x, y: spot.y, state: 'resting' });
     world.add(body);
     renderer.sync(world);
-    onDropped(true);
+    afterPlaced();
   }
-  function onDropped(fromInstant) {
-    if (!fromInstant && (!dropping || dropping.token !== token)) { dropping = null; return; }
-    dropping = null;
+  function afterPlaced() { // the jack is at rest on its spot (D14: no drop): show it and carry on
     const j = jackBody();
     if (!j || !match) return;
     match = { ...match, jack: { x: j.x, y: j.y, dead: j.dead } };
@@ -1501,14 +1510,14 @@ function boot() {
   // game widgets (not the page's paused bar) go sepia and inert. ?debug&paused holds off until the human's turn.
   let pauseHold = debug && params.has('paused');
   const isPaused = () => !pauseHold && !playing && !!match;
-  let pausedNow = false, tossPhase = 'off';
+  let pausedNow = false, tossPhase = 'off', pausedTok = 0;
   function syncPause() {
     const p = isPaused();
     if (p === pausedNow) return;
     pausedNow = p;
     root.classList.toggle('is-paused', p);
     for (const n of root.querySelectorAll('.pt-board, .pt-dock, .petanque-controls, .pt-overlay')) n.inert = p;
-    if (p) { clock.pause(); tossPhase = toss.getPhase() === 'toss' ? 'aim' : toss.getPhase(); toss.setPhase('off'); } else { clock.resume(); toss.setPhase(tossPhase); }
+    if (p) { clock.pause(); pausedTok = token; tossPhase = toss.getPhase() === 'toss' ? 'aim' : toss.getPhase(); toss.setPhase('off'); } else { clock.resume(); toss.setPhase(pausedTok === token ? tossPhase : 'off'); } // a New game while paused leaves the toss off
     audio.setPaused(p);
     renderer.setPaused(p);
   }
@@ -1520,7 +1529,7 @@ function boot() {
   function frame(now) {
     const dt = Math.min((now - last) / 1000, 0.1);
     last = now;
-    if (pauseHold && (pending || now > 3500)) { pauseHold = false; if (playing) setPlaying(false); else hud.showPaused(true); }
+    if (pauseHold && ((pending && now > 1500) || now > 3500)) { pauseHold = false; if (playing) setPlaying(false); else hud.showPaused(true); }
     syncPause();
     clock.tick(dt * 1000);
     acc += dt;
@@ -1529,7 +1538,6 @@ function boot() {
     while (acc >= C.dt && n < MAX_STEPS && !(freezeAt && world.t >= freezeAt)) {
       world.step(); acc -= C.dt; n++;
       if (flying && world.settled()) onSettled();
-      else if (dropping && world.settled()) onDropped();
     }
     if (n === MAX_STEPS) acc = 0; // drop backlog rather than spiral
     if (world.events.length) {
@@ -1560,7 +1568,9 @@ function boot() {
     };
   }
 
-  if (debug && params.has('play')) setPlaying(true, false); // ?debug&play: enter the full-window view without a click
+  // ?debug&play enters the full-window view without a click; the debug modes that start a match do too (otherwise the
+  // match would start paused, with the page showing, and an instant match would never run)
+  if (debug && (params.has('play') || params.has('autotest') || params.has('jackplace') || params.has('aispot') || pickHuman !== null)) setPlaying(true, false);
 
   if (debug && params.has('autotest')) {
     // AI-only quick match, every throw simulated to rest instantly
@@ -1578,7 +1588,7 @@ function boot() {
     // --- ?debug&characters: stick figures in every stance side by side (for screenshots) ---
     clearWorld();
     hud.hideHint();
-    for (const ch of CAST_ALL.values()) ch.root.visible = false;
+    for (const ch of cast.values()) ch.root.visible = false;
     // &cast=quirk|celebrate|dismay: the four real players in a row (&q=N picks which idle quirk is held)
     const castMode = params.get('cast');
     const qi = +params.get('q') || 0;

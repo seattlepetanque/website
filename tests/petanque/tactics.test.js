@@ -11,6 +11,10 @@ import {
 } from '../../assets/js/petanque/tactics.js';
 import { LINES, createCommentary } from '../../assets/js/petanque/personalities.js';
 import { scenarios, chooserScenarios, build } from './tactics-scenarios.js';
+import { difficultyScale } from '../../assets/js/petanque/donnee.js';
+// decisions and accuracy are asserted at the original D02 scaling; the shipped values (donnee.js difficultyScale) are balanced against
+// the scripted pointer in measure-tactics.js
+Object.assign(difficultyScale, { easy: 2.3, medium: 1.35, hard: 0.65 });
 
 const sc = (id) => scenarios.find((s) => s.id === id);
 const situation = (spec, difficulty = 'hard', who) => {
@@ -36,8 +40,6 @@ const atMost = (res, p, msg) => assert.ok(res.rate <= p, `${msg}: ${(res.rate * 
 const isShoot = (r) => r.intent === 'shoot';
 const isPoint = (r) => r.intent === 'point';
 
-// the balance multipliers (DIFFICULTY.*.skillMul, D22) are measured in measure-tactics.js; these tests check decisions and accuracy at donnee.js's own scaling
-for (const d of Object.values(DIFFICULTY)) d.skillMul = 1;
 AI.timeGuard = false; // decisions in these tests are deterministic; the guard has its own test below
 
 // ---------- static ----------

@@ -269,7 +269,7 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D05 | done | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
 | D06 | done | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
 | D07 | done | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
-| D08 | in-progress | sonnet | D01–D07, D09–D22 | Round 3 review |
+| D08 | done | sonnet | D01–D07, D09–D22 | Round 3 review |
 | D09 | done | sonnet | — | Flight camera follows every moving object, the cochonnet first when it moves fast |
 | D10 | done | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
 | D11 | done | sonnet | D10 | Players fetch dead balls and walk the cochonnet to its spot |
@@ -512,3 +512,27 @@ Fix and tune the first version of the tactics system (D13 notes):
 
 ### D08 Round 3 review (sonnet)
 Run `npm test`, the build check and the full-match test, take screenshots on desktop and phone, review the code for bugs, and add a "Round 3 remaining issues" list at the end of this file.
+
+## Round 3 remaining issues
+
+D08 review (2026-11-02). Fixed in the review: debug match modes (`autotest`, `jackplace`, `aispot`, `humanturn`) started paused and an instant match never ran (they now enter the full-window view themselves); a drag to orbit the paused scene, or Esc, skipped the cochonnet walk or the fetch wait; a New game while paused re-enabled the toss; New game now also clears the placement marker, scoring flag, fetch gate, last thrower and chevron, and restores stones removed under a placed jack; removed stones are hidden (D14); between-throws labels avoid neighbouring boules and each other (D07); reduced motion fades fetched balls out and in (D11); trees sway slowly (D15); `?debug&paused` waits for the camera to settle; D22's `skillMul` is folded into `difficultyScale` (Easy 1.95, Medium 1.9, Hard 1.3; the tests pin the D02 values 2.3 / 1.35 / 0.65 for their scenario assertions); dead code in main.js removed (`dropping`/`onDropped`, `CAST_ALL`, unused imports and values).
+
+Not done:
+- The ground beyond the timbers still reads much like the court gravel; string lines are flat and break up over bumps; timber collision is not swept (fine below ~30 m/s); `&timerframes` hangs headless Chrome.
+- The pad flattened under a placed cochonnet is not in the ground mesh (a few mm); small skewed triangles remain where the placement zone fill is clipped at the strings.
+- `viewport-fit=cover` is not set (iOS letterboxes); phone landscape untested (mène-end card, hint and card sizes); the centred game-over card still covers the scoring circle; badges can overlap in very tight mènes.
+- On desktop the top HUD covers Rainier's summit and the Needle's saucer in the shoulder view (fine in phone portrait).
+- Mesh figures (`?figures=mesh`) were not tried with fetching, carrying or the cochonnet hand-over; the put-down with the tiny jack in the fist is hard to see; the fetch camera only loosely follows and stays wide during the jack hand-over.
+- The "Max reach" status line is not cleared when you unclamp.
+- Pierre is looser than Odette in the skill table, so Hard v Hard is not 50/50 (about 68% for Marcel and Odette).
+- A headless screenshot of the paused page showed the site header and title blank (the DOM and classes were correct), so check by eye that leaving the full-window view repaints the whole page.
+- Keyboard use of the who-throws card, and the paused view's orbit, zoom and reduced motion, are untested in a browser.
+- The void-mène report in the user's game (live-jack text on a dead-jack mène) is unconfirmed; the card logs `[void mène]` details to the console.
+
+A human should play-test:
+- Toss feel: the pull for loft, the energy limit and the "Max reach" message, shooting (press near a boule), and how forgiving Easy, Medium and Hard are for you.
+- Roll band usefulness: is the orange band readable and steady as you drag, does it match where boules really stop, and is it right to have it on by default only at Easy?
+- AI tactics and difficulty: does Medium feel fair (about 46% for the AI against the scripted pointer) and Hard hard (about 71%), do the players point when behind on boules and shoot when ahead, and do their spoken reasons match what they do?
+- Fetch pacing: how long fetching dead balls and carrying the cochonnet takes in real time, the wait before your turn while a fetcher is in view (click or key skips), whether the camera follows well, and the jack hand-over and placement.
+- Pause and orbit: Exit then drag and zoom (mouse and touch), Resume mid-throw, mid-fetch and while an AI is thinking, and New game from the paused bar.
+- Sound levels: the pebble-tick rolling, landings, timber hits (still silent: the `lumber` event has no sound), and the mute button.

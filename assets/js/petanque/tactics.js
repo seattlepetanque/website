@@ -36,13 +36,12 @@ export function adviceProfile(id = 'pierre') {
   return { id: 'advice-' + id, lambda0: mix('lambda0'), appetite, awareness: mix('awareness'), gate: 0.9 / appetite, jackShy: mix('jackShy'), taste: {} };
 }
 
-// skillMul: extra spread on top of donnee.js difficultyScale (D22 balance against the scripted pointer; belongs in difficultyScale)
 // eps: tactical error rate; pw: weight of priors, awareness and the game term; cap: candidates kept by the pruning;
 // jackGain: gain a shot at the jack must promise (Infinity: never considered)
 export const DIFFICULTY = {
-  easy: { skillMul: 0.85, eps: 0.30, pw: 0.3, cap: 6, jackGain: Infinity, baMul: 0.5, noiseMul: 3 },
-  medium: { skillMul: 1.4, eps: 0.08, pw: 0.8, cap: 8, jackGain: 1.5, baMul: 1, noiseMul: 1 },
-  hard: { skillMul: 2.0, eps: 0.02, pw: 1.0, cap: 10, jackGain: 0.8, baMul: 1, noiseMul: 1 },
+  easy: { eps: 0.30, pw: 0.3, cap: 6, jackGain: Infinity, baMul: 0.5, noiseMul: 3 },
+  medium: { eps: 0.08, pw: 0.8, cap: 8, jackGain: 1.5, baMul: 1, noiseMul: 1 },
+  hard: { eps: 0.02, pw: 1.0, cap: 10, jackGain: 0.8, baMul: 1, noiseMul: 1 },
 };
 
 // Evaluator weights (12.4); wG is scaled by the principle weight
@@ -59,8 +58,7 @@ export function profileFor(player, { advice = false } = {}) {
 export function skillOfPlayer(p, difficulty = 'medium') {
   if (!p || p.isHuman || !(p.skill || SKILL[p.id])) return SKILL.human;
   // a stand-in seat (measure scripts) may carry any skill; it is scaled like an AI's
-  const sk = scaledSkill(p.skill || SKILL[p.id], difficulty), m = (DIFFICULTY[difficulty] || DIFFICULTY.medium).skillMul || 1;
-  return { lat: sk.lat * m, long: sk.long * m, loft: sk.loft * m, maxSpeed: sk.maxSpeed };
+  return scaledSkill(p.skill || SKILL[p.id], difficulty);
 }
 
 // ---------- Analytic cone maths ----------

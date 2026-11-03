@@ -46,21 +46,35 @@ three.js 0.170.0 is vendored in `assets/js/vendor/` (see the README there for it
 
 Four player models are in `static/models/`: Marcel, Odette, Pierre and You, from the Kenney Mini Characters pack (CC0; see `static/models/CREDITS.md`). The players are stick figures from `character.js` by default (each with their own colours, hat, build and idle quirks, set in `personalities.js`); the models are opt-in with `?figures=mesh` and are not downloaded otherwise.
 
+How it plays:
+
+- Controls: drag sideways to turn; press on the court where the boule should land (the pale cone shows where it may land, the orange band how far it rolls), pull down to throw higher, release to throw; drag back up to cancel. Press near a boule to shoot it. The bar has Re-aim, Roll guide (on by default on Easy), View (shoulder, head, inspect), Mute, New game and Exit. Esc or Exit leaves the full-window view and pauses the game; Resume or New game is on the page.
+- Pause: leaving the full-window view freezes everything (game clock, physics, walking, audio), draws the scene in sepia and lets you drag to orbit and wheel or pinch to zoom round the court. Resume eases back.
+- When both you and Pierre have boules a card in the middle of the court asks who throws, with Pierre's suggestion. A jack that fails is fetched and the other team places it; players walk to fetch dead boules and the cochonnet; between throws the closest boule of each team is measured from the jack, and at the end of a mène a numbered circle shows the scoring boules.
+- Reduced motion: no walking (balls fade out and in), no sepia fade, no tree sway, no chevron bob, and a steadier camera.
+
 The modules in `assets/js/petanque/`:
 
-- `main.js`: boot, game loop, and wiring
+- `main.js`: boot, game loop, game flow, fetching, pause and wiring
 - `rng.js`: seeded random numbers and noise
-- `terrain.js`: gravel heightfield, looseness, stones and divots
-- `physics.js`: boule and jack bodies, flight, impact and rolling
-- `rules.js`: mène state, turn order, scoring, dead boules
-- `ai.js`: Monte Carlo AI
-- `donnee.js`: the donnée throw model: launch solver, backspin from loft, error cones
-- `toss.js`: toss input: turn, place the donnée, pull for loft
-- `character.js`: stick-figure players with procedural animation
-- `render.js`: three.js scene and cameras
-- `hud.js`: DOM HUD (setup, score, who throws, mène and game-over panels)
-- `audio.js`: synthesized sounds (Web Audio)
 - `constants.js`: tuning values
+- `terrain.js`: gravel heightfield, looseness, stones, divots and the pad under a placed cochonnet
+- `physics.js`: boule and jack bodies, flight, impact and rolling, the timbers and ghost (out of bounds) balls
+- `rules.js`: mène state, turn order, scoring, dead boules, jack placement rules
+- `donnee.js`: the donnée throw model: launch solver, backspin from loft, error cones, difficulty scaling, the roll guide (`predictRoll`, `predictRollBand`)
+- `tactics.js`: the AI's situation model, candidate families, evaluator, difficulty and personality tables, who throws, and the "why" of each decision (GAME-PLAN section 12)
+- `ai.js`: Monte Carlo AI (successive halving over the tactics candidates), jack throws and jack placement
+- `toss.js`: toss input: turn, place the donnée, pull for loft
+- `character.js`: stick-figure players with procedural animation (walking, bending, carrying)
+- `personalities.js`: looks, stances, quirks and commentary lines for each player
+- `fetch.js`: pure route planning for the players who fetch dead balls and place the cochonnet
+- `clock.js`: the pause clock; every game delay (`sleep`, `later`) goes through it so a pause freezes them
+- `camera.js`: pure framing for the flight camera that follows every moving ball
+- `render.js`: three.js scene, cameras, throw preview, measuring overlays, paused sepia pass
+- `scenery.js`: grass, trees and the painted skyline (Mount Rainier, the Space Needle)
+- `hud.js`: DOM HUD (setup, score, who-throws card, mène and game-over panels)
+- `audio.js`: synthesized sounds (Web Audio)
+- `models.js`: optional Kenney mesh models (`?figures=mesh`)
 
 Run the tests with Node (no dependencies to install):
 
@@ -68,27 +82,36 @@ Run the tests with Node (no dependencies to install):
 npm test
 ```
 
-The tests are in `tests/petanque/`. Physics, rules, terrain and AI have no DOM or three.js dependency, so they run under Node.
+The tests are in `tests/petanque/`. Everything except the renderer and HUD (physics, rules, terrain, AI, tactics, camera framing, clock, fetch routes) has no DOM or three.js dependency, so it runs under Node. The `measure-*.js` scripts there are not tests; they print statistics (`measure-tactics.js` runs full matches: win rates by difficulty, decision mix, void rate, decision times).
 
 To tune the game:
 
 - Physics and terrain numbers: `constants.js`.
-- Player skill and error cones: `SKILL` and `difficultyScale` in `donnee.js`; release height `releaseHeight`; tir aim `SNAP_SHORT`; AI style personality `AI.stylePref` in `ai.js`. `node tests/petanque/measure-human.js` compares a reasonable human with each AI difficulty, and `node tests/petanque/measure-release.js` checks roll-outs by style from each character's real release point.
-- Loft to backspin: `backspinForLoft` in `donnee.js`.
-- Toss input feel: `TOSS` in `toss.js`.
-- AI strength: `AI` in `ai.js`.
+- Player skill and error cones: `SKILL` in `donnee.js`; the one difficulty scaling is `difficultyScale` in `donnee.js` (the AI's error multiplier: Easy 1.95, Medium 1.9, Hard 1.3); release height `releaseHeight`; tir aim `SNAP_SHORT`. `node tests/petanque/measure-human.js` compares a reasonable human with each AI difficulty, and `node tests/petanque/measure-release.js` checks roll-outs by style from each character's real release point.
+- AI tactics (how often it shoots, how it values a point, tactical error rates by difficulty): `DIFFICULTY`, `profiles` and the evaluator weights in `tactics.js`; search effort and the 40 ms time guard: `AI` in `ai.js`; `DSCALE=1.9,1.9,1.3 node tests/petanque/measure-tactics.js 100` tries other scalings.
+- Loft to backspin: `backspinForLoft` in `donnee.js`. Throw energy limit: `SKILL.*.maxSpeed` and `ENERGY_*` in `donnee.js`.
+- Toss input feel: `TOSS` in `toss.js`. Roll band update thresholds: `ROLL_MOVE`, `ROLL_LOFT`, `ROLL_BLEND` in `main.js`.
+- Fetching pace and the wait for a fetcher: `FETCH_SPEED`, `FETCH_VIEW_WAIT`, `CAST_SPEED`, `AI_MIN_THINK` in `main.js`. Flight camera: `CAM` in `camera.js`.
+- Scenery and sounds: `scenery.js`, `audio.js`.
 
-Debug URLs (add the query to `/game.html`):
+Debug URLs (add the query to `/game.html`; a debug mode that starts a match enters the full-window view by itself):
 
-- `?debug`: turns on debug hooks.
-- `?debug&autotest`: AI-only quick match, with no delays.
-- `?debug&humanturn`: stops at your first boule. Use `?debug&humanturn=chooser` to stop at the who-throws chooser, or `?debug&humanturn=jack` to throw the jack yourself.
-- `?debug&humanturn&demo`: a scripted toss preview, for screenshots.
-- `?debug&play`: enters the full-window view without a click (combine with the others, e.g. `?debug&play&humanturn&demo`); logs scroll metrics to the console.
-- `?debug&aispot`: holds the view on the AI's spot, for screenshots.
+- `?debug`: turns on debug hooks (`window.__petanque`).
+- `?debug&autotest`: AI-only quick match, with no delays (`&target=7`, `&animate` for real time, `&meneend` stops at the first mène end).
+- `?debug&humanturn`: stops at your first boule. Use `?debug&humanturn=chooser` to stop at the who-throws card, or `?debug&humanturn=jack` to throw the jack yourself (`&thrower=pierre` and the like pick who throws first).
+- `?debug&humanturn&demo`: a scripted toss preview with the roll band, for screenshots (`&loft=`, `&dist=`, `&dx=`, `&tir`, `&autothrow`).
+- `?debug&play`: enters the full-window view without a click (combine with the others); logs scroll metrics to the console.
+- `?debug&paused` (with `&humanturn`): leaves the full-window view at the human's turn, so the paused sepia view shows.
+- `?debug&aispot`: holds the view on the AI's spot, with the arc and cone the players never see, for screenshots.
+- `?debug&jackplace` (Marcel's jack fails and you place it) or `?debug&jackplace=ai` (the AI places it); `&jx=&jy=` where the failed jack lay, `&px=&py=` shows your marker, `&jphold` keeps the AI's marker up.
+- `?debug&fetch`: a scripted fetch of a dead boule and cochonnet and the hand-over and placement (`&fetchat=seconds` freezes it then, `&followc=pierre` with `&dist &az &el` for a close camera, `&fetchcam`, `&jx=&jy=`, `&lx=&ly=`).
+- `?debug&measure`: the between-throws measuring lines. `?debug&lumber`: ghost balls against and beyond the timbers (`&lx &ly &dist &az &el`). `?debug&jackshot`: a boule shot into the cochonnet with the flight camera (`&jspeed &jloft &jyaw`, `&freezeat=0.6`).
+- `?debug&ailog`: one console line per AI boule (plan and result). `?debug&sounds`: audition panel for the synthesized sounds.
+- `?debug&jackvis=a|b|c|ab|…|none`: compare cochonnet finders (chevron, ground halo, bright colour).
 - `?debug&topcam`: top-down view of the circle (`&who=pierre|marcel|odette`, `&topdist=`, `&topel=`, `&topaz=` for a side view), for checking foot placement.
-- `?debug&preview`: static throw preview with made-up paths, for screenshots.
-- `?debug&characters`: all the stick-figure stances side by side, for screenshots. Add `&cast=quirk` (with `&q=0..2` for which quirk), `&cast=celebrate` or `&cast=dismay` for the four real players. `&figures=mesh` there too for the models.
+- `?debug&preview`: static throw preview with made-up paths (`&zone`, `&snapped`), for screenshots.
+- `?debug&characters`: all the stick-figure stances side by side, for screenshots. Add `&cast=quirk` (with `&q=0..2` for which quirk), `&cast=celebrate` or `&cast=dismay` for the four real players, `&closeup`, `&freezethrow`. `&figures=mesh` there too for the models.
+- `?debug&freezethrow` (in a match), `&freezeat=T` (stop the simulation at T seconds), `&timerframes` (drive frames from timers; it can hang headless Chrome, so use `--virtual-time-budget` without it).
 - `?figures=mesh`: use the Kenney mesh models instead of the stick figures (`?figures=stick` is the default).
 - `?seed=N`: fixes the court and random numbers, so the same N gives the same game.
 

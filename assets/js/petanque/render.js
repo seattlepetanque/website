@@ -227,7 +227,9 @@ export function createRenderer(canvas, terrain) {
   const ground = makeGrassPlane(grass, C.terrainW / 2, C.terrainL / 2, 600, edgeZ);
   scene.add(ground);
   scene.add(makeTufts(terrain, isPhone()));
-  scene.add(makeTrees(terrain));
+  const trees = makeTrees(terrain);
+  scene.add(trees);
+  let swayT = 0; // D15: a slow lean of each tree about its foot; frozen when paused (render dt 0), none under reduced motion
 
   // Lumber surround: weathered 6x6 timbers, one mesh per board section (long sides split with butt joints,
   // slightly different tone and top height per board), casting and receiving shadows
@@ -261,9 +263,11 @@ export function createRenderer(canvas, terrain) {
 
   // Visible stones
   const stones = terrain.visibleStones();
+  let stoneInst = null; // { mesh, mats, shown } so stones removed under a placed jack (D14) can be hidden
   if (stones.length) {
     const sg = new THREE.IcosahedronGeometry(1, 0);
     const stoneMesh = new THREE.InstancedMesh(sg, new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0, flatShading: true, envMapIntensity: 0.3 }), stones.length);
+    const mats = [];
     const rand = mulberry32(99), m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sv = new THREE.Vector3(), pv = new THREE.Vector3(), col = new THREE.Color();
     stones.forEach((s, i) => {
       const h = terrain.sample(s.x, s.y).h;
@@ -275,6 +279,7 @@ export function createRenderer(canvas, terrain) {
       pv.set(s.x, s.y, h + r * 0.25);
       m.compose(pv, q, sv);
       stoneMesh.setMatrixAt(i, m);
+      mats.push(m.clone());
       const t = rand();
       col.setHSL(0.09 + rand() * 0.04, 0.1 + t * 0.25, 0.3 + rand() * 0.3);
       stoneMesh.setColorAt(i, col);
@@ -282,6 +287,22 @@ export function createRenderer(canvas, terrain) {
     stoneMesh.castShadow = true;
     stoneMesh.receiveShadow = true;
     scene.add(stoneMesh);
+    stoneInst = { mesh: stoneMesh, mats, shown: stones.map(() => true) };
+  }
+  // Hide the stones the terrain has removed (and show them again after a reset)
+  const zeroMat = new THREE.Matrix4().makeScale(0, 0, 0);
+  function syncStones() {
+    if (!stoneInst) return;
+    const now = terrain.visibleStones();
+    let dirty = false;
+    now.forEach((s, i) => {
+      const vis = !s.gone;
+      if (stoneInst.shown[i] === vis) return;
+      stoneInst.shown[i] = vis;
+      stoneInst.mesh.setMatrixAt(i, vis ? stoneInst.mats[i] : zeroMat);
+      dirty = true;
+    });
+    if (dirty) stoneInst.mesh.instanceMatrix.needsUpdate = true;
   }
 
   // Boundary strings and throwing circle
@@ -350,7 +371,12 @@ export function createRenderer(canvas, terrain) {
       e.mesh.position.set(b.x, b.y, b.z);
       if (e.ring) e.ring.position.set(b.x, b.y, terrain.sample(b.x, b.y).h + 0.004);
       e.mesh.visible = true; // dead bodies stay visible at their spot beyond the far line, greyed
-      e.mesh.material = b.dead ? (b.kind === 'jack' ? deadJackMat : deadBouleMat) : (b.kind === 'jack' ? (jv.c ? jackBright : jackMat) : bouleMats[b.team ? 1 : 0]);
+      const baseMat = b.dead ? (b.kind === 'jack' ? deadJackMat : deadBouleMat) : (b.kind === 'jack' ? (jv.c ? jackBright : jackMat) : bouleMats[b.team ? 1 : 0]);
+      if (e.fade) { // D11 reduced motion: a ball fades out and in instead of being carried
+        if (!e.fadeMat || e.fadeBase !== baseMat) { e.fadeMat = baseMat.clone(); e.fadeBase = baseMat; e.fadeMat.transparent = true; }
+        e.fadeMat.opacity = e.fade.k;
+        e.mesh.material = e.fadeMat;
+      } else e.mesh.material = baseMat;
       if (b.kind === 'jack') jackLive = e;
     }
     for (const [id, e] of meshes) {
@@ -359,6 +385,22 @@ export function createRenderer(canvas, terrain) {
       if (e.ring) scene.remove(e.ring);
       if (e === jackLive) jackLive = null;
       meshes.delete(id);
+    }
+  }
+
+  // Fade a body out (dir -1) or in (dir +1) over `dur` seconds of render time (reduced motion only; see main.js kickFetch)
+  function fadeBody(id, dir, dur = 0.3) {
+    const e = meshes.get(id);
+    if (!e) return;
+    e.fade = { k: dir > 0 ? 0 : 1, dir, dur };
+  }
+  function updateFades(dt) {
+    for (const e of meshes.values()) {
+      const f = e.fade;
+      if (!f) continue;
+      f.k = Math.max(0, Math.min(1, f.k + f.dir * dt / f.dur));
+      if (f.k >= 1 && f.dir > 0) { e.fade = null; if (e.fadeMat) e.mesh.material = e.fadeBase; }
+      e.mesh.visible = !(f.dir < 0 && f.k <= 0);
     }
   }
 
@@ -645,8 +687,6 @@ export function createRenderer(canvas, terrain) {
       scoring.add(groundRing(rv.x, rv.y, 0, r + 0.004, '#777777', 0.28, 0.016, 2));
       if (rv.label) {
         const spr = labelSprite(rv.label, '#fff', 'rgba(110,110,110,0.88)');
-        const d = Math.hypot(rv.x - jack.x, rv.y - jack.y) || 1, ux = (rv.x - jack.x) / d, uy = (rv.y - jack.y) / d;
-        void ux; void uy;
         spr.center.set(0.5, 1); // just below the rival, on screen
         spr.position.set(rv.x, rv.y - r - 0.03, terrain.sample(rv.x, rv.y).h + 0.04);
         scoring.add(spr);
@@ -667,18 +707,36 @@ export function createRenderer(canvas, terrain) {
     return spr;
   }
   // Between throws (D07): ribbons from the jack's edge to the closest boule of each team, with team-coloured cm labels
-  // items: [{ x, y, r, label, color, dark }]; jack: { x, y, r }
-  function showMeasure(jack, items) {
+  // items: [{ x, y, r, label, color, dark }]; jack: { x, y, r }; others: [{ x, y }] every other live boule, which a label
+  // must stay clear of. The label sits beyond its boule, away from the jack, unless that lands on a neighbour or on
+  // the other label, in which case the nearest clear direction round the boule is used.
+  function showMeasure(jack, items, others = []) {
     clearMeasure();
     const jz = terrain.sample(jack.x, jack.y).h;
+    const taken = []; // centres of labels already placed
     for (const it of items) {
       const under = groundRibbon(jack, it, jack.r || 0.015, it.r || 0.037, 0.05, '#000000', 0.5, 0.014, 4);
       const line = groundRibbon(jack, it, jack.r || 0.015, it.r || 0.037, 0.032, it.color, 1, 0.017, 5);
       if (under) measure.add(under);
       if (line) measure.add(line);
       const spr = labelSprite(it.label, '#fff', it.dark);
-      // the label sits just beyond the boule, away from the jack, so neither the jack nor the boule is covered
-      const d = Math.hypot(it.x - jack.x, it.y - jack.y) || 1, ux = (it.x - jack.x) / d, uy = (it.y - jack.y) / d, off = (it.r || 0.037) + 0.04;
+      const r = it.r || 0.037, off = r + 0.04, mid = off + 0.11; // mid: roughly where the label's middle ends up
+      const a0 = Math.atan2(it.y - jack.y, it.x - jack.x);
+      const clear = (a) => { // distance from the label's middle to the nearest thing it could cover
+        const cx = it.x + Math.cos(a) * mid, cy = it.y + Math.sin(a) * mid;
+        let m = Math.hypot(cx - jack.x, cy - jack.y) - 0.1;
+        for (const q of others) if (q.x !== it.x || q.y !== it.y) m = Math.min(m, Math.hypot(cx - q.x, cy - q.y));
+        for (const q of taken) m = Math.min(m, Math.hypot(cx - q.x, cy - q.y) - 0.1);
+        return m;
+      };
+      let best = a0, bestM = clear(a0);
+      for (const da of [0.6, -0.6, 1.2, -1.2, 1.8, -1.8, Math.PI]) {
+        if (bestM >= 0.17) break;
+        const m = clear(a0 + da) - Math.abs(da) * 0.01;
+        if (m > bestM) { bestM = m; best = a0 + da; }
+      }
+      const ux = Math.cos(best), uy = Math.sin(best);
+      taken.push({ x: it.x + ux * mid, y: it.y + uy * mid });
       spr.center.set(0.5 - 0.5 * Math.max(-1, Math.min(1, ux * 1.6)), 0.5 - 0.5 * Math.max(-1, Math.min(1, uy * 1.6)));
       spr.position.set(it.x + ux * off, it.y + uy * off, Math.max(jz, terrain.sample(it.x, it.y).h) + 0.06);
       measure.add(spr);
@@ -1080,11 +1138,9 @@ export function createRenderer(canvas, terrain) {
 
   function setCamera(m, o = {}) {
     if (m === 'inspect' && (mode !== 'inspect' || o.reset)) { // o.reset: a scripted cut replaces the user's orbit
-      const t = o.target || { x: 2, y: 8 };
       orbit.dist = o.dist || 2.5;
       orbit.az = o.az !== undefined ? o.az : 0;
       orbit.el = o.el !== undefined ? o.el : 0.6;
-      void t;
     }
     if (m === 'shoulder' && o.zoom !== undefined) zoom = clampZoom(o.zoom);
     mode = m; opts = o;
@@ -1178,8 +1234,8 @@ export function createRenderer(canvas, terrain) {
       const g0 = groundZ(cur.tgt);
       PC.P.copy(cur.tgt);
       if (dir.z < -0.03) { const k = (g0 - cur.pos.z) / dir.z; if (k > 0 && k < 80) PC.P.copy(cur.pos).addScaledVector(dir, k); }
-      PC.P.x = Math.max(-C.terrainW / 2, Math.min(C.terrainW / 2, PC.P.x));
-      PC.P.y = Math.max(-C.terrainL / 2, Math.min(C.terrainL / 2, PC.P.y));
+      PC.P.x = Math.max(-C.terrainPad, Math.min(C.terrainW + C.terrainPad, PC.P.x)); // the court runs x 0..W, y 0..L
+      PC.P.y = Math.max(-C.terrainPad, Math.min(C.terrainL + C.terrainPad, PC.P.y));
       PC.P.z = groundZ(PC.P) + 0.03;
       const off = cur.pos.clone().sub(PC.P);
       PC.dist = Math.max(0.01, off.length());
@@ -1377,6 +1433,11 @@ export function createRenderer(canvas, terrain) {
       }
       if (e.ring) e.ring.visible = mode === 'head' && !e.body.dead;
     }
+    if (dt > 0 && !reduce()) {
+      swayT += dt;
+      trees.children.forEach((t, i) => t.rotation.set(Math.sin(swayT * 0.55 + i * 1.9) * 0.011, Math.sin(swayT * 0.41 + i * 2.7) * 0.011, 0));
+    }
+    updateFades(dt);
     updateCamera(dt);
     updatePreview();
     updateJackMark(dt);
@@ -1408,5 +1469,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { sync, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, clearMeasure, showJackZone, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  return { sync, syncStones, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, clearMeasure, showJackZone, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
 }

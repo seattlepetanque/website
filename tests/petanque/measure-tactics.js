@@ -9,14 +9,14 @@ import { C } from '../../assets/js/petanque/constants.js';
 import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { createWorld, createBody, launch, simulate } from '../../assets/js/petanque/physics.js';
 import { createMatch, defaultPlayers, apply, nextTeam, playersWithBoules, boulesInHand, holdingTeam } from '../../assets/js/petanque/rules.js';
-import { SKILL, coneFor, executeThrow, releaseFrom, fitToBudget } from '../../assets/js/petanque/donnee.js';
+import { SKILL, difficultyScale, coneFor, executeThrow, releaseFrom, fitToBudget } from '../../assets/js/petanque/donnee.js';
 import { baseFor } from './measure-throws.js';
 import { readSituation, plan, DEFAULT_CFG, DIFFICULTY } from '../../assets/js/petanque/tactics.js';
 const AIM = await import(process.env.AI_MOD || '../../assets/js/petanque/ai.js');
 const { chooseThrow, chooseJackThrow, chooseJackPlacement, donneeDistFor } = AIM;
 const whoThrows = AIM.whoThrows || null;
-// tuning hooks: SKMUL=easy,medium,hard overrides the extra skill spread; EPS=easy,medium,hard overrides the tactical error rates for a run
-if (process.env.SKMUL) process.env.SKMUL.split(',').forEach((v, i) => { DIFFICULTY[['easy', 'medium', 'hard'][i]].skillMul = +v; });
+// tuning hooks: DSCALE=easy,medium,hard overrides donnee.js difficultyScale (the AI skill spread); EPS=easy,medium,hard overrides the tactical error rates for a run
+if (process.env.DSCALE) process.env.DSCALE.split(',').forEach((v, i) => { difficultyScale[['easy', 'medium', 'hard'][i]] = +v; });
 if (process.env.EPS) process.env.EPS.split(',').forEach((v, i) => { DIFFICULTY[['easy', 'medium', 'hard'][i]].eps = +v; });
 if (AIM.AI && !process.env.TIME_GUARD) AIM.AI.timeGuard = false; // the 40 ms wall-clock guard makes results load-dependent; TIME_GUARD=1 keeps it
 

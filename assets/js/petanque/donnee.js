@@ -176,7 +176,9 @@ export const SKILL = Object.freeze({
   odette: Object.freeze({ lat: 0.008, long: 0.027, loft: 1.4 * DEG, maxSpeed: 12.4 }), // tireur: tight lateral, strong
   pierre: Object.freeze({ lat: 0.009, long: 0.031, loft: 1.6 * DEG, maxSpeed: 12.2 }), // tireur-ish, a bit looser, strong
 });
-export const difficultyScale = Object.freeze({ easy: 2.3, medium: 1.35, hard: 0.65 });
+// The one difficulty scaling: multiplies an AI's lat/long/loft sigmas. D02 set 2.3 / 1.35 / 0.65; D22's balance runs
+// against the scripted pointer added x0.85 / x1.4 / x2.0 on top (tactics.js), folded in here: 1.955 / 1.89 / 1.3.
+export const difficultyScale = { easy: 1.95, medium: 1.9, hard: 1.3 }; // plain object: tests pin the D02 values (see ai.test.js)
 const LONG_GROWTH = 1.85; // longitudinal sigma at LOFT_MAX relative to LOFT_MIN
 const LAT_GROWTH = 1.25; // lateral sigma at LOFT_MAX relative to LOFT_MIN
 // Near-max throws are less accurate: both sigmas are multiplied by 1 + ENERGY_K * max(0, energyFrac - ENERGY_KNEE)^2

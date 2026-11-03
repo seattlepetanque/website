@@ -12,9 +12,10 @@ import { specFor } from '../../assets/js/petanque/personalities.js';
 import { C } from '../../assets/js/petanque/constants.js';
 import { AI, chooseThrow } from '../../assets/js/petanque/ai.js';
 
-// the balance multipliers (DIFFICULTY.*.skillMul, D22) are measured in measure-tactics.js; this file checks accuracy at donnee.js's own scaling
-import { DIFFICULTY } from '../../assets/js/petanque/tactics.js';
-for (const d of Object.values(DIFFICULTY)) d.skillMul = 1;
+import { difficultyScale } from '../../assets/js/petanque/donnee.js';
+// decisions and accuracy are asserted at the original D02 scaling; the shipped values (donnee.js difficultyScale) are balanced against
+// the scripted pointer in measure-tactics.js
+Object.assign(difficultyScale, { easy: 2.3, medium: 1.35, hard: 0.65 });
 AI.timeGuard = false;
 
 function flat() {

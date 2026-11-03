@@ -7,9 +7,10 @@ import { createMatch, jackValid, jackPlaceValid } from '../../assets/js/petanque
 import { LOFT_MIN, LOFT_MAX, styleForLoft, SKILL, energyFor } from '../../assets/js/petanque/donnee.js';
 import { AI, chooseThrow, chooseThrowAsync, chooseJackThrow, chooseJackPlacement } from '../../assets/js/petanque/ai.js';
 
-// the balance multipliers (DIFFICULTY.*.skillMul, D22) are measured in measure-tactics.js; this file checks accuracy at donnee.js's own scaling
-import { DIFFICULTY } from '../../assets/js/petanque/tactics.js';
-for (const d of Object.values(DIFFICULTY)) d.skillMul = 1;
+import { difficultyScale } from '../../assets/js/petanque/donnee.js';
+// decisions and accuracy are asserted at the original D02 scaling; the shipped values (donnee.js difficultyScale) are balanced against
+// the scripted pointer in measure-tactics.js
+Object.assign(difficultyScale, { easy: 2.3, medium: 1.35, hard: 0.65 });
 AI.timeGuard = false; // the wall-clock guard would make the determinism checks load-dependent (it is exercised in tactics.test.js)
 
 // Flat packed terrain, no stones

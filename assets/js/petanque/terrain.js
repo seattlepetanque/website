@@ -185,7 +185,7 @@ export function createTerrain(seed, opts = {}) {
   }
 
   function visibleStones() {
-    return stones.map((s) => ({ x: s.x, y: s.y, r: s.r }));
+    return stones.map((s) => ({ x: s.x, y: s.y, r: s.r, gone: !!s.gone })); // gone: removed under a placed jack (D14)
   }
 
   // Heights on a regular grid over the padded extent, without jitter
