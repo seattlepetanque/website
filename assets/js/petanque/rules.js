@@ -166,6 +166,15 @@ function endMene(match, jack, boules) {
     phase: over ? 'gameOver' : 'meneEnd', winner };
 }
 
+// E15: only one team has boules left and the points already on the ground take it to the target.
+function clinchedOnGround(match, jack, boules) {
+  const h = [boulesInHand(match, 0), boulesInHand(match, 1)];
+  if ((h[0] > 0) === (h[1] > 0)) return false;
+  const team = h[0] > 0 ? 0 : 1;
+  const r = meneResult(jack, boules);
+  return !r.void && r.team === team && match.scores[team] + r.points >= match.target;
+}
+
 // Reducer: returns a new match, never mutates the input.
 export function apply(match, event) {
   switch (event.type) {
@@ -201,6 +210,7 @@ export function apply(match, event) {
       const boules = event.boules.map((b) => ({ ...b }));
       const none = boulesInHand(match, 0) + boulesInHand(match, 1) === 0;
       if (jack.dead || none) return endMene(match, jack, boules);
+      if (clinchedOnGround(match, jack, boules)) return endMene(match, jack, boules);
       return { ...match, jack, boules, inFlight: null };
     }
     case 'nextMene': {

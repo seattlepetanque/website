@@ -231,3 +231,41 @@ test('jackPlaced accepts a spot beside the string and rejects one outside', () =
   const ok = apply(m, { type: 'jackPlaced', team: 1, jack: { x: 0.03, y: 1 + Math.sqrt(75 - 1.9 ** 2) } });
   assert.equal(ok.phase, 'play');
 });
+
+// E15: game ends at the target on the ground once the opponent is out of boules
+function e15Setup(scores, team1Left) {
+  let m = started({});
+  m = { ...m, scores, players: m.players.map((p) => (p.team === 1 ? { ...p, boulesLeft: team1Left } : p)) };
+  return m;
+}
+
+test('E15: 12 + 1 on the ground with the opponent out of boules wins at once', () => {
+  const m = e15Setup([12, 0], 0);
+  const r = throwBoule(m, 'you', jackAt, [b('a', 0, 2, 8.1), b('o', 1, 2, 9)]);
+  assert.equal(r.phase, 'gameOver');
+  assert.equal(r.winner, 0);
+  assert.deepEqual(r.scores, [13, 0]);
+  assert.ok(playersWithBoules(r, 0).length > 0); // leftover boules were not played
+});
+
+test('E15: below the target on the ground the mène continues', () => {
+  const m = e15Setup([10, 0], 0);
+  const r = throwBoule(m, 'you', jackAt, [b('a', 0, 2, 8.1), b('o', 1, 2, 9)]);
+  assert.equal(r.phase, 'play'); // 10 + 1 = 11
+  assert.equal(nextTeam(r), 0);
+});
+
+test('E15: opponent with boules left means no early end', () => {
+  const m = e15Setup([12, 0], 1);
+  const r = throwBoule(m, 'you', jackAt, [b('a', 0, 2, 8.1)]);
+  assert.equal(r.phase, 'play');
+});
+
+test('E15: the team that is out of boules does not end it by holding the point', () => {
+  let m = e15Setup([12, 0], 3);
+  m = { ...m, players: m.players.map((p) => (p.team === 0 ? { ...p, boulesLeft: p.id === 'you' ? 1 : 0 } : p)) };
+  m = { ...m, players: m.players.map((p) => (p.team === 1 ? { ...p, boulesLeft: 1 } : p)) };
+  // team 0 throws its last boule and holds the point; team 1 still has one: continues
+  const r = throwBoule(m, 'you', jackAt, [b('a', 0, 2, 8.1)]);
+  assert.equal(r.phase, 'play');
+});
