@@ -329,19 +329,19 @@ export function roughness(loft, k = ROUGH_K) {
 }
 // `view` with its rolling resistance scaled by roughness(loft). Pass the perceived terrain; `rough` is false when
 // there is no unseen roughness (a stub terrain's view is the terrain itself).
-export function feltTerrain(view, loft, rough = true, k = ROUGH_K) {
-  const f = rough ? roughness(loft, k) : 1;
+export function feltTerrain(view, loft, rough = true, k = ROUGH_K, factor) {
+  const f = rough ? (factor || roughness(loft, k)) : 1;
   if (f === 1) return view;
   return { ...view, sample(x, y) { const s = view.sample(x, y); return { ...s, friction: s.friction * f }; }, perceived() { return this; } };
 }
 
 // Noiseless sim on the perceived terrain (with the low-loft roughness allowance, D19); returns the thrown body's
 // path (every ~1/30 s) until it settles
-export function predictRoll({ world, terrain, throwParams, from = C.throwFrom, kind = 'boule', rand, maxSeconds = 12 }) {
-  let seed = 12345; // fixed local rng so the guide never flickers
+export function predictRoll({ world, terrain, throwParams, from = C.throwFrom, kind = 'boule', rand, maxSeconds = 12, seed: seed0 = 12345, factor }) {
+  let seed = seed0; // fixed local rng so the guide never flickers
   const r = rand || (() => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; });
   const view = terrain.perceived();
-  const w = world.clone(feltTerrain(view, throwParams.loft, view !== terrain), r);
+  const w = world.clone(feltTerrain(view, throwParams.loft, view !== terrain, ROUGH_K, factor), r);
   const b = launch(createBody(kind, { team: -1 }), throwParams, from);
   w.add(b);
   b.state = 'airborne';
@@ -355,4 +355,110 @@ export function predictRoll({ world, terrain, throwParams, from = C.throwFrom, k
   }
   path.push({ x: b.x, y: b.y, z: b.z });
   return path;
+}
+
+// --- Roll band (D21) -----------------------------------------------------------------------
+// The roll guide as a gist: a smooth mean roll-out from touchdown to rest, a half-width that grows with the spread
+// of the jittered rolls, and the covariance of the rest points. Built from 17 noiseless sims (the centre plus two rings
+// of 8, with the cone's variance) on the perceived terrain with the D19 roughness allowance.
+// The paths are resampled by arc length to a few control points, averaged and smoothed (no pebble wiggles).
+const BAND_K = 7, BAND_OUT = 4; // control points; output points per control span
+const BAND_OFFSETS = [[0, 0]]; // centre, plus two rings of 8 (1.85 and 0.9 sigma: the set has unit variance)
+for (const r of [1.85, 0.9]) for (let k = 0; k < 8; k++) BAND_OFFSETS.push([Math.cos(k * Math.PI / 4 + (r < 1 ? Math.PI / 8 : 0)) * r, Math.sin(k * Math.PI / 4 + (r < 1 ? Math.PI / 8 : 0)) * r]);
+// The band predicts the mean of many real rolls, so it needs a slightly different allowance than a single planned
+// roll: longer at 14 degrees, shorter at 30 (fitted over seeds 1-13 with the test in donnee.test.js).
+const BAND_ROUGH = [[14, 2.45], [30, 1.7], [45, 1.15], [60, 0.9]];
+export function bandRoughness(loft) {
+  const d = loft / DEG, k = BAND_ROUGH;
+  if (d <= k[0][0]) return k[0][1];
+  for (let i = 1; i < k.length; i++) if (d <= k[i][0]) return k[i - 1][1] + (d - k[i - 1][0]) / (k[i][0] - k[i - 1][0]) * (k[i][1] - k[i - 1][1]);
+  return k[k.length - 1][1];
+}
+const bandCaches = new WeakMap(); // terrain -> Map (cached by quantised donnée and loft)
+
+function resampleByLength(pts, K) {
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+  const L = cum[cum.length - 1], out = [];
+  for (let k = 0; k < K; k++) {
+    const s = L * k / (K - 1);
+    let i = 1;
+    while (i < pts.length - 1 && cum[i] < s) i++;
+    const seg = cum[i] - cum[i - 1], t = seg > 1e-9 ? (s - cum[i - 1]) / seg : 0;
+    out.push({ x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t });
+  }
+  return out;
+}
+const catmull = (p0, p1, p2, p3, t) => 0.5 * (2 * p1 + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (3 * p1 - p0 - 3 * p2 + p3) * t * t * t);
+
+// { world, terrain, from, landing, loft, cone, kind, seed } -> { center: [{x,y,z}], halfWidths, restMean, restCov: {xx,xy,yy}, control }
+export function predictRollBand({ world, terrain, from = C.throwFrom, landing, loft, cone, kind = 'boule', seed = 12345 }) {
+  const view = terrain.perceived();
+  let bandCache = bandCaches.get(terrain);
+  if (!bandCache) bandCaches.set(terrain, bandCache = new Map());
+  // quantised donnée and loft; the world's boules are part of the key
+  let sig = world.bodies.length;
+  for (const b of world.bodies) sig += b.x * 7.3 + b.y * 3.1;
+  const q = (v, s) => Math.round(v / s);
+  const key = `${q(landing.x, 0.01)},${q(landing.y, 0.01)},${q(loft, 0.0035)},${kind},${seed},${sig.toFixed(3)},${q(from.z || 0, 0.01)}`;
+  if (bandCache.has(key)) return bandCache.get(key);
+
+  const a = axes(from, landing);
+  const sims = [];
+  for (const [zl, zg] of BAND_OFFSETS) {
+    const lat = zl * cone.sigmaLat, lon = zg * cone.sigmaLong;
+    const land = { x: landing.x + a.rx * lat + a.ux * lon, y: landing.y + a.ry * lat + a.uy * lon };
+    const tp = solveLaunch({ from, landing: land, loft, terrain: view });
+    tp.from = from;
+    tp.sidespin = Math.max(-SIDESPIN_MAX, Math.min(SIDESPIN_MAX, zl * SIDESPIN_PER_SIGMA));
+    const full = predictRoll({ world, terrain, throwParams: tp, from, kind, seed, factor: bandRoughness(loft), rand: () => 0.5 }); // rand 0.5: no tilt or bounce jitter, so the roll is a smooth function of the donnée
+    const hit = full.findIndex((p) => p.z <= terrain.sample(p.x, p.y).h + 0.1);
+    const path = hit < 0 ? [full[full.length - 1], full[full.length - 1]] : full.slice(hit);
+    if (path.length < 2) path.push(path[0]);
+    sims.push(path);
+  }
+  const rs = sims.map((p) => resampleByLength(p, BAND_K));
+  const n = rs.length;
+  let ctl = [];
+  for (let k = 0; k < BAND_K; k++) ctl.push({ x: rs.reduce((s, r) => s + r[k].x, 0) / n, y: rs.reduce((s, r) => s + r[k].y, 0) / n });
+  const restMean = { x: ctl[BAND_K - 1].x, y: ctl[BAND_K - 1].y };
+  let sxx = 0, sxy = 0, syy = 0;
+  for (const r of rs) {
+    const dx = r[BAND_K - 1].x - restMean.x, dy = r[BAND_K - 1].y - restMean.y;
+    sxx += dx * dx / n; sxy += dx * dy / n; syy += dy * dy / n;
+  }
+  // smooth the mean path (endpoints fixed)
+  for (let it = 0; it < 2; it++) {
+    const c0 = ctl;
+    ctl = c0.map((p, k) => (k === 0 || k === BAND_K - 1) ? p : { x: (c0[k - 1].x + 2 * p.x + c0[k + 1].x) / 4, y: (c0[k - 1].y + 2 * p.y + c0[k + 1].y) / 4 });
+  }
+  // lateral spread at each control point, across the path's local direction
+  const hw = [];
+  for (let k = 0; k < BAND_K; k++) {
+    const pa = ctl[Math.max(0, k - 1)], pb = ctl[Math.min(BAND_K - 1, k + 1)];
+    let tx = pb.x - pa.x, ty = pb.y - pa.y;
+    const tl = Math.hypot(tx, ty);
+    if (tl < 1e-3) { tx = a.ux; ty = a.uy; } else { tx /= tl; ty /= tl; }
+    let s2 = 0;
+    for (const r of rs) s2 += ((r[k].x - ctl[k].x) * -ty + (r[k].y - ctl[k].y) * tx) ** 2 / n;
+    hw.push(Math.max(0.05, Math.sqrt(s2)));
+  }
+  const hws = hw.map((h, k) => (k === 0 || k === BAND_K - 1) ? h : (hw[k - 1] + 2 * h + hw[k + 1]) / 4);
+  const g = (i) => ctl[Math.max(0, Math.min(BAND_K - 1, i))], h = (i) => hws[Math.max(0, Math.min(BAND_K - 1, i))];
+  const center = [], halfWidths = [];
+  for (let k = 0; k < BAND_K - 1; k++) {
+    for (let j = 0; j < BAND_OUT; j++) {
+      const t = j / BAND_OUT;
+      const x = catmull(g(k - 1).x, g(k).x, g(k + 1).x, g(k + 2).x, t), y = catmull(g(k - 1).y, g(k).y, g(k + 1).y, g(k + 2).y, t);
+      center.push({ x, y, z: terrain.sample(x, y).h });
+      halfWidths.push(Math.max(0.05, catmull(h(k - 1), h(k), h(k + 1), h(k + 2), t)));
+    }
+  }
+  const last = ctl[BAND_K - 1];
+  center.push({ x: last.x, y: last.y, z: terrain.sample(last.x, last.y).h });
+  halfWidths.push(hws[BAND_K - 1]);
+  const out = { center, halfWidths, restMean, restCov: { xx: sxx, xy: sxy, yy: syy }, control: ctl };
+  bandCache.set(key, out);
+  if (bandCache.size > 40) bandCache.delete(bandCache.keys().next().value);
+  return out;
 }

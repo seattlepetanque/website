@@ -7,7 +7,7 @@ import { createBody, launch, createWorld, simulate } from '../../assets/js/petan
 import {
   LOFT_MIN, LOFT_MAX, styleForLoft, backspinForLoft, solveLaunch, SKILL, difficultyScale, coneFor,
   executeThrow, arcPath, coneEnvelope, predictRoll, releaseHeight, releaseFrom, snapAim, SNAP_SHORT,
-  fitToBudget, effortFor, energyFor, energyPenalty, roughness,
+  fitToBudget, effortFor, energyFor, energyPenalty, roughness, predictRollBand,
 } from '../../assets/js/petanque/donnee.js';
 
 const DEG = Math.PI / 180;
@@ -371,4 +371,60 @@ test('predictRoll: predicted rest matches the mean real rest at 14 and 30 degree
   w2.add(b2); b2.state = 'airborne'; simulate(w2);
   assert.ok(Math.hypot(a[a.length - 1].x - b2.x, a[a.length - 1].y - b2.y) < 1e-6);
   assert.ok(roughness(60 * DEG) === 1 && roughness(14 * DEG) === 2);
+});
+
+// --- D21 roll band ---------------------------------------------------------------------------
+function bandFor(terrain, deg, landing, dx = 0) {
+  const world = createWorld(terrain, mulberry32(3));
+  const loft = deg * DEG, f = releaseFrom(from, loft);
+  const land = { x: landing.x + dx, y: landing.y };
+  const cone = coneFor({ skill: SKILL.human, from: f, landing: land, loft });
+  return { band: predictRollBand({ world, terrain, from: f, landing: land, loft, cone }), f, loft, land, cone };
+}
+
+test('the roll band mean rest matches the average real rest on seeded gravel (14, 30, 55 degrees)', () => {
+  for (const [deg, y] of [[14, 5.5], [30, 7.5], [55, 8]]) {
+    let bias = 0;
+    const seeds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13];
+    for (const seed of seeds) {
+      const terrain = createTerrain(seed), rand = mulberry32(100 + seed);
+      const { band, f, loft, land, cone } = bandFor(terrain, deg, { x: 2.2, y });
+      let sy = 0;
+      const N = 30;
+      for (let i = 0; i < N; i++) {
+        const { throwParams } = executeThrow({ from: f, landing: land, loft, cone, terrain, rand });
+        const w = createWorld(terrain, rand), b = launch(createBody('boule', { team: 0 }), throwParams, f);
+        w.add(b); b.state = 'airborne'; simulate(w);
+        sy += b.y / N;
+      }
+      bias += (band.restMean.y - sy) / seeds.length;
+    }
+    assert.ok(Math.abs(bias) < 0.3, `loft ${deg}: band rest minus real rest averages ${bias.toFixed(2)} m`);
+  }
+});
+
+test('the roll band barely moves for a 1 cm donnée change and is smooth', () => {
+  for (const seed of [4, 7]) {
+    for (const deg of [14, 30, 55]) {
+      const terrain = createTerrain(seed);
+      const a = bandFor(terrain, deg, { x: 2.2, y: 7 }).band, b = bandFor(terrain, deg, { x: 2.2, y: 7 }, 0.012).band;
+      const d = Math.hypot(a.restMean.x - b.restMean.x, a.restMean.y - b.restMean.y);
+      // a roulette's long roll is chaotic (a few cm of landing change moves the rest by ~10 cm), so its limit is looser;
+      // the game also only recomputes the band once the donnée has moved 5 cm, so a 1 px drag never moves it at all
+      assert.ok(d < (deg < 20 ? 0.35 : 0.1), `seed ${seed} loft ${deg}: restMean moved ${d.toFixed(3)} m for 1.2 cm`);
+      // smooth: the heading changes by little between neighbouring output points
+      const c = a.center;
+      assert.equal(a.halfWidths.length, c.length);
+      let prev = null;
+      for (let i = 1; i < c.length; i++) {
+        const dx = c[i].x - c[i - 1].x, dy = c[i].y - c[i - 1].y;
+        if (Math.hypot(dx, dy) < 0.05) { prev = null; continue; }
+        const h = Math.atan2(dx, dy);
+        if (prev !== null) assert.ok(Math.abs(Math.atan2(Math.sin(h - prev), Math.cos(h - prev))) < 0.5, `seed ${seed} loft ${deg}: sharp turn at ${i}`);
+        prev = h;
+      }
+      for (const w of a.halfWidths) assert.ok(w >= 0.05 && w < 1.5);
+      assert.ok(a.restCov.xx >= 0 && a.restCov.yy >= 0);
+    }
+  }
 });
