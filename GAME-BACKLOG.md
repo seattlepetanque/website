@@ -555,26 +555,28 @@ From the user's play-testing (2026-11-02). Earlier contracts still apply. Shared
 | E08 | done | sonnet | — | Bug: a jack in a clearly valid spot is treated as invalid and gets placed |
 | E09 | done | sonnet | — | Bug: Pierre suggests both pointing and shooting in one dialog |
 | E10 | done | sonnet | E01 | Each new mène starts from a circle placed around the last jack, playing the other direction |
-| E11 | todo | sonnet | E01 | Slow mode: a casual-observer camera |
+| E11 | in-progress | sonnet | E01 | Slow mode: a casual-observer camera |
 | E12 | done | sonnet | — | "Re-aim" becomes an "Adjust view" toggle for free camera angles |
 | E13 | done | haiku | — | Remove "New game" from the in-game controls |
 | E14 | done | haiku | — | Full-screen toggle as a video-player-style icon |
 | E15 | done | sonnet | — | Game ends at 13 on the ground; leftover boules aren't played |
 | E16 | done | sonnet | E01, E06 | Holding the boules: slow-mode pick-up and hand positions; quick-mode underarm palm-down toss |
-| E17 | todo | sonnet | E01–E31 | Round 4 review |
+| E17 | todo | sonnet | E01–E33 | Round 4 review |
 | E18 | done | haiku | — | Choppy yellow placement-zone fill: clip it properly instead of clamping cells |
 | E19 | done | sonnet | — | Bug: AI throws to the middle when the jack is near a string |
 | E20 | done | sonnet | — | Current cochonnet boundary rule: in if any part is inside the side strings; > 0.5 m from the end string |
 | E21 | done | sonnet | — | Bug: the cochonnet can stay "Rolling…" forever after a throw |
-| E22 | todo | haiku | — | Scoring circle reaches out to the losing team's best boule |
+| E22 | done | haiku | — | Scoring circle reaches out to the losing team's best boule |
 | E23 | done | haiku | E16 | Bug: a boule shows in the hand when throwing the jack |
-| E24 | todo | sonnet | E10 | Bug: valid jack judged invalid, then the AI placed it ~2–3 m from the circle |
-| E25 | todo | sonnet | E10 | Bug: the jack-placement view isn't centred on the valid area (both directions) |
-| E26 | todo | sonnet | E10 | Bug: after a boule is thrown the camera swings round to face the opposite direction |
+| E24 | done | sonnet | E10 | Bug: valid jack judged invalid, then the AI placed it ~2–3 m from the circle |
+| E25 | done | sonnet | E10 | Bug: the jack-placement view isn't centred on the valid area (both directions) |
+| E26 | done | sonnet | E10 | Bug: after a boule is thrown the camera swings round to face the opposite direction |
 | E27 | todo | sonnet | E26, E11 | Experiment: a dynamic TV-presentation camera for AI turns (test builds) |
 | E28 | done | sonnet | E10 | Ring too close to the far end: move it back to ~11 m of space |
 | E30 | done | haiku | — | No automatic fullscreen; fullscreen and pause icons bottom right above the status |
-| E31 | todo | haiku | E10 | Quick mode: thrower changeover in the circle (out, empty pause, new player in) |
+| E31 | done | haiku | E10 | Quick mode: thrower changeover in the circle (out, empty pause, new player in) |
+| E32 | todo | sonnet | E11 | Close calls at mène end: distances on scoring boules too, millimetres when close, top-down measuring view |
+| E33 | done | haiku | — | Header and footer bars span the full width again |
 
 ### E01 Quick and slow modes (sonnet)
 - **Toggle:** add a game mode setting, shown on the setup screen and switchable mid-game from an in-game control. It is remembered in localStorage (with try/catch).
@@ -735,6 +737,21 @@ In quick mode, changing throwers should read clearly: the previous thrower disap
 - `court.js` is the single source of truth (live `court.circle`, `court.throwFrom`, `court.dir`, plus helpers); `nextCircle` places the ring around the last jack (≥ 1 m from the lines), flips the direction, and moves it back until ~11 m remain from the ring's front to the far string when there was under 10 m (E28). `nextMene` sets `geometry.circle`/`geometry.dir`. AI, tactics, donnee, physics dead rows, waiting spots, toss, aiming, walk-ins, gather and home spots, all camera modes (flight `frameMoving` with dir, head, inspect, reaction, placement framing the whole zone) and the zone drawing follow the court. The ring is a mesh: slow mode the last thrower carries it (and re-carries if corrected); quick mode it fades. Debug `?debug&mene2` (+ `&ringcarry&slow`, `&ringheld`). court.test.js, camera dir −1 test.
 - E24: no fixed circle remained in the validity, AI or marker paths after E10 (the AI jack y-offsets and the E20 end rule were fixed to +y and are now direction-aware); a test checks placements 6–10 m from the current circle in four setups. The user's short placement likely came from mid-edit code. E25/E26: E10 reframed the placement camera and made the flight camera direction-aware; verify in E17.
 - Not seen in a browser: the animated ring carry, quick-mode ring fade, and the real mène-end flow.
+
+### E22 notes
+- Circle radius = max(rival centre distance, furthest scoring boule edge), so the rival's centre sits on the line (edge band centred on the radius); no live rival → scoring edge + 0.07 m; old trim removed. Fallback not screenshotted. Committed with the next shared-file commit.
+
+### E31 notes
+- `character.setOpacity`/`fadeTo` (game-time fades, freeze with the pause); quick mode `changeoverIn`: previous thrower fades out (0.15 s) to their waiting spot, 0.4 s empty circle, new thrower fades in; `beginTurn` waits for it. Slow mode, autotest and reduced motion unchanged. Not seen in a browser. Committed with the next shared-file commit.
+
+### E32 Close calls at mène end (sonnet)
+User screenshot (mène 3): Marcel's boule (scoring, badge 1) and Pierre's steel boule (the rival, grey "22 cm") were both ~22 cm from the jack; from the low angled camera the steel boule looked closer, so the result looked wrong even though the circle was consistent. Make close calls unambiguous: label every scoring boule with its distance as well as the rival; when the winning and rival gaps differ by < 2 cm, show millimetres ("21.6 cm" vs "22.3 cm") and say "Close call!" in the card; and at mène end move the camera to a near top-down view over the circle (higher pitch, centred on the jack) so perspective can't mislead. Keep it readable on phones.
+
+### E33 Header and footer full width (haiku)
+Since E30 moved the fullscreen and pause icons, the scoreboard header no longer spans the full width (and the bottom strip may be narrower). Restore full-width header and footer bars as before, with the icons placed without squeezing them (e.g. in the bottom-right corner above the status strip as an overlay that doesn't take a grid column, or inside the footer bar at its right end). Check at 1200×800, 500×900 and 844×390.
+
+### E33 notes
+- The E30 icon group took an implicit grid column (~84 px), squeezing the scoreboard and dock; it's now absolutely positioned in row 2 at the bottom right. For E17: in the E33 screenshot the jack chevron was faintly visible during Marcel's turn ("Marcel is aiming…"); confirm it's only the fade-out and that D17's human-aim-only rule holds.
 
 ### E15 notes
 - `clinchedOnGround` in rules.js: when exactly one team has boules in hand and holds points on the ground reaching the target, `throwSettled` ends the mène through the normal scoring; a team out of boules that holds the point doesn't end it early. main.js and the AI needed no change (no turn is asked for after the phase ends). Four new tests.

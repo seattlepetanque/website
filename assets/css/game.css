@@ -192,10 +192,11 @@ html.petanque-playing main { overflow: visible; }
   background: var(--pt-glass); border-width: 1px;
 }
 .petanque.is-playing .pc-bar button.is-on { background: var(--red, #8a1c2b); }
-/* E30: bottom-right icons (fullscreen toggle and pause) in the court row, so they sit just above the dock and never
-   cover the scoreboard or the controls bar; above the cards (z 4 over the overlays' z 2) */
+/* E30/E33: bottom-right icons (fullscreen toggle and pause) are an overlay on the court row, anchored to its bottom
+   edge so they sit just above the dock. Absolutely positioned, they take no grid column, so the scoreboard and dock
+   keep the full width; above the cards (z 4 over the overlays' z 2) */
 .petanque.is-playing .pc-corner {
-  display: flex; gap: .3rem; grid-row: 2; justify-self: end; align-self: end; position: relative; z-index: 4;
+  display: flex; gap: .3rem; grid-row: 2 / 3; position: absolute; right: 0; bottom: 0; z-index: 4;
 }
 .petanque.is-playing .pc-corner button { background: var(--pt-glass); }
 .petanque.is-playing .pc-corner button:focus-visible { box-shadow: 0 0 0 5px var(--paper, #fffaf0); }
