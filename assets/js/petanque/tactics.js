@@ -312,8 +312,10 @@ export function plan(sit, cfg = DEFAULT_CFG, { loose = false } = {}) {
   const stylePref = cfg.stylePref || {};
   const taste = (style) => (prof.taste[style] || 0) + ((stylePref[sit.player.id] || {})[style] || 0);
 
+  // pointing targets stay a little inside the strings and the far line (clamped, not dropped); going out is priced by the simulations
+  const inside = (t) => ({ x: clamp(t.x, 0.08, C.terrainW - 0.08), y: Math.min(t.y, C.terrainL - 0.55) });
   const mk = (family, style, intent, target, extra = {}) => ({
-    family, style, loft: L[style], intent, target, tag: intent === 'point' ? style : 'boule', parts: {}, credit: {}, prior: 0, a: 0, ...extra,
+    family, style, loft: L[style], intent, target: intent === 'point' ? inside(target) : target, tag: intent === 'point' ? style : 'boule', parts: {}, credit: {}, prior: 0, a: 0, ...extra,
   });
   const pointInfo = (c) => {
     const off = dist2(c.target, J);
@@ -460,7 +462,7 @@ export function plan(sit, cfg = DEFAULT_CFG, { loose = false } = {}) {
   }
 
   // keep within the field
-  const inField = cands.filter((k) => k.target.y < C.terrainL - 0.5 && k.target.y > 2 && k.target.x > 0.3 && k.target.x < C.terrainW - 0.3);
+  const inField = cands.filter((k) => k.target.y > 2);
   out.all = inField.slice();
   // prune: more than 1.5 below the best, near-duplicates, and the cap
   inField.sort((x, y) => y.a - x.a);
