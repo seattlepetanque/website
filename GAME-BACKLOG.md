@@ -536,3 +536,99 @@ A human should play-test:
 - Fetch pacing: how long fetching dead balls and carrying the cochonnet takes in real time, the wait before your turn while a fetcher is in view (click or key skips), whether the camera follows well, and the jack hand-over and placement.
 - Pause and orbit: Exit then drag and zoom (mouse and touch), Resume mid-throw, mid-fetch and while an AI is thinking, and New game from the paused bar.
 - Sound levels: the pebble-tick rolling, landings, timber hits (still silent: the `lumber` event has no sound), and the mute button.
+
+---
+
+# Round 4 backlog
+
+From the user's play-testing (2026-11-02). Earlier contracts still apply. Shared-repo rules for agents: never run `git stash`, `checkout`, `restore`, `reset` or `switch`; make small targeted edits in shared files (`main.js`, `render.js`, `character.js`, `hud.js`, `game.css`) and re-read the lines before each edit; don't commit.
+
+| ID | Status | Model | Deps | Title |
+|---|---|---|---|---|
+| E01 | todo | sonnet | — | Quick and slow modes, selectable in game |
+| E02 | todo | sonnet | E01 | Slow mode: people move like people (who fetches, where they wait, walking to the circle, retrieving out-of-bounds balls) |
+| E03 | todo | haiku | — | Don't show the AI's target when it places the cochonnet |
+| E04 | todo | sonnet | — | Undo the ground settling under a placed jack; "Yellow card!" if it ends up outside the valid region |
+| E05 | todo | haiku | — | Cochonnet range lines always run string to string; draw them behind the people |
+| E06 | todo | sonnet | — | Odette is left-handed |
+| E07 | todo | haiku | E06 | Pierre crouches half the time; the human player always stands |
+| E08 | todo | sonnet | — | Bug: a jack in a clearly valid spot is treated as invalid and gets placed |
+| E09 | todo | sonnet | — | Bug: Pierre suggests both pointing and shooting in one dialog |
+| E10 | todo | sonnet | E01 | Each new mène starts from a circle placed around the last jack, playing the other direction |
+| E11 | todo | sonnet | E01 | Slow mode: a casual-observer camera |
+| E12 | todo | sonnet | — | "Re-aim" becomes an "Adjust view" toggle for free camera angles |
+| E13 | todo | haiku | — | Remove "New game" from the in-game controls |
+| E14 | todo | haiku | — | Full-screen toggle as a video-player-style icon |
+| E15 | todo | sonnet | — | Game ends at 13 on the ground; leftover boules aren't played |
+| E16 | todo | sonnet | E01, E06 | Holding the boules: slow-mode pick-up and hand positions; quick-mode underarm palm-down toss |
+| E17 | todo | sonnet | E01–E16 | Round 4 review |
+
+### E01 Quick and slow modes (sonnet)
+- **Toggle:** add a game mode setting, shown on the setup screen and switchable mid-game from an in-game control. It is remembered in localStorage (with try/catch).
+- **Quick mode** works like the older behaviour: things move into position instantly or with a short fade. Out-of-bounds balls go straight to their row past the far string, players appear at their spots, and the jack hands itself over.
+- **Slow mode** is the current walking behaviour (D11: fetching, carrying, walking the jack out), extended by E02, E10, E11 and E16.
+- Put the mode in one place (e.g. `settings.mode`) that every walking or teleporting path checks. Debug `instant` and autotest stay instant whatever the mode.
+
+### E02 Slow mode: people move like people (sonnet)
+- **Placer fetches the jack:** the player who will place the cochonnet is the one who picks it up. No hand-over from a teammate.
+- **Dynamic waiting spots:** when a player returns to wait, they go to the nearest side (left or right of the court) that has a free waiting slot. The slot is either just beyond the cochonnet or just behind the circle, whichever is nearer. Slots never overlap.
+- **Walk to the circle:** players walk to the circle to throw, never warp.
+- **Who fetches a dead boule:** whoever isn't playing next and can reach it most easily.
+  - **Inside the field of play:** if the dead ball came to rest inside the field of play (inside the strings), play pauses (the next turn waits) while the retriever walks onto the court, picks it up and walks off.
+  - **Outside the strings:** the retriever walks around the outside of the timbers, never across the court, to fetch it and carry it to its place in the row past the far string.
+- All walking uses the pause clock (D12), and the human can skip a walk with a click or key.
+
+### E03 Don't show the AI's cochonnet placement target (haiku)
+When an AI player places the cochonnet after a bad throw, show no green ring, marker or preview of where it will go. Keep the status line, and in slow mode the walk out and set-down. `?debug` may still show it.
+
+### E04 Undo the settled ground; "Yellow card!" (sonnet)
+- **Remove the settling:** take out D14's `settleSpot` stone removal and ground flattening (terrain.js), its use in main.js, the renderer's stone hiding, and the related tests. Keep `jackPlaceValid` (out to the strings).
+- **Real drop:** the placed jack now drops for real and settles on the natural ground.
+- **Yellow card:** if it comes to rest outside the valid placement region, show a dialog: "Yellow card! Place the cochonnet correctly!". The same team places it again; the AI picks a safer spot.
+- Tests for the re-placement flow.
+
+### E05 Cochonnet range lines string to string, behind the people (haiku)
+The 6 m and 10 m range lines shown while throwing the cochonnet still stop short of the strings. Always draw them string to string, for both the throw and placement. Render the valid-area lines and fill behind the people: set the render order and depth so characters always draw over them.
+
+### E06 Odette is left-handed (sonnet)
+Add a handedness setting to character specs (`hand: 'right' | 'left'`; Odette `'left'`). Mirror the throw, holding, release point (`releaseOffset` and the hand position), pick-up and carry poses. Make sure the preview, AI planning and physics release from her left hand, and that the shoulder camera sits on the appropriate side for a left-hander. Tests: her release point mirrors a right-hander's.
+
+### E07 Pierre crouches half the time; the human always stands (haiku)
+Pierre chooses crouch or stand per throw (50/50, seeded). The human player always stands. Release points follow the stance, so the preview, AI and physics still agree.
+
+### E08 Bug: a valid jack treated as invalid (sonnet)
+Sometimes a jack that lands in a clearly valid spot (well within 6–10 m and away from the lines) is treated as invalid and goes to placement. Reproduce it in Node and the browser: log the jack's position at settle vs the position used by `jackThrown`/`jackValid`, the distance reference (circle centre vs throw point), whether the jack is still moving (ghost or rolling) when judged, and the `jackFault` reason. Fix the root cause, show the fault reason and measured distance in the status, and add a regression test.
+
+### E09 Bug: Pierre suggests both pointing and shooting (sonnet)
+The chooser sometimes shows two contradictory suggestions (e.g. "You point… / A blocker in front…" or point and shoot together). Make the suggestion one coherent line (who throws plus what), built from a single decision. Remove duplicate `setSuggestion` calls or merged pools. Add a test.
+
+### E10 Each new mène starts from a circle around the last jack (sonnet)
+Real rule: the next mène starts from a new circle drawn around where the jack finished, so play usually goes back the other way.
+- **Circle position:** at the end of a mène, the circle (a ring object) is placed so the last jack position is inside it, clamped to legal ground (≥ 1 m from the lines, and a jack distance of 6–10 m still possible in the new direction). The next mène is played toward the other end. The camera, aim yaw, legal zones, waiting spots and AI all use the current circle and direction instead of assuming (2, 1) and +y.
+- **Slow mode:** the last player to throw carries the ring and places it on the ground around the jack position.
+- **Quick mode:** the ring is placed there at the start of the next jack throw.
+- Make it a real object (ring mesh) that can be carried.
+- Tests: legal circle placement and the direction flip.
+
+### E11 Slow mode: a casual-observer camera (sonnet)
+In slow mode the camera behaves like a person watching from the side, not a video-game camera. It takes gentle, unhurried shots from a spectator position at the side of the court, follows play loosely with slow pans and few cuts, and frames the head after throws. The exception is the human's own turn: shoulder view, aiming and preview as now. Quick mode keeps the current cameras. Respect reduced motion.
+
+### E12 "Adjust view" toggle (sonnet)
+Rename "Re-aim" to "Adjust view" and make it an obvious toggle (pressed or unpressed state, aria-pressed). While on, click-drag changes the camera's left-right angle freely and up-down a little (about ±15°), and the toss input is disabled. Turning it off restores aiming from the adjusted view. Keyboard: arrow keys while on.
+
+### E13 Remove "New game" from the in-game controls (haiku)
+Drop the New game button from the in-game control bar. Keep starting a new game from the paused bar (Resume / New game), the game-over panel and the setup screen.
+
+### E14 Full-screen toggle as a video-player icon (haiku)
+The game stays full-window when playing. On desktop, replace the "Exit" or fullscreen controls with a small icon button in a corner, like a video player: enter or leave browser fullscreen with the standard four-corners and inverted icons, plus a tooltip and aria-label. Exit and pause remain available (Esc, plus a pause icon). Hide the icon where the Fullscreen API isn't available.
+
+### E15 Game ends at 13 on the ground (sonnet)
+The game ends as soon as a team reaches 13 counting the points currently on the ground, when the other team has no boules left. Example: a team on 12 whose opponents are out of boules needs only one point on the ground to win, so it doesn't play its remaining boules. More generally, once the opponent has no boules left and the current points on the ground already take a team to 13, the mène ends immediately. Implement it in rules.js (with tests), have main.js end the mène and game at once, and have the AI and tactics treat it correctly (no wasted throws).
+
+### E16 Holding the boules (sonnet)
+- **Slow mode:** at the start of a mène, players take turns quickly picking up their three boules. Each holds one in the dominant hand and two side by side in the other hand (Odette is the lefty). Hands visibly carry them between throws, and the count drops as they're thrown.
+- **Quick mode:** show the boule held with the hand upright at first. During the backswing it comes round the inside to the bottom of the hand, for an underarm, palm-down toss at release.
+- Update character.js poses (hand orientation now matters: give the hand a visible direction or a flat palm), and keep the release point accurate.
+
+### E17 Round 4 review (sonnet)
+Tests, build, integration across modes (quick vs slow on every flow), screenshots, bug review, and a "Round 4 remaining issues" list.
