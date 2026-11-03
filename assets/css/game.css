@@ -77,7 +77,7 @@
 }
 .pt-btn:focus-visible, .pt-choice input:focus-visible { outline: 3px solid var(--navy, #14284b); outline-offset: 2px; }
 .pt-board { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; align-items: stretch; }
-.pt-board[hidden], .pt-turn[hidden], .pt-chooser[hidden] { display: none; }
+.pt-board[hidden], .pt-turn[hidden] { display: none; }
 .pt-team { padding: .5rem .75rem; border: 2px solid var(--line, #d9ccb0); border-radius: 4px; background: var(--paper, #fffaf0); }
 .pt-team0 { border-left: 6px solid var(--navy, #14284b); }
 .pt-team1 { border-right: 6px solid var(--red, #8a1c2b); text-align: right; }
@@ -93,8 +93,6 @@
 .pt-dot.is-full { background: var(--muted, #4d5468); }
 .pt-mene { align-self: center; text-align: center; font-weight: 700; color: var(--muted, #4d5468); }
 .pt-turn { margin-top: .6rem; font-weight: 700; }
-.pt-chooser { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-top: .6rem; }
-.pt-chooser-label { font-weight: 700; }
 @media (max-width: 34rem) {
   .pt-overlay { top: .5rem; left: .5rem; right: .5rem; aspect-ratio: 3 / 4; padding: .5rem; }
   .pt-board { grid-template-columns: 1fr 1fr; }
@@ -186,18 +184,16 @@ html.petanque-playing main { overflow: visible; }
 .petanque.is-playing .pc-bar .pc-exit { display: inline-block; }
 .petanque.is-playing .pc-bar .pc-exit[hidden] { display: none; }
 
-/* bottom strip: hint toast, turn banner, chooser, status line */
+/* bottom strip: hint toast, turn banner, status line */
 .petanque.is-playing .pt-dock {
   grid-row: 3; position: relative; z-index: 1; display: grid; gap: .3rem; pointer-events: none;
 }
 .petanque.is-playing .pt-dock > * { pointer-events: auto; }
 .petanque.is-playing .pt-dock > [hidden] { display: none; }
-.petanque.is-playing .pt-turn, .petanque.is-playing .pt-chooser, .petanque.is-playing .petanque-status, .petanque.is-playing .pt-hint {
+.petanque.is-playing .pt-turn, .petanque.is-playing .petanque-status, .petanque.is-playing .pt-hint {
   margin: 0; padding: .3rem .6rem; background: var(--pt-glass); border: 1px solid var(--line, #d9ccb0); border-radius: 6px;
 }
 .petanque.is-playing .pt-turn { justify-self: start; max-width: 100%; }
-.petanque.is-playing .pt-chooser { gap: .4rem; }
-.petanque.is-playing .pt-chooser .pt-btn { min-height: 2.5rem; padding: .2rem .9rem; }
 .petanque.is-playing .pt-suggest { font-size: .85rem; }
 .petanque.is-playing .petanque-status { font-size: .85rem; line-height: 1.3; max-height: 4.2em; overflow-y: auto; color: var(--fg, #1d2233); }
 .petanque.is-playing .petanque-status:empty { display: none; }
@@ -220,6 +216,25 @@ html.petanque-playing main { overflow: visible; }
 .petanque.is-playing .pt-mene-end .pt-card-title, .petanque.is-playing .pt-card-title { font-size: 1.2rem; }
 .petanque.is-playing .pt-blurb { margin-bottom: .6rem; font-size: .9rem; }
 
+/* ---- Who-throws card (D20): centred over the court with a translucent backdrop ---- */
+.pt-overlay.pt-choose { background: rgba(20, 40, 75, .45); pointer-events: auto; }
+.pt-choose-card { max-width: 30rem; }
+.pt-choose-card:focus { outline: none; }
+.pt-choose-card .pt-card-title { margin: 0 0 .5rem; font-size: 1.4rem; } /* beats the bistro h2 margin */
+.pt-choose-card .pt-suggest { margin: 0 0 .9rem; font-size: .95rem; line-height: 1.35; }
+.pt-who-group { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .6rem; }
+.pt-who-group .pt-who {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .3rem;
+  width: 100%; min-height: 3.5rem; padding: .5rem .9rem; font-size: 1.15rem;
+}
+.pt-who-label { white-space: nowrap; }
+.pt-who-tag {
+  padding: .1rem .55rem; font-size: .7rem; line-height: 1.4; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--red, #8a1c2b); background: var(--paper, #fffaf0); border-radius: 999px;
+}
+.petanque.is-playing .pt-choose-card { padding: 1rem 1.2rem; }
+.petanque.is-playing .pt-choose-card .pt-who-group .pt-who { min-height: 3.75rem; }
+
 /* ?debug&sounds drawer overlay */
 .petanque.is-playing .pc-debug {
   grid-row: 2; justify-self: start; align-self: end; position: relative; z-index: 1;
@@ -240,7 +255,12 @@ html.petanque-playing main { overflow: visible; }
   .petanque.is-playing .pt-cast { display: none; }
   .petanque.is-playing .pc-bar { flex-direction: column; align-items: flex-end; flex-wrap: nowrap; }
   .petanque.is-playing .pt-dock { display: flex; flex-wrap: wrap; align-items: stretch; }
-  .petanque.is-playing .pt-hint, .petanque.is-playing .pt-chooser { flex: 1 1 100%; }
+  .petanque.is-playing .pt-hint { flex: 1 1 100%; }
+  /* who-throws card stays compact on a landscape phone (it never covers the whole court) */
+  .petanque.is-playing .pt-choose-card { max-width: 26rem; padding: .6rem .9rem; }
+  .petanque.is-playing .pt-choose-card .pt-card-title { font-size: 1.05rem; margin-bottom: .3rem; }
+  .petanque.is-playing .pt-choose-card .pt-suggest { margin-bottom: .6rem; font-size: .85rem; line-height: 1.25; }
+  .petanque.is-playing .pt-choose-card .pt-who-group .pt-who { min-height: 2.6rem; padding: .25rem .7rem; font-size: 1rem; flex-direction: row; flex-wrap: wrap; gap: .2rem .5rem; }
   .petanque.is-playing .pt-turn { flex: 0 0 auto; }
   .petanque.is-playing .petanque-status { flex: 1 1 12rem; min-width: 0; }
   .petanque.is-playing .pt-fieldset { margin-bottom: .4rem; }

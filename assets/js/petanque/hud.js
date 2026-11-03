@@ -49,17 +49,12 @@ export function createHud(root, hudEl, cb) {
   const turnEl = el('div', 'pt-turn');
   turnEl.hidden = true;
 
-  // Who-throws chooser (human team)
-  const chooser = el('div', 'pt-chooser');
-  chooser.setAttribute('role', 'group');
-  chooser.setAttribute('aria-label', 'Who throws?');
-  chooser.hidden = true;
-  const suggestEl = el('p', 'pt-suggest');
   const hintEl = el('div', 'pt-hint');
   hintEl.hidden = true;
-  // Dock: hint toast, turn banner, chooser and status line (a compact strip at the bottom while playing)
+  // Dock: hint toast, turn banner and status line (a compact strip at the bottom while playing).
+  // The who-throws chooser is a card in the overlay (see showChooser).
   const dock = el('div', 'pt-dock');
-  dock.append(hintEl, turnEl, chooser);
+  dock.append(hintEl, turnEl);
   if (status) dock.append(status);
   // Paused bar (shown on the page after leaving the full-window view mid-game)
   const pausedEl = el('div', 'pt-paused');
@@ -106,7 +101,7 @@ export function createHud(root, hudEl, cb) {
 
   function showSetup(initial) {
     setupState = { ...setupState, ...(initial || {}) };
-    board.hidden = true; turnEl.hidden = true; chooser.hidden = true;
+    board.hidden = true; turnEl.hidden = true;
     const c = card('Set up your game', 'pt-setup');
     c.append(el('p', 'pt-blurb', 'You and Pierre play Marcel and Odette, doublette, three boules each.'));
     if (setupState.cast) {
@@ -157,26 +152,63 @@ export function createHud(root, hudEl, cb) {
     turnEl.textContent = turn ? turn.text : '';
   }
 
-  // suggestion: optional one-line advice from the partner, replaced later by setSuggestion()
+  // Who-throws card (human team), centred over the court with a translucent backdrop.
+  // players: the throwers with boules; suggestion: Pierre's advice (replaced later by setSuggestion).
+  let chooserCard = null;
+  let suggestEl = null;
+  let whoBtns = [];
   function showChooser(players, suggestion) {
-    chooser.textContent = '';
-    chooser.append(el('span', 'pt-chooser-label', 'Who throws?'));
-    suggestEl.textContent = suggestion || '';
-    let first = null;
-    for (const p of players) {
-      const b = button(p.isHuman ? 'You throw' : `${p.name} throws`, 'pt-btn pt-who', () => {
+    const c = card('Your team to play', 'pt-choose');
+    c.classList.add('pt-choose-card');
+    c.tabIndex = -1;
+    c.addEventListener('keydown', onChooserKey);
+    chooserCard = c;
+    suggestEl = el('p', 'pt-suggest', suggestion || '');
+    suggestEl.id = 'pt-choose-suggest';
+    c.append(suggestEl);
+    const group = el('div', 'pt-who-group');
+    group.setAttribute('role', 'group');
+    group.setAttribute('aria-label', 'Who throws?');
+    whoBtns = players.map((p) => {
+      const b = button('', 'pt-btn pt-who', () => {
         hideChooser();
         cb.onChoose(p.id);
       });
-      if (!first) first = b;
-      chooser.append(b);
-    }
-    chooser.append(suggestEl);
-    chooser.hidden = false;
-    focusSoon(first);
+      b.append(el('span', 'pt-who-label', p.isHuman ? 'You throw' : `${p.name} throws`));
+      b.dataset.player = p.id;
+      b.setAttribute('aria-describedby', suggestEl.id);
+      group.append(b);
+      return b;
+    });
+    c.append(group);
+    focusSoon(c);
   }
-  function setSuggestion(text) { suggestEl.textContent = text; }
-  function hideChooser() { chooser.hidden = true; chooser.textContent = ''; }
+  // playerId: the one Pierre says should throw; they get a "Pierre suggests" tag (never pre-selected)
+  function setSuggestion(text, playerId) {
+    if (suggestEl) suggestEl.textContent = text;
+    for (const b of whoBtns) {
+      const on = playerId !== undefined && b.dataset.player === playerId;
+      b.classList.toggle('is-suggested', on);
+      const tag = b.querySelector('.pt-who-tag');
+      if (on && !tag) b.append(el('span', 'pt-who-tag', 'Pierre suggests'));
+      if (!on && tag) tag.remove();
+    }
+  }
+  // Arrow keys move between the two throw buttons (wrapping); Enter and Space are native button activation
+  function onChooserKey(e) {
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+    if (!step || !whoBtns.length) return;
+    e.preventDefault();
+    const n = whoBtns.length;
+    const i = whoBtns.indexOf(document.activeElement);
+    const j = i < 0 ? (step > 0 ? 0 : n - 1) : (i + step + n) % n;
+    whoBtns[j].focus();
+  }
+  function hideChooser() {
+    if (!chooserCard) return;
+    chooserCard = null; suggestEl = null; whoBtns = [];
+    if (overlay.classList.contains('pt-choose')) clearOverlay();
+  }
 
   // One-time how-to hint with a dismiss button
   function showHint(text) {
