@@ -94,3 +94,58 @@ export function standPoint(ball, from, reach) {
   const hx = reach.x * c + reach.y * s, hy = -reach.x * s + reach.y * c;
   return { x: ball.x - hx, y: ball.y - hy, yaw };
 }
+
+// ---- E02: routes round the outside of the timbers ----
+const ROUTE_MARGIN = 0.3; // m the walking ring lies outside the timbers
+const crossesField = (a, b, c) => {
+  const n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 0.05));
+  for (let i = 0; i <= n; i++) {
+    const x = a.x + (b.x - a.x) * i / n, y = a.y + (b.y - a.y) * i / n;
+    if (x > 0 && x < c.terrainW && y > 0 && y < c.terrainL) return true;
+  }
+  return false;
+};
+// Waypoints that take a walker from `from` to `to` round the outside of the timbers when the straight line would
+// cross the field of play: out to the ring that lies ROUTE_MARGIN beyond the timbers, along it by the shorter way
+// (via its corners), and back in. [] when the direct line is already clear.
+export function outsideWaypoints(from, to, c = C) {
+  if (!crossesField(from, to, c)) return [];
+  const o = c.lumberGap + c.lumberSize + ROUTE_MARGIN;
+  const x0 = -o, y0 = -o, x1 = c.terrainW + o, y1 = c.terrainL + o;
+  // nearest point on the ring's boundary (inside points are pushed out to the nearest edge)
+  const onRing = (p) => {
+    if (p.x <= x0 || p.x >= x1 || p.y <= y0 || p.y >= y1) return { x: Math.min(x1, Math.max(x0, p.x)), y: Math.min(y1, Math.max(y0, p.y)) };
+    const d = [p.x - x0, x1 - p.x, p.y - y0, y1 - p.y], m = Math.min(...d), i = d.indexOf(m);
+    return i === 0 ? { x: x0, y: p.y } : i === 1 ? { x: x1, y: p.y } : i === 2 ? { x: p.x, y: y0 } : { x: p.x, y: y1 };
+  };
+  // position along the ring perimeter, counter-clockwise from (x0, y0)
+  const W = x1 - x0, H = y1 - y0, P = 2 * (W + H);
+  const along = (p) => {
+    if (Math.abs(p.y - y0) < 1e-6) return p.x - x0;
+    if (Math.abs(p.x - x1) < 1e-6) return W + (p.y - y0);
+    if (Math.abs(p.y - y1) < 1e-6) return W + H + (x1 - p.x);
+    return 2 * W + H + (y1 - p.y);
+  };
+  const a = onRing(from), b = onRing(to), sa = along(a), sb = along(b);
+  const corners = [0, W, W + H, 2 * W + H].map((s, i) => ({ s, x: [x0, x1, x1, x0][i], y: [y0, y0, y1, y1][i] }));
+  const fwd = (sb - sa + P) % P; // counter-clockwise distance
+  const ccw = fwd <= P / 2;
+  const pts = [a];
+  const between = corners.filter((k) => { const d = ccw ? (k.s - sa + P) % P : (sa - k.s + P) % P; return d > 1e-6 && d < (ccw ? fwd : P - fwd) - 1e-6; });
+  between.sort((p, q) => { const f = (k) => (ccw ? (k.s - sa + P) % P : (sa - k.s + P) % P); return f(p) - f(q); });
+  pts.push(...between.map((k) => ({ x: k.x, y: k.y })), b);
+  return pts;
+};
+// planPath, optionally routed round the outside of the timbers (opts.outside)
+export function planRoute(from, to, obstacles = [], opts = {}) {
+  const c = opts.c || C;
+  const way = opts.outside ? outsideWaypoints(from, to, c) : [];
+  const out = [];
+  let cur = from;
+  for (const q of [...way, to]) {
+    const leg = planPath(cur, q, obstacles, opts);
+    out.push(...leg.filter((p, i) => i > 0 || out.length === 0 || Math.hypot(p.x - cur.x, p.y - cur.y) > 1e-3 || p.lift > 1));
+    cur = q;
+  }
+  return out;
+}

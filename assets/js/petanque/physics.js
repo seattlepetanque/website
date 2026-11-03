@@ -2,6 +2,7 @@
 // Axes: x across, y along, z up. z is the height of the ball centre.
 // Contact velocity at the ground is v + w x (-r n); a solid sphere has I = 2/5 m r^2.
 import { C } from './constants.js';
+import { court } from './court.js';
 
 let nextId = 1;
 
@@ -19,7 +20,7 @@ export function createBody(kind, props = {}) {
 }
 
 // yaw 0 = +y, positive yaw toward +x. Backspin opposes the forward roll; sidespin is about +z.
-export function launch(body, p, from = p.from || C.throwFrom) {
+export function launch(body, p, from = p.from || court.throwFrom) {
   const dx = Math.sin(p.yaw), dy = Math.cos(p.yaw);
   const cl = Math.cos(p.loft), sl = Math.sin(p.loft);
   const bs = p.backspin || 0;
@@ -273,6 +274,19 @@ function stepRolling(w, b, dt) {
       b.vx = b.vy = b.vz = 0; b.wx = b.wy = b.wz = 0;
     }
   } else b.restT = 0;
+  // E21: a ball held by static friction on a slope or stone can keep a little spin for ever (gravity feeds the
+  // slip friction each step), so also rest a ball that has barely moved over a whole window
+  if (b.state === 'rolling') {
+    if (b.ax === undefined) { b.ax = b.x; b.ay = b.y; b.winT = 0; }
+    b.winT += dt;
+    if (b.winT >= C.restWindow) {
+      if (Math.hypot(b.x - b.ax, b.y - b.ay) < C.restWindowDist && sp < C.restWindowSpeed) {
+        b.state = 'resting'; b.restT = 0;
+        b.vx = b.vy = b.vz = 0; b.wx = b.wy = b.wz = 0;
+      }
+      b.ax = b.x; b.ay = b.y; b.winT = 0;
+    }
+  }
 }
 
 // A knocked body gets a new heading for the reverse-roll cap
@@ -343,9 +357,10 @@ function collide(w, a, b) {
 // in slot order; the jack sits apart, centred, a little further out.
 export function deadRowSlot(index) {
   const perRow = Math.floor((C.terrainW - 0.4) / C.deadSpacing) + 1;
-  return { x: 0.2 + (index % perRow) * C.deadSpacing, y: C.terrainL + 0.15 + Math.floor(index / perRow) * 0.1 };
+  const out = 0.15 + Math.floor(index / perRow) * 0.1; // E10: past the string at the end being played toward
+  return { x: 0.2 + (index % perRow) * C.deadSpacing, y: court.dir > 0 ? C.terrainL + out : -out };
 }
-export function deadJackSpot() { return { x: C.terrainW / 2, y: C.terrainL + 0.3 }; }
+export function deadJackSpot() { return { x: C.terrainW / 2, y: court.dir > 0 ? C.terrainL + 0.3 : -0.3 }; }
 
 // Put a dead ball at rest on the ground at (x, y), out of play
 export function placeDeadBall(world, body, x, y) {
@@ -432,6 +447,21 @@ export function createWorld(terrain, rand = Math.random) {
       }
       return true;
     },
+    // E21 hard cap: stop every moving body where it is (airborne ones drop to the ground unless over the lumber).
+    // Returns a description of each body it had to stop.
+    forceRest() {
+      const out = [];
+      for (const b of w.bodies) {
+        if (b.state === 'resting') continue;
+        out.push({ id: b.id, kind: b.kind, state: b.state, ghost: b.ghost, dead: b.dead, x: b.x, y: b.y, z: b.z, speed: Math.hypot(b.vx, b.vy, b.vz), spin: Math.hypot(b.wx, b.wy, b.wz) });
+        b.state = 'resting'; b.restT = 0;
+        b.vx = b.vy = b.vz = 0; b.wx = b.wy = b.wz = 0;
+        if (!(b.x === b.x && b.y === b.y && b.z === b.z)) { b.x = b.x === b.x ? b.x : 0; b.y = b.y === b.y ? b.y : 0; }
+        const h = w.terrain.sample(b.x, b.y).h;
+        if (!inLumber(b)) b.z = h + b.r;
+      }
+      return out;
+    },
     // Deep copy for AI sims. Pass a terrain (e.g. terrain.perceived()) and/or an rng to swap them
     // (the rng is shared with the original by default); clones never write divots.
     clone(terrainOverride, randOverride) {
@@ -448,5 +478,6 @@ export function createWorld(terrain, rand = Math.random) {
 export function simulate(world, maxSeconds = 20) {
   const end = world.t + maxSeconds;
   while (!world.settled() && world.t < end) world.step();
+  if (!world.settled()) world.forceRest(); // bounded: whatever is still moving stops where it is
   return world;
 }

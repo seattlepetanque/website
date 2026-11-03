@@ -144,6 +144,46 @@ test('releaseOffset predicts the hand position at release (within 3 cm)', async 
   }
 });
 
+test('left-handed release offset mirrors the right-hander of the same build', () => {
+  for (const stance of ['crouch', 'stand']) {
+    for (const loft of [10 * DEG, 45 * DEG, 70 * DEG]) {
+      const r = releaseOffset({ height: 1.74, stance, loft });
+      const l = releaseOffset({ height: 1.74, stance, loft, hand: 'left' });
+      assert.ok(Math.abs(l.x + r.x) < 1e-9 && Math.abs(l.y - r.y) < 1e-9 && Math.abs(l.z - r.z) < 1e-9, `${stance} ${loft}`);
+      assert.ok(l.x < 0 && r.x > 0, 'left hand is on the left of the body');
+    }
+  }
+  const bend = bendReach(1.75, 'left'), bendR = bendReach(1.75);
+  assert.ok(Math.abs(bend[0] + bendR[0]) < 1e-9 && Math.abs(bend[1] - bendR[1]) < 1e-9);
+});
+
+test('left-handed: hand at release is within 3 cm of the prediction, bones constant, carry is in the left hand', async () => {
+  const L = boneLengths(1.74);
+  for (const stance of ['crouch', 'stand']) {
+    for (const loft of [10 * DEG, 45 * DEG, 70 * DEG]) {
+      for (const yaw of [0, 0.4, -0.5]) {
+        const ch = createCharacter(THREE, { stance, height: 1.74, hand: 'left' });
+        ch.setStance(stance);
+        ch.setPlacement(2, 1, yaw);
+        for (let i = 0; i < 70; i++) ch.update(1 / 60);
+        let hand = null;
+        await run(ch, ch.playThrow({ loft, onRelease: (h) => { hand = h; } }), () => checkBones(ch.skeleton(), 1.74, 'left throw'));
+        assert.ok(hand, 'released');
+        const off = releaseOffset({ height: 1.74, stance, loft, yaw, hand: 'left' });
+        const d = Math.hypot(hand.x - (2 + off.x), hand.y - (1 + off.y), hand.z - off.z);
+        assert.ok(d < 0.03, `${stance} ${loft} ${yaw}: ${d}`);
+      }
+    }
+  }
+  const ch = createCharacter(THREE, { height: 1.74, hand: 'left' });
+  assert.equal(ch.hand, 'left');
+  ch.setCarrying(true); ch.setStance('watch');
+  for (let i = 0; i < 90; i++) ch.update(1 / 60);
+  const j = ch.skeleton();
+  assert.ok(j.handL[2] > j.handR[2] + 0.1, 'carrying hand (left) is raised to the waist, the other hangs');
+  assert.ok(L.upperArm > 0);
+});
+
 // ---------- Kenney mesh mode (GLTFLoader needs a few browser stubs to parse the embedded texture) ----------
 globalThis.self = globalThis;
 globalThis.createImageBitmap = globalThis.createImageBitmap || (async () => ({ width: 1, height: 1, close() {} }));

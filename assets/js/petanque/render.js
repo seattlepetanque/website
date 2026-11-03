@@ -1,6 +1,8 @@
 // three.js renderer for the pétanque game. World axes: x across, y along, z up.
 import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
+import { court } from './court.js';
+import { JACK_END_MARGIN } from './rules.js';
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
 import { frameMoving, cameraFromFrame } from './camera.js';
@@ -263,11 +265,9 @@ export function createRenderer(canvas, terrain) {
 
   // Visible stones
   const stones = terrain.visibleStones();
-  let stoneInst = null; // { mesh, mats, shown } so stones removed under a placed jack (D14) can be hidden
   if (stones.length) {
     const sg = new THREE.IcosahedronGeometry(1, 0);
     const stoneMesh = new THREE.InstancedMesh(sg, new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0, flatShading: true, envMapIntensity: 0.3 }), stones.length);
-    const mats = [];
     const rand = mulberry32(99), m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sv = new THREE.Vector3(), pv = new THREE.Vector3(), col = new THREE.Color();
     stones.forEach((s, i) => {
       const h = terrain.sample(s.x, s.y).h;
@@ -279,7 +279,6 @@ export function createRenderer(canvas, terrain) {
       pv.set(s.x, s.y, h + r * 0.25);
       m.compose(pv, q, sv);
       stoneMesh.setMatrixAt(i, m);
-      mats.push(m.clone());
       const t = rand();
       col.setHSL(0.09 + rand() * 0.04, 0.1 + t * 0.25, 0.3 + rand() * 0.3);
       stoneMesh.setColorAt(i, col);
@@ -287,24 +286,7 @@ export function createRenderer(canvas, terrain) {
     stoneMesh.castShadow = true;
     stoneMesh.receiveShadow = true;
     scene.add(stoneMesh);
-    stoneInst = { mesh: stoneMesh, mats, shown: stones.map(() => true) };
   }
-  // Hide the stones the terrain has removed (and show them again after a reset)
-  const zeroMat = new THREE.Matrix4().makeScale(0, 0, 0);
-  function syncStones() {
-    if (!stoneInst) return;
-    const now = terrain.visibleStones();
-    let dirty = false;
-    now.forEach((s, i) => {
-      const vis = !s.gone;
-      if (stoneInst.shown[i] === vis) return;
-      stoneInst.shown[i] = vis;
-      stoneInst.mesh.setMatrixAt(i, vis ? stoneInst.mats[i] : zeroMat);
-      dirty = true;
-    });
-    if (dirty) stoneInst.mesh.instanceMatrix.needsUpdate = true;
-  }
-
   // Boundary strings and throwing circle
   const strings = new THREE.Group();
   const stringMat = new THREE.MeshBasicMaterial({ color: '#ffffff', fog: true });
@@ -318,12 +300,29 @@ export function createRenderer(canvas, terrain) {
   };
   addString(0, 0, W, 0); addString(W, 0, W, L); addString(W, L, 0, L); addString(0, L, 0, 0);
   scene.add(strings);
+  // E10: the circle is a real object (a ring) that can be picked up and carried: syncCourt puts it at the current
+  // circle (with a short fade for a quick-mode move), setRingPose holds it elsewhere (in somebody's hand)
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(C.circle.r - 0.012, C.circle.r + 0.012, 64),
-    new THREE.MeshBasicMaterial({ color: '#c0262f' }),
+    new THREE.MeshBasicMaterial({ color: '#c0262f', transparent: true }),
   );
-  ring.position.set(C.circle.x, C.circle.y, terrain.sample(C.circle.x, C.circle.y).h + 0.006);
+  const ringHome = () => ring.position.set(court.circle.x, court.circle.y, terrain.sample(court.circle.x, court.circle.y).h + 0.006);
+  ringHome();
   scene.add(ring);
+  let ringFade = null; // { t, dur, moved }: fade out, move, fade in
+  let ringHeld = false;
+  function setRingPose(p) {
+    ringHeld = !!p;
+    if (p) { ring.position.set(p.x, p.y, p.z); ring.rotation.set(0, 0, 0); } else ringHome();
+  }
+  function tickRing(dt) {
+    if (!ringFade) return;
+    ringFade.t += dt;
+    const k = Math.min(1, ringFade.t / ringFade.dur);
+    if (k >= 0.5 && !ringFade.moved) { ringFade.moved = true; if (!ringHeld) ringHome(); }
+    ring.material.opacity = Math.abs(1 - 2 * k);
+    if (k >= 1) { ringFade = null; ring.material.opacity = 1; }
+  }
 
   // Bodies
   const grooves = [grooveTexture(0), grooveTexture(1)];
@@ -497,75 +496,86 @@ export function createRenderer(canvas, terrain) {
   }
   function clearDivots() { for (const m of divotMeshes) m.visible = false; divotNext = 0; }
 
-  // Legal jack zone: two arcs 6 m and 10 m from the circle, shown while a human aims the jack
-  const jackZone = new THREE.Group();
-  jackZone.visible = false;
-  {
-    const mat = new THREE.MeshBasicMaterial({ color: '#ffd24a', transparent: true, opacity: 0.85, depthTest: false });
-    const c = C.circle;
-    for (const rad of [C.jackMinDist, C.jackMaxDist]) {
-      for (let a = -Math.PI / 2; a <= Math.PI / 2; a += 0.012) {
-        const x = c.x + rad * Math.sin(a), y = c.y + rad * Math.cos(a);
-        if (x < 1 || x > C.terrainW - 1 || y > C.terrainL - 1) continue;
-        const m = new THREE.Mesh(new THREE.BoxGeometry(0.115, 0.06, 0.004), mat);
-        m.position.set(x, y, terrain.sample(x, y).h + 0.008);
-        m.rotation.z = -a;
-        m.renderOrder = 3;
-        jackZone.add(m);
+  // E05/E18: the 6 m and 10 m zone arcs run exactly string to string (x = 0 and x = terrainW), draped on the terrain.
+  // zoneArc gives the angles where an arc of radius rad is inside the court, so its ends sit on the side strings.
+  // Depth-tested with a polygon offset: the people (opaque) draw over the zone.
+  const zoneArc = (rad) => {
+    const c = court.circle;
+    const lo = Math.asin(Math.max(-1, Math.min(1, (0 - c.x) / rad)));
+    const hi = Math.asin(Math.max(-1, Math.min(1, (C.terrainW - c.x) / rad)));
+    return [lo, hi];
+  };
+  // E20: the zone stops JACK_END_MARGIN before the end string (the far one in the playing direction, zoneDir = +1 toward
+  // y = terrainL, -1 toward y = 0; E10 sets it with the circle). A no-op with the default circle: the 10 m arc ends at y = 11.
+  const zoneY = (y) => (court.dir < 0 ? Math.max(y, JACK_END_MARGIN) : Math.min(y, C.terrainL - JACK_END_MARGIN));
+  const zoneMat = (opacity, color = '#ffd24a') => new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide, fog: false,
+    polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6,
+  });
+  // a line of width w along the arc of radius rad, string to string
+  function zoneLine(rad, w, zoff, order) {
+    const c = court.circle, [a0, a1] = zoneArc(rad), n = Math.max(2, Math.ceil((a1 - a0) * rad / 0.02)), pos = [], idx = [];
+    for (let i = 0; i <= n; i++) {
+      const a = a0 + (a1 - a0) * i / n;
+      for (const r of [rad - w / 2, rad + w / 2]) {
+        const x = c.x + r * Math.sin(a), y = zoneY(c.y + court.dir * r * Math.cos(a));
+        pos.push(x, y, terrain.sample(x, y).h + zoff);
+      }
+      if (i < n) idx.push(2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 1, 2 * i + 3, 2 * i + 2);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    const m = new THREE.Mesh(geo, zoneMat(0.85));
+    m.renderOrder = order; m.frustumCulled = false;
+    return m;
+  }
+  // the fill between the two arcs: concentric rings, each spanning its own in-court arc, so the cells never overlap
+  // and their outer ends lie exactly on the side strings
+  function zoneFill(r0, r1, zoff, order) {
+    const c = court.circle, rows = 16, cols = 120, pos = [], idx = [];
+    for (let j = 0; j <= rows; j++) {
+      const r = r0 + (r1 - r0) * j / rows, [a0, a1] = zoneArc(r);
+      for (let i = 0; i <= cols; i++) {
+        const a = a0 + (a1 - a0) * i / cols, x = c.x + r * Math.sin(a), y = zoneY(c.y + court.dir * r * Math.cos(a));
+        pos.push(x, y, terrain.sample(x, y).h + zoff);
       }
     }
+    const row = cols + 1;
+    for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+      const a = j * row + i, b = a + 1, d = a + row + 1, e = a + row;
+      idx.push(a, b, d, a, d, e);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    const m = new THREE.Mesh(geo, zoneMat(0.16));
+    m.renderOrder = order; m.frustumCulled = false;
+    return m;
   }
+
+  // Legal jack zone: two arcs 6 m and 10 m from the circle, string to string, shown while a human aims the jack
+  const jackZone = new THREE.Group();
+  jackZone.visible = false;
   scene.add(jackZone);
   // D14: the zone for a hand-placed jack runs string to string: both arcs across the whole court width, with a
   // faint fill between them, clipped at the side strings and the far string
   const placeZone = new THREE.Group();
   placeZone.visible = false;
-  {
-    const mat = new THREE.MeshBasicMaterial({ color: '#ffd24a', transparent: true, opacity: 0.85, depthTest: false });
-    const c = C.circle, W = C.terrainW, L = C.terrainL;
-    const edge = (rad, a) => ({ x: c.x + rad * Math.sin(a), y: c.y + rad * Math.cos(a) });
-    const inside = (p) => p.x >= 0 && p.x <= W && p.y <= L;
-    for (const rad of [C.jackMinDist, C.jackMaxDist]) {
-      for (let a = -Math.PI / 2; a <= Math.PI / 2; a += 0.006) {
-        const p = edge(rad, a);
-        if (!inside(p)) continue;
-        const m = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.05, 0.004), mat);
-        m.position.set(p.x, p.y, terrain.sample(p.x, p.y).h + 0.008);
-        m.rotation.z = -a;
-        m.renderOrder = 3;
-        placeZone.add(m);
-      }
-    }
-    // faint fill: a grid of polar cells between the arcs, skipping cells that leave the court
-    const pos = [], idx = [], na = 90, nr = 6, vi = new Map();
-    const vert = (i, j) => {
-      const k = i * 100 + j;
-      if (!vi.has(k)) {
-        const a = -Math.PI / 2 + Math.PI * i / na, rad = C.jackMinDist + (C.jackMaxDist - C.jackMinDist) * j / nr;
-        const p = edge(rad, a);
-        const x = Math.min(W, Math.max(0, p.x)), y = Math.min(L, p.y);
-        pos.push(x, y, terrain.sample(x, y).h + 0.006);
-        vi.set(k, pos.length / 3 - 1);
-      }
-      return vi.get(k);
-    };
-    for (let i = 0; i < na; i++) {
-      for (let j = 0; j < nr; j++) {
-        const q = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]];
-        const cen = edge(C.jackMinDist + (C.jackMaxDist - C.jackMinDist) * (j + 0.5) / nr, -Math.PI / 2 + Math.PI * (i + 0.5) / na);
-        if (!inside(cen)) continue;
-        const v = q.map(([a, b]) => vert(a, b));
-        idx.push(v[0], v[1], v[2], v[0], v[2], v[3]);
-      }
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setIndex(idx);
-    const fill = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: '#ffd24a', transparent: true, opacity: 0.16, depthTest: false, depthWrite: false, side: THREE.DoubleSide, fog: false }));
-    fill.renderOrder = 2;
-    placeZone.add(fill);
-  }
   scene.add(placeZone);
+  // E10: the zone geometry follows the circle and direction, so it is rebuilt whenever the court moves
+  function buildZones() {
+    for (const g of [jackZone, placeZone]) { for (const m of g.children.slice()) { g.remove(m); m.geometry.dispose(); } }
+    for (const rad of [C.jackMinDist, C.jackMaxDist]) { jackZone.add(zoneLine(rad, 0.07, 0.008, 3)); placeZone.add(zoneLine(rad, 0.07, 0.008, 3)); }
+    placeZone.add(zoneFill(C.jackMinDist, C.jackMaxDist, 0.006, 2)); // the 10 m arc stops short of the far string, so the side strings are the only clip
+  }
+  buildZones();
+  // The circle or direction changed (court.js): rebuild the zones and move the ring (`fade`: a short fade out and in)
+  function syncCourt({ fade = false } = {}) {
+    buildZones();
+    if (fade && !reduce()) ringFade = { t: 0, dur: 0.5, moved: false };
+    else { ringFade = null; ring.material.opacity = 1; if (!ringHeld) ringHome(); }
+  }
   function showJackZone(on, mode) {
     jackZone.visible = !!on && mode !== 'place';
     placeZone.visible = !!on && mode === 'place';
@@ -1154,12 +1164,12 @@ export function createRenderer(canvas, terrain) {
 
   function computeGoal(dt) {
     if (mode === 'aim') {
-      const yaw = opts.yaw || 0, c = C.circle;
+      const yaw = opts.yaw || 0, c = court.circle;
       goal.pos.set(c.x - Math.sin(yaw) * 1.4, c.y - Math.cos(yaw) * 1.4, 1.6);
       goal.tgt.set(c.x + Math.sin(yaw) * 5.5, c.y + Math.cos(yaw) * 5.5, 0);
     } else if (mode === 'flight' && opts.bodies) { // D09: frame every moving body (camera.js), cochonnet first when it flies
       const jack = opts.bodies.find((b) => b.kind === 'jack');
-      const f = frameMoving(opts.bodies, jack, { aspect: camera.aspect, fov: camera.fov, dt, reduced: reduce(), thrown: opts.body }, flightFrame);
+      const f = frameMoving(opts.bodies, jack, { aspect: camera.aspect, fov: camera.fov, dt, reduced: reduce(), thrown: opts.body, dir: court.dir }, flightFrame);
       if (f) {
         flightFrame = f;
         const cf = cameraFromFrame(f, (x, y) => terrain.sample(x, y).h);
@@ -1185,17 +1195,21 @@ export function createRenderer(canvas, terrain) {
       const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
       const vf = camera.fov * Math.PI / 180, hf = 2 * Math.atan(Math.tan(vf / 2) * camera.aspect);
       const dist = Math.max(opts.dist || 1.4, hx / Math.tan(hf / 2), (hy * Math.sin(el) + 0.1) / Math.tan(vf / 2) + hy * Math.cos(el)) * 1.05;
-      const ly = cy - (opts.lift || 0) * dist; // look nearer so the subject sits higher on screen
+      const ly = cy - court.dir * (opts.lift || 0) * dist; // look nearer so the subject sits higher on screen (E10: the circle side)
       goal.tgt.set(cx, ly, groundZ({ x: cx, y: cy }));
-      goal.pos.set(cx, ly - Math.cos(el) * dist, goal.tgt.z + Math.sin(el) * dist);
+      goal.pos.set(cx, ly - court.dir * Math.cos(el) * dist, goal.tgt.z + Math.sin(el) * dist);
     } else if (mode === 'shoulder') {
       // behind and to the right of the player, ~2.1 m up at zoom 1, looking ~7 m ahead and a little down
-      const p = opts.player || C.circle, yaw = opts.yaw || 0;
-      const fx = Math.sin(yaw), fy = Math.cos(yaw), rx = Math.cos(yaw), ry = -Math.sin(yaw);
+      const p = opts.player || court.circle, yaw = (opts.yaw || 0) + (opts.viewYaw || 0); // E12: view offset orbits the thrower
+      const side = opts.hand === 'left' ? -1 : 1; // behind the left shoulder for a left-hander (mirrors the offsets)
+      const fx = Math.sin(yaw), fy = Math.cos(yaw), rx = side * Math.cos(yaw), ry = -side * Math.sin(yaw);
       const gz = groundZ(p);
       const w = opts.wide || 1; // chibi mesh players are bulkier: stand the camera further back and up
       goal.pos.set(p.x - fx * 2.2 * zoom * w + rx * 1.1 * zoom * w, p.y - fy * 2.2 * zoom * w + ry * 1.1 * zoom * w, gz + (1.5 + 0.6 * zoom) * w);
       goal.tgt.set(p.x + fx * 7 - rx * 0.5, p.y + fy * 7 - ry * 0.5, gz - 0.7);
+      if (opts.viewPitch) { // E12: positive pitch looks down from higher up, negative looks level from lower
+        goal.pos.z += opts.viewPitch * 3 * zoom * w; goal.tgt.z -= Math.tan(opts.viewPitch) * 7 * 0.6;
+      }
       if (focusK > 0 && preview && preview.donnee) { // while tossing, look toward the donnée (and zoom in a little)
         const d = preview.donnee, k = 0.6 * focusK;
         goal.tgt.x += (d.x - goal.tgt.x) * k; goal.tgt.y += (d.y - goal.tgt.y) * k;
@@ -1316,7 +1330,7 @@ export function createRenderer(canvas, terrain) {
     const baseFov = camera.aspect < 1 ? 62 : 50;
     let fov = baseFov;
     if (focusK > 0 && preview && preview.donnee) {
-      const d = Math.hypot(preview.donnee.x - C.circle.x, preview.donnee.y - C.circle.y);
+      const d = Math.hypot(preview.donnee.x - court.circle.x, preview.donnee.y - court.circle.y);
       fov = baseFov * (1 - 0.32 * focusK * Math.max(0, Math.min(1, (d - 3) / 5)));
     }
     if (Math.abs(fov - camera.fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
@@ -1433,6 +1447,7 @@ export function createRenderer(canvas, terrain) {
       }
       if (e.ring) e.ring.visible = mode === 'head' && !e.body.dead;
     }
+    tickRing(dt);
     if (dt > 0 && !reduce()) {
       swayT += dt;
       trees.children.forEach((t, i) => t.rotation.set(Math.sin(swayT * 0.55 + i * 1.9) * 0.011, Math.sin(swayT * 0.41 + i * 2.7) * 0.011, 0));
@@ -1469,5 +1484,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { sync, syncStones, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, clearMeasure, showJackZone, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  return { sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, clearMeasure, showJackZone, syncCourt, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
 }

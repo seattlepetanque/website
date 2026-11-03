@@ -1,6 +1,7 @@
 // Pure framing logic for the flight camera (D09): keep every moving body in view, favour a fast jack,
 // and move through critically damped springs with capped speeds. No three.js; the renderer turns the
-// result into a camera position (yaw 0 looks along +y, the camera sits behind and above the target).
+// result into a camera position (yaw 0 looks along +y, the camera sits behind and above the target). E10: opts.dir = -1
+// plays toward y = 0: the camera then looks along -y (yaw pi) and the yaw limits are measured around that.
 import { C } from './constants.js';
 
 export const CAM = Object.freeze({
@@ -82,10 +83,12 @@ function bbox(pts) {
   return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: (z0 + z1) / 2, single: x1 - x0 < 0.3 && y1 - y0 < 0.3 };
 }
 
-// opts: { aspect, fov (vertical, degrees), dt, reduced, thrown }. prev: the last result (or null to snap).
+// opts: { aspect, fov (vertical, degrees), dt, reduced, thrown, dir (+1 | -1, the playing direction along y) }. prev: the last result (or null to snap).
 // Returns { target:{x,y,z}, distance, yaw, pitch, primary, active, v } (feed it back as `prev`).
 export function frameMoving(bodies, jack, opts, prev) {
   const dt = clamp(opts.dt || 0, 0, 0.1);
+  const base = (opts.dir || 1) < 0 ? Math.PI : 0; // yaw of straight down the court
+  const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
   const vTan = Math.tan((opts.fov || 50) * Math.PI / 360);
   const hTan = vTan * (opts.aspect || 1.5);
   const moving = gatherMoving(bodies, opts.thrown);
@@ -105,8 +108,8 @@ export function frameMoving(bodies, jack, opts, prev) {
     subjects = [ahead, { ...ahead, x: jack.x, y: jack.y, z: jack.z }, ...moving.filter((m) => m.body !== jack)];
   }
   hv = Math.hypot(ref.vx || 0, ref.vy || 0);
-  heading = hv > 1 ? Math.atan2(ref.vx, ref.vy) : (prev ? prev.yaw : 0);
-  const yaw = clamp(heading, -CAM.maxYaw, CAM.maxYaw);
+  heading = hv > 1 ? Math.atan2(ref.vx, ref.vy) : (prev ? prev.yaw : base);
+  const yaw = base + clamp(wrap(heading - base), -CAM.maxYaw, CAM.maxYaw);
   const pitch0 = CAM.pitch;
 
   // add subjects while they fit; the lead (and the jack's current spot) always stay
@@ -144,7 +147,7 @@ export function frameMoving(bodies, jack, opts, prev) {
   const [yw, vyw] = damp(prev.yaw, goal.yaw, v.yaw, Y.time * k, Y.max * s, dt);
   const [pt, vpt] = damp(prev.pitch, goal.pitch, v.p, P.time * k, P.max * s, dt);
   return {
-    target: { x, y, z }, distance: Math.max(d, CAM.minDist * 0.9), yaw: clamp(yw, -CAM.maxYaw, CAM.maxYaw), pitch: clamp(pt, CAM.minPitch, CAM.maxPitch),
+    target: { x, y, z }, distance: Math.max(d, CAM.minDist * 0.9), yaw: clamp(yw, base - CAM.maxYaw, base + CAM.maxYaw), pitch: clamp(pt, CAM.minPitch, CAM.maxPitch),
     primary: primary ? jack.id : null, ids, active: true, v: { x: vx, y: vy, z: vz, d: vd, yaw: vyw, p: vpt },
   };
 }

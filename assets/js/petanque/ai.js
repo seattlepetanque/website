@@ -4,9 +4,10 @@
 // wall-clock guard), and returns the best with its tactical reason. A per-style roll-out table (flat terrain)
 // gives first guesses for pointing données, noiseless sims on the perceived terrain refine them.
 import { C } from './constants.js';
+import { court, ahead } from './court.js';
 import { mulberry32 } from './rng.js';
 import { createBody, launch, createWorld, simulate } from './physics.js';
-import { jackValid, jackPlaceValid } from './rules.js';
+import { jackValid, jackPlaceValid, DEFAULT_GEOMETRY, JACK_END_MARGIN } from './rules.js';
 import { coneFor, executeThrow, solveLaunch, styleForLoft, releaseFrom, fitToBudget, feltTerrain, roughness as roughnessOf, ROUGH_LOFT_FULL, ROUGH_LOFT_NONE } from './donnee.js';
 import { DEFAULT_CFG, DIFFICULTY, readSituation, plan, evalEnd, explain, skillOfPlayer, whoThrows } from './tactics.js';
 export { ROUGH_LOFT_FULL, ROUGH_LOFT_NONE };
@@ -42,13 +43,14 @@ export const AI = {
 };
 
 const FRENCH = { roulette: 'roule', 'demi-portee': 'points a demi-portée', plombee: 'points a la plombée' };
-const FROM = C.throwFrom;
+const FROM = court.throwFrom; // E10: live: follows the current circle
 
 // --- Roll-out table -----------------------------------------------------------------------
 
 // Where a body ends up after being thrown to land at `landing` (flat terrain): rest distance by donnée distance
 const rollCache = new Map();
-function rollTable(kind, loft, from) {
+function rollTable(kind, loft, from0) {
+  const from = { x: 2, y: 1, z: from0.z ?? 0.9 }; // canonical: the flat table does not depend on where the circle is (E10)
   const key = kind + ':' + Math.round(loft * 1000) + ':' + Math.round((from.z ?? 0.9) * 20);
   if (rollCache.has(key)) return rollCache.get(key);
   const terrain = flatStub();
@@ -158,7 +160,7 @@ export function planPoint({ world, from, target, loft, rand }) {
 const skillFor = skillOfPlayer;
 const clampDonnee = (d) => ({
   x: Math.max(0.2, Math.min(C.terrainW - 0.2, d.x)),
-  y: Math.max(0.5, Math.min(C.terrainL - 0.2, d.y)),
+  y: court.dir > 0 ? Math.max(0.5, Math.min(C.terrainL - 0.2, d.y)) : Math.max(0.2, Math.min(C.terrainL - 0.5, d.y)), // 0.5 m behind the circle end, 0.2 m at the far one
 });
 
 // One noisy throw through the same model as the human's: the player's cone, on the given terrain
@@ -207,7 +209,7 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
     };
   };
   const lob = (fallback = false) => {
-    const out = finish({ x: C.circle.x, y: 8 }, AI.lofts.demi, 'point', `${player.name} points a demi-portée`, 0, false, { event: 'spotPoint', style: 'demi-portee' }, fallback);
+    const out = finish(ahead(7), AI.lofts.demi, 'point', `${player.name} points a demi-portée`, 0, false, { event: 'spotPoint', style: 'demi-portee' }, fallback);
     out.why = { code: 'takePoint' };
     out.family = 'pointJack';
     return out;
@@ -385,7 +387,12 @@ export async function chooseThrowAsync(args) {
 
 // Tries a few lofts and distances, simulates each on the perceived terrain (with the player's cone) and keeps
 // the one that most often lands a legal jack (6-10 m, inside the lines).
-export function chooseJackThrow({ world, difficulty = 'medium', rand, player, from: base = FROM } = {}) {
+export function chooseJackThrow({ world, difficulty = 'medium', rand, player, from: base = FROM, geometry } = {}) {
+  const geo = { ...DEFAULT_GEOMETRY, circle: court.circle, dir: court.dir, ...geometry };
+  const cc = geo.circle;
+  const endDir = (geo.dir ?? 1) < 0 ? -1 : 1;
+  const endY = endDir > 0 ? geo.length : 0;
+  const rollRoom = JACK_END_MARGIN + 0.8; // E20: aim this far in front of the end string (the jack rolls on)
   const nSims = Math.max(16, AI.sims[difficulty] ?? AI.sims.medium); // a legal jack matters on every level
   const skill = skillFor(player, difficulty);
   const perceived = world.terrain.perceived();
@@ -393,7 +400,8 @@ export function chooseJackThrow({ world, difficulty = 'medium', rand, player, fr
   for (const style of ['jackLow', 'jack']) {
     const from = releaseFrom(base, AI.lofts[style]);
     for (const d of [AI.jackTarget - 1, AI.jackTarget, AI.jackTarget + 1]) {
-      const want = { x: C.circle.x + (rand() - 0.5) * 0.4, y: C.circle.y + d };
+      const want = { x: cc.x + (rand() - 0.5) * 0.4, y: cc.y + d * endDir };
+      if (Math.abs(endY - want.y) < rollRoom) continue;
       const dd = donneeDistFor('jack', AI.lofts[style], from, Math.hypot(want.x - from.x, want.y - from.y));
       if (dd === null) continue;
       const len = Math.hypot(want.x - from.x, want.y - from.y);
@@ -417,13 +425,13 @@ export function chooseJackThrow({ world, difficulty = 'medium', rand, player, fr
       const b = launch(createBody('jack', {}), tp, from);
       w.add(b);
       simulate(w, AI.maxSimSeconds);
-      if (jackValid(b)) ok++;
+      if (jackValid(b, geo)) ok++;
     }
-    const score = ok - 0.1 * Math.abs(k.want.y - C.circle.y - AI.jackTarget);
+    const score = ok - 0.1 * Math.abs((k.want.y - cc.y) * endDir - AI.jackTarget);
     if (!best || score > best.score) best = { k, donnee, energyFrac, score };
   }
   if (!best) { // nothing fits the budget: the low jack at the nearest distance
-    const k = cands[0] || { loft: AI.lofts.jackLow, want: { x: C.circle.x, y: C.circle.y + AI.jackTarget - 1 } };
+    const k = cands[0] || { loft: AI.lofts.jackLow, want: { x: cc.x, y: cc.y + (AI.jackTarget - 1) * endDir } };
     const from = releaseFrom(base, k.loft);
     const f = fitToBudget({ from, landing: k.want, loft: k.loft, skill, terrain: perceived });
     best = { k, donnee: f.landing, energyFrac: f.energyFrac };
@@ -445,31 +453,37 @@ const PLACE_NOISE = { easy: 1, medium: 0.5, hard: 0.2 };
 // The AI places an invalid jack by hand: a valid spot (6-10 m, inside the lines) at a distance and side the
 // placer likes, away from big rocks and slopes on the terrain it can see, with a little randomness.
 // Pure given `rand`. Returns { x, y, distance, label }.
-export function chooseJackPlacement({ match, player, difficulty = 'medium', rand = Math.random, terrain } = {}) {
+export function chooseJackPlacement({ match, player, difficulty = 'medium', rand = Math.random, terrain, attempt = 0 } = {}) {
   const geometry = match && match.geometry;
+  const dir = geometry && geometry.dir < 0 ? -1 : 1;
   const taste = PLACE_TASTE[player && player.id] || { dist: 8, side: 0 };
   const noise = PLACE_NOISE[difficulty] ?? PLACE_NOISE.medium;
   const view = terrain && terrain.perceived ? terrain.perceived() : terrain;
-  const c = C.circle;
+  const c = (geometry && geometry.circle) || court.circle;
   const pad = 0.1; // keep clear of the legal edges
+  const endPad = (geometry && geometry.dir < 0 ? -1 : 1) * pad;
+  // E04: after a yellow card (`attempt` > 0) stay well inside the lines and off slopes, so the jack cannot roll out
+  const margin = attempt > 0 ? 0.25 + 0.2 * attempt : 0;
+  const slopeW = 6 * (1 + 2 * attempt);
+  const clear = (sp) => !margin || [[margin, 0], [-margin, 0], [0, margin], [0, -margin]].every(([ox, oy]) => jackPlaceValid({ x: sp.x + ox, y: sp.y + oy }, geometry) && Math.abs(Math.hypot(sp.x + ox - c.x, sp.y + oy - c.y) - 8) <= 2);
   let best = null;
   for (let d = C.jackMinDist + pad; d <= C.jackMaxDist - pad + 1e-9; d += 0.25) {
     for (let dx = -1.9; dx <= 1.9 + 1e-9; dx += 0.2) { // full court width (D14)
-      const x = c.x + dx, y = c.y + Math.sqrt(Math.max(0, d * d - dx * dx));
+      const x = c.x + dx, y = c.y + dir * Math.sqrt(Math.max(0, d * d - dx * dx));
       const spot = { x, y };
-      if (!jackPlaceValid(spot, geometry)) continue;
+      if (!jackPlaceValid(spot, geometry) || !jackPlaceValid({ x, y: y + endPad }, geometry) || !clear(spot)) continue; // E20: keep a little clear of the 0.5 m end rule
       const dist = Math.hypot(x - c.x, y - c.y);
       let score = -Math.abs(dist - taste.dist) * 0.5 - Math.abs(dx - taste.side) * 0.4;
       if (view) {
         const s = view.sample(x, y);
-        score -= 6 * Math.hypot(s.nx || 0, s.ny || 0) + 1.5 * (s.loose || 0);
+        score -= slopeW * Math.hypot(s.nx || 0, s.ny || 0) + 1.5 * (s.loose || 0);
         for (const st of view.stonesNear(x, y, 0.5)) score -= st.r > C.pebbleR[1] ? 1.2 : 0.05;
       }
       score += (rand() - 0.5) * 2 * noise;
       if (!best || score > best.score) best = { x, y, score, distance: dist };
     }
   }
-  if (!best) best = { x: c.x, y: c.y + 8, distance: 8 }; // unreachable with the default geometry
+  if (!best) best = { x: c.x, y: c.y + 8 * dir, distance: 8 }; // unreachable with the default geometry
   const name = player ? player.name : 'The AI';
   return {
     x: best.x, y: best.y, distance: best.distance,

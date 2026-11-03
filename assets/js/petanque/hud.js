@@ -1,6 +1,8 @@
 // HUD: setup screen, scoreboard, boules in hand, who-throws chooser, mène and game-over panels.
 // DOM only: it receives state and callbacks, and holds no game logic.
 
+import { settings, MODE_INFO } from './settings.js';
+
 const TEAM_NAMES = ['You & Pierre', 'Marcel & Odette'];
 
 function el(tag, cls, text) {
@@ -118,6 +120,20 @@ export function createHud(root, hudEl, cb) {
       setupState.target, (v) => { setupState.target = +v; });
     radioGroup(c, 'Opponents', 'pt-diff', [['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard']],
       setupState.difficulty, (v) => { setupState.difficulty = v; });
+    const modeFs = el('fieldset', 'pt-fieldset pt-modes');
+    modeFs.append(el('legend', null, 'Pace'));
+    for (const [val, label] of [['slow', 'Slow'], ['quick', 'Quick']]) {
+      const lab = el('label', 'pt-choice pt-mode-choice');
+      const input = document.createElement('input');
+      input.type = 'radio'; input.name = 'pt-mode'; input.value = val;
+      input.checked = settings.mode === val;
+      input.addEventListener('change', () => { settings.mode = val; });
+      const txt = el('span', null);
+      txt.append(el('strong', null, label), el('span', 'pt-mode-desc', ' \u2014 ' + MODE_INFO[val]));
+      lab.append(input, txt);
+      modeFs.append(lab);
+    }
+    c.append(modeFs);
     const start = button('Start game', 'pt-btn pt-start', () => cb.onStart({ ...setupState }));
     c.append(start);
     say('Choose your game options, then start.');
@@ -234,6 +250,20 @@ export function createHud(root, hudEl, cb) {
     focusSoon(next);
   }
 
+  // E04: "Yellow card!" when a hand-placed cochonnet comes to rest out of bounds. info: { detail, button }
+  function showYellowCard(info, onOk) {
+    const c = card('Yellow card!', 'pt-yellow');
+    c.classList.add('pt-yellow-card');
+    c.append(el('p', 'pt-blurb', 'Place the cochonnet correctly!'));
+    if (info.detail) c.append(el('p', 'pt-blurb', info.detail));
+    say('Yellow card! Place the cochonnet correctly!' + (info.detail ? ' ' + info.detail : ''));
+    if (info.button) {
+      const ok = button('Place it again', 'pt-btn pt-next', () => { hideOverlay(); onOk && onOk(); });
+      c.append(ok);
+      focusSoon(ok);
+    }
+  }
+
   // info: { text, detail }
   function showGameOver(info) {
     const c = card(info.text, 'pt-gameover');
@@ -244,5 +274,5 @@ export function createHud(root, hudEl, cb) {
     focusSoon(again);
   }
 
-  return { say, showSetup, hideOverlay, update, showChooser, setSuggestion, hideChooser, showHint, hideHint, showPaused, showMeneEnd, showGameOver };
+  return { say, showSetup, hideOverlay, update, showChooser, setSuggestion, hideChooser, showHint, hideHint, showPaused, showMeneEnd, showYellowCard, showGameOver };
 }

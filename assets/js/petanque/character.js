@@ -53,6 +53,7 @@ export function basePose() {
   return {
     px: 0, py: 0, ry: 0, pz: 0.515, hop: 0, pitch: 0, twist: 0, spine: 0, spineTwist: 0,
     neck: 0, headYaw: 0, headPitch: 0,
+    rollL: 0, rollR: 0, // hand roll about the forearm (E16): 0 palm up, PI palm down, via the inside of the wrist
     armL: { p: 0.05, ab: 0.1, p2: 0.2, ab2: 0.1 }, armR: { p: 0.05, ab: 0.1, p2: 0.2, ab2: 0.1 },
     footL: { x: -0.085, y: 0, z: 0, yaw: -0.15 }, footR: { x: 0.085, y: 0, z: 0, yaw: 0.15 },
   };
@@ -71,6 +72,20 @@ export function footprintShift(p) {
 
 export function clonePose(p) { return JSON.parse(JSON.stringify(p)); }
 
+// ---------- handedness ----------
+// Every pose is authored for a right-hander. A left-hander's pose is its mirror image across the body's sagittal plane
+// (headYaw and neck stay: they are look-at angles). armSwap only swaps the arms (walking, bending: the legs are symmetric).
+// 'handKey' names the dominant hand's joint; E16 (three boules) can use `offKey` for the other hand.
+export const handKey = (hand) => (hand === 'left' ? 'L' : 'R');
+export const offKey = (hand) => (hand === 'left' ? 'R' : 'L');
+export function armSwap(p) { const a = p.armL; p.armL = p.armR; p.armR = a; const r = p.rollL; p.rollL = p.rollR; p.rollR = r; return p; }
+export function mirrorPose(p) {
+  armSwap(p);
+  const fl = p.footL; p.footL = { ...p.footR, x: -p.footR.x, yaw: -p.footR.yaw }; p.footR = { ...fl, x: -fl.x, yaw: -fl.yaw };
+  p.px = -p.px; p.twist = -p.twist; p.spineTwist = -p.spineTwist;
+  return p;
+}
+
 // Blend two poses of the same shape; t is eased here
 export function blendPoses(a, b, t) {
   const k = ease(t);
@@ -85,6 +100,33 @@ export function blendPoses(a, b, t) {
 
 const arm = (p, ab, flex) => ({ p, ab, p2: p + flex, ab2: ab });
 const armDir = (p, ab, side) => [side * sin(ab), sin(p) * cos(ab), -cos(p) * cos(ab)];
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+
+// ---------- hand orientation (E16) ----------
+// The hand is a flat palm. Roll 0: palm up (normal n0: up when the forearm points forward, forward when it hangs); the roll turns it about the forearm
+// through the inside of the wrist (toward the body's midline), so roll PI is palm down. A held boule rests on the
+// palm side, BALL_D off the palm. The palm is always drawn BALL_D behind the boule (ball - n * BALL_D), and the boule
+// rides halfway between the two palm-up positions: on the hand joint at roll PI, so a palm-down release leaves exactly
+// where the hand joint is (the point the throws were tuned to); BALL_D above it at roll 0. `solved` is solveSkeleton(pose);
+// key is 'L' or 'R'.
+export const BALL_D = 0.04;
+export function handBasis(pose, solved, key) {
+  const s = key === 'L' ? -1 : 1, a = key === 'L' ? pose.armL : pose.armR, roll = (key === 'L' ? pose.rollL : pose.rollR) || 0;
+  const d = armDir(a.p2, a.ab2, s);
+  const n0 = norm([0, -d[2], d[1]]); // the forearm turned a quarter in its swing plane: up when it points forward, forward when it hangs
+  let b = norm(cross(d, n0));
+  if (b[0] * -s < 0) b = mul(b, -1); // toward the inside
+  const n = add(mul(n0, cos(roll)), mul(b, sin(roll)));
+  const lat = add(mul(n0, -sin(roll)), mul(b, cos(roll))); // across the palm, toward the inside at roll 0
+  const [ex, ey, ez] = solved.frames.chest;
+  const F = (v) => add(add(mul(ex, v[0]), mul(ey, v[1])), mul(ez, v[2]));
+  return { d: F(d), n: F(n), n0: F(n0), lat: F(lat) };
+}
+// Centre of a boule held in that hand, given the hand's position
+export function heldBallAt(pose, solved, key, handPos) {
+  const b = handBasis(pose, solved, key);
+  return add(handPos, mul(add(b.n, b.n0), BALL_D / 2));
+}
 
 // Forward kinematics plus two-bone leg IK. Returns joint positions in root space (feet near z = 0).
 export function solveSkeleton(pose, H = 1.75) {
@@ -346,7 +388,10 @@ export const BEND_ACT = BEND_DOWN + BEND_BEAT / 2;
 export const BEND_TIME = BEND_DOWN + BEND_BEAT + BEND_UP;
 // Where the right hand is at the bottom of a bend, in root space (x right, y ahead, z up): a fetcher stands so this
 // lands on the ball
-export function bendReach(H = 1.75) { return solveSkeleton(bendPose(1), H).joints.handR; }
+export function bendReach(H = 1.75, hand = 'right') {
+  const p = bendPose(1);
+  return solveSkeleton(hand === 'left' ? armSwap(p) : p, H).joints['hand' + handKey(hand)];
+}
 export function bendDepth(t) {
   if (t <= 0) return 0;
   if (t < BEND_DOWN) return ease(t / BEND_DOWN);
@@ -377,6 +422,7 @@ export function throwPose(tt, base, stance) {
   const hold = base.armR;
   const kBack = ease(tt / T_BACK);
   const kFollow = ease((tt - T_BACK - T_FWD) / T_HOLD);
+  p.rollR = lerp(base.rollR || 0, PI, kBack); // the boule comes round the inside of the hand to underneath: palm down at release
   // body follows the arm: lean and twist back, then drive through
   p.pitch += 0.12 * kBack + 0.05 * kFollow;
   p.spineTwist += -0.3 * kBack + 0.35 * kFollow;
@@ -470,13 +516,15 @@ const L_ANKLE = (H) => 0.04 * H;
 
 // Where the throwing hand will be at release, relative to the root (turned by yaw), for a given stance and loft.
 // Pure and matches playThrow (the base pose breathes by about a centimetre, so t barely matters).
-export function releaseOffset({ height = 1.75, stance = 'crouch', loft = 0.5, yaw = 0, t = 0, model = null } = {}) {
+export function releaseOffset({ height = 1.75, stance = 'crouch', loft = 0.5, yaw = 0, t = 0, model = null, hand = 'right' } = {}) {
   const kind = stance === 'stand' ? 'stand' : 'crouch';
   const pose = throwPose(releaseTime(loft), stancePose(kind, t, {}), kind);
+  if (hand === 'left') mirrorPose(pose);
+  const hk = handKey(hand);
   const solved = solveSkeleton(pose, height);
   // with a model name the hand is the end of the Kenney arm bone instead of the stick figure's hand
-  const h = model ? meshFrame(solved, pose, height, meshScale(height, model)).hand.R : solved.joints.handR;
-  const r = twist(h, yaw);
+  const h = model ? meshFrame(solved, pose, height, meshScale(height, model)).hand[hk] : solved.joints['hand' + hk];
+  const r = twist(heldBallAt(pose, solved, hk, h), yaw); // the boule leaves from its place on the (now palm-down) hand
   return { x: r[0], y: r[1], z: r[2] };
 }
 
@@ -493,8 +541,10 @@ export function createCharacter(THREE, spec = {}) {
   const H = spec.height || 1.75;
   const build = BUILD[spec.build] || BUILD.average;
   const colors = Object.assign({ shirt: '#3a6ea5', trousers: '#4a4a52', skin: '#d9a37c' }, spec.colors || {});
-  const stanceKind = spec.stance === 'stand' ? 'stand' : 'crouch';
+  let stanceKind = spec.stance === 'stand' ? 'stand' : 'crouch'; // the throwing stance; setStance('crouch'|'stand') changes it per throw
   const quirks = spec.quirks || {};
+  const hand = spec.hand === 'left' ? 'left' : 'right';
+  const HK = handKey(hand), armKey = 'arm' + HK; // the dominant hand's joint letter and pose key
   const L = boneLengths(H);
   let quirkOffset = 0; // desynchronises the idle quirks of different characters
   for (const ch of String(spec.name || '')) quirkOffset += ch.charCodeAt(0) * 0.37;
@@ -539,7 +589,12 @@ export function createCharacter(THREE, spec = {}) {
   const shoulderBar = addMesh(new THREE.CapsuleGeometry(rs(0.04), L.shoulderHalf * 2, 4, 10), mShirt);
   const hipBar = addMesh(new THREE.CapsuleGeometry(rs(0.06), L.hipHalf * 2, 4, 10), mTrousers);
   caps.push({ me: shoulderBar, a: 'shoulderL', b: 'shoulderR' }, { me: hipBar, a: 'hipL', b: 'hipR' });
-  const hands = ['L', 'R'].map(() => addMesh(new THREE.SphereGeometry(rLimb(0.028), 10, 8), mSkin));
+  // hands: a flat mitten (unit sphere scaled: across, along the forearm, thin through the palm) so palm up or down reads
+  const hands = ['L', 'R'].map(() => {
+    const m = addMesh(new THREE.SphereGeometry(1, 10, 8), mSkin);
+    m.scale.set(H * 0.019, H * 0.027, H * 0.007);
+    return m;
+  });
   const feetMeshes = ['L', 'R'].map(() => addMesh(new THREE.CapsuleGeometry(rLimb(0.028), L.foot + L.heel - 2 * rLimb(0.028), 4, 8), mShoe));
 
   // optional neckerchief (colors.scarf): a ring at the base of the neck, turned with the chest
@@ -590,6 +645,22 @@ export function createCharacter(THREE, spec = {}) {
   mats.push(holdMesh.material);
   holdMesh.castShadow = true; holdMesh.visible = false;
   root.add(holdMesh);
+  // E23: the cochonnet in the dominant hand for a jack throw: the live jack's orange (render.js jackMat), jack radius
+  const jackHeld = new THREE.Mesh(
+    geo(new THREE.SphereGeometry(C.jack.r, 14, 10)),
+    new THREE.MeshStandardMaterial({ color: '#ff7a00', metalness: 0, roughness: 0.45, emissive: '#4a1e00' }),
+  );
+  mats.push(jackHeld.material);
+  jackHeld.castShadow = true; jackHeld.visible = false;
+  root.add(jackHeld);
+  // E16: boules held in the hands. held = null: the legacy single boule (setHolding); else { dominant, other } counts.
+  // The other hand's boules sit side by side on its palm.
+  let held = null;
+  const offMeshes = [0, 1].map(() => {
+    const m = new THREE.Mesh(holdMesh.geometry, holdMesh.material);
+    m.castShadow = true; m.visible = false; root.add(m); return m;
+  });
+  const OFF_HK = offKey(hand);
 
   // ----- animation state -----
   const st = {
@@ -604,21 +675,38 @@ export function createCharacter(THREE, spec = {}) {
   headG.matrixAutoUpdate = false;
 
   function currentTarget() {
-    if (st.mode === 'walk') return walkPose(st.walk.phase, { lift: st.walk.lift, carry: st.carry });
+    const sw = (p) => (hand === 'left' ? armSwap(p) : p);
+    if (st.mode === 'walk') return sw(walkPose(st.walk.phase, { lift: st.walk.lift, carry: st.carry }));
     if (st.mode === 'bend') {
       const b = st.bending;
-      return bendPose(bendDepth(b.t), { carry: b.kind === 'pickup' ? b.acted : !b.acted });
+      return sw(bendPose(bendDepth(b.t), { carry: b.kind === 'pickup' ? b.acted : !b.acted }));
     }
     if (st.mode === 'throw') {
-      return throwPose(st.throwing.t, stancePose(stanceKind, st.t, {}), stanceKind);
+      const p = throwPose(st.throwing.t, stancePose(stanceKind, st.t, {}), stanceKind);
+      return hand === 'left' ? mirrorPose(p) : p;
     }
     const react = st.stance === 'celebrate' ? quirks.celebrate : st.stance === 'dismay' ? quirks.dismay : undefined;
     const sp = stancePose(st.stance, st.t, { look: st.lookSm, quirks, react, forceQuirk: st.forceQuirk, offset: quirkOffset });
-    if (st.carry && (st.stance === 'watch' || st.stance === 'idle')) sp.armR = { ...CARRY_ARM };
+    // the throwing stances and the hand-over are one-handed: mirror them for a left-hander (the rest is symmetric)
+    if (hand === 'left' && ['aim', 'crouch', 'stand', 'give'].includes(st.stance)) mirrorPose(sp);
+    if (st.carry && (st.stance === 'watch' || st.stance === 'idle')) sp[armKey] = { ...CARRY_ARM };
     return sp;
   }
+  // Hands that hold boules keep their arms at the waist, palm up, while walking or waiting
+  function heldArms(p) {
+    if (!held || !(st.mode === 'walk' || (st.mode === 'stance' && (st.stance === 'watch' || st.stance === 'idle')))) return p;
+    if (held.dominant > 0) p['arm' + HK] = { ...CARRY_ARM };
+    if (held.other > 0) p['arm' + OFF_HK] = { ...CARRY_ARM };
+    return p;
+  }
+  function refreshHeld() {
+    holdMesh.visible = held ? held.dominant > 0 : st.holding === 'boule';
+    jackHeld.visible = !held && st.holding === 'jack';
+    offMeshes[0].visible = !!held && held.other > 0;
+    offMeshes[1].visible = !!held && held.other > 1;
+  }
   function evalPose() {
-    const target = currentTarget();
+    const target = heldArms(currentTarget());
     st.out = st.blend < 1 && st.snap ? blendPoses(st.snap, target, st.blend) : target;
     st.solved = solveSkeleton(st.out, H);
     st.frame = vis ? meshFrame(st.solved, st.out, H, vis.s) : null;
@@ -629,12 +717,33 @@ export function createCharacter(THREE, spec = {}) {
     st.mode = mode; st.blend = st.snap ? 0 : 1;
   }
   const setYaw = (y) => { st.yaw = y; root.rotation.z = -y; };
-  const handLocal = () => { const j = (st.solved || evalPose()).joints; return st.frame ? st.frame.hand.R : j.handR; };
+  const handLocal = () => { const j = (st.solved || evalPose()).joints; return st.frame ? st.frame.hand[HK] : j['hand' + HK]; };
   const toWorld = (v) => {
     const r = twist(v, st.yaw);
     return { x: root.position.x + r[0], y: root.position.y + r[1], z: root.position.z + r[2] };
   };
   const handWorldPosition = () => toWorld(handLocal());
+  const handAt = (k) => (st.frame ? st.frame.hand[k] : st.solved.joints['hand' + k]);
+  // centre of a boule held on the palm of hand k (root space)
+  const ballLocal = (k) => heldBallAt(st.out, st.solved, k, handAt(k));
+  function placeHeld() {
+    holdMesh.position.set(...ballLocal(HK));
+    jackHeld.position.set(...ballLocal(HK)); // same centre as a boule: the release point is unchanged
+    if (!held || held.other < 1) return;
+    const c = ballLocal(OFF_HK);
+    if (held.other === 1) { offMeshes[0].position.set(...c); return; }
+    const lat = handBasis(st.out, st.solved, OFF_HK).lat, w = C.boule.r * 1.02; // side by side across the palm
+    offMeshes[0].position.set(...add(c, mul(lat, w))); offMeshes[1].position.set(...sub(c, mul(lat, w)));
+  }
+  function placeHands() {
+    ['L', 'R'].forEach((n, i) => {
+      const b = handBasis(st.out, st.solved, n), j = st.solved.joints['hand' + n];
+      const p = add(sub(add(j, mul(add(b.n, b.n0), BALL_D / 2)), mul(b.n, BALL_D)), mul(b.d, -H * 0.012)); // the palm under the boule's place
+      const z = cross(b.lat, b.d);
+      hands[i].position.set(...p);
+      hands[i].quaternion.setFromRotationMatrix(m4.makeBasis(va.set(...b.lat), vb.set(...b.d), vd.set(...z)));
+    });
+  }
 
   function updateLook(dt) {
     let ty = 0, tp = 0;
@@ -735,10 +844,12 @@ export function createCharacter(THREE, spec = {}) {
         h = max(0, th.tRel - th.t);
         advance(h);
         th.released = true;
-        st.holding = false; holdMesh.visible = false;
+        st.holding = false;
         evalPose();
         applyMeshes(); // bones at the release frame, so the visible hand is where the boule leaves from
-        const pos = handWorldPosition();
+        const pos = toWorld(ballLocal(HK));
+        if (held) held.dominant = max(0, held.dominant - 1);
+        refreshHeld();
         if (th.onRelease) th.onRelease(pos);
         left -= h;
         if (h === 0) left -= 1e-9;
@@ -781,7 +892,7 @@ export function createCharacter(THREE, spec = {}) {
   }
 
   function applyMeshes() {
-    if (vis) { applyBones(); holdMesh.position.set(...st.frame.hand.R); return; }
+    if (vis) { applyBones(); placeHeld(); return; }
     const { joints: j, frames } = st.solved;
     for (const c of caps) {
       va.set(...j[c.a]); vb.set(...j[c.b]);
@@ -791,7 +902,6 @@ export function createCharacter(THREE, spec = {}) {
     }
     // shoulder and hip bars: capsule axis spans exactly the joints, shorten by nothing
     ['L', 'R'].forEach((n, i) => {
-      hands[i].position.set(...j['hand' + n]);
       const a = j['ankle' + n], f = j['foot' + n];
       const fm = feetMeshes[i];
       const z = a[2] - L.ankleH + H * 0.028;
@@ -817,7 +927,8 @@ export function createCharacter(THREE, spec = {}) {
       belly.position.set(j.spine[0] + o[0] - cz[0] * H * 0.045, j.spine[1] + o[1] - cz[1] * H * 0.045, j.spine[2] + o[2] - cz[2] * H * 0.045);
       belly.quaternion.setFromRotationMatrix(m4.makeBasis(va.set(...cx), vb.set(...cy), vd.set(...cz)));
     }
-    holdMesh.position.set(...j.handR); holdMesh.position.z -= H * 0.025;
+    placeHands();
+    placeHeld();
   }
 
   function update(dt) {
@@ -835,6 +946,7 @@ export function createCharacter(THREE, spec = {}) {
     if (!valid.includes(name)) throw new Error('unknown stance ' + name);
     if (st.mode === 'throw') cancelThrow();
     if (st.mode === 'bend') endBend();
+    if (name === 'crouch' || name === 'stand') stanceKind = name;
     st.stance = name;
     if (st.mode === 'stance') switchMode('stance');
   }
@@ -886,7 +998,25 @@ export function createCharacter(THREE, spec = {}) {
     });
   }
   function forceQuirk(name) { st.forceQuirk = name || null; st.t = 0; } // debug: hold one idle quirk
-  function setHolding(on) { st.holding = !!on; holdMesh.visible = st.holding; }
+  // E23: setHolding('jack') shows the cochonnet in the dominant hand; setHolding(true | 'boule', colour) a boule (the
+  // team's look: colour sets the single boule's material); false hides both. A release clears it (step()).
+  function setHolding(on, color) {
+    st.holding = on === 'jack' ? 'jack' : on ? 'boule' : false;
+    if (color && st.holding === 'boule') holdMesh.material.color.set(color);
+    refreshHeld();
+  }
+  // E16: show boules in the hands ({ dominant: 0|1, other: 0..2 }, optional colour of the boule); null goes back to the
+  // single boule that setHolding shows. A throw takes one from the dominant hand.
+  function setHeldBoules(h) {
+    held = h ? { dominant: h.dominant | 0, other: h.other | 0 } : null;
+    if (h && h.color) holdMesh.material.color.set(h.color);
+    refreshHeld();
+  }
+  // Move one boule from the other hand to the dominant hand if the latter is empty; true when it did
+  function shiftBoule() {
+    if (!held || held.dominant > 0 || held.other < 1) return false;
+    held.dominant = 1; held.other -= 1; refreshHeld(); return true;
+  }
   function lookAt(x, y, z) {
     st.look = x === null || x === undefined ? null : { x, y, z: z === undefined ? 1.5 : z };
   }
@@ -947,13 +1077,16 @@ export function createCharacter(THREE, spec = {}) {
   applyMeshes();
   return {
     root, update, setStance, walkTo, playThrow, playBend, setCarrying, handWorldPosition, dispose,
-    lookAt, setHolding, setPlacement, attachModel, forceQuirk,
+    lookAt, setHolding, setHeldBoules, shiftBoule, setPlacement, attachModel, forceQuirk,
+    hand, // 'right' | 'left': the dominant (throwing, carrying) hand
     get isMesh() { return !!vis; },
     get yaw() { return st.yaw; },
     set yaw(v) { setYaw(v); },
     get stance() { return st.stance; },
     get busy() { return st.mode !== 'stance'; },
     get carrying() { return st.carry; },
+    get heldBoules() { return held ? { ...held } : null; },
+    ballWorldPosition: () => { if (!st.solved) evalPose(); return toWorld(ballLocal(HK)); },
     skeleton: () => (st.solved || evalPose()).joints, // root-space joints (for tests and debugging)
     height: H,
   };

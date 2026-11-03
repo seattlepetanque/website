@@ -126,3 +126,26 @@ test('pitch, yaw and camera height stay in range', () => {
     assert.ok(Number.isFinite(f.distance) && f.distance >= CAM.minDist * 0.9 && f.distance <= CAM.maxDist);
   }
 });
+
+test('E10: toward y = 0 the camera stays behind the play (never flips to face the thrower)', () => {
+  const o = { ...OPTS, dir: -1 };
+  // a boule thrown from y = 13 toward y = 5: it flies and rolls along -y, with small sideways drift
+  let prev = null;
+  const b = body('boule', 2, 13, 0.4, -9, { z: 1, state: 'airborne' });
+  for (let i = 0; i < 240; i++) {
+    b.y += b.vy / 60; b.x += b.vx / 60;
+    if (i === 100) { b.state = 'rolling'; b.z = b.r; b.vy = -2; b.vx = 0.1; }
+    prev = frameMoving([b], null, { ...o, thrown: b }, prev);
+    assert.ok(Math.abs(Math.abs(prev.yaw) - Math.PI) <= CAM.maxYaw + 1e-9, `yaw ${prev.yaw} stays within ${CAM.maxYaw} of facing -y`);
+    const { pos, tgt } = cameraFromFrame(prev);
+    assert.ok(pos.y > tgt.y, 'the camera sits on the circle side (higher y) of the target');
+  }
+  // dir +1 is unchanged: behind means lower y
+  const f = frameMoving([body('boule', 2, 3, 0, 9)], null, { ...OPTS, thrown: null }, null);
+  const c = cameraFromFrame(f);
+  assert.ok(c.pos.y < c.tgt.y);
+  // a jack skittering sideways does not turn the view around
+  const j = body('jack', 2, 6, 5, 0.5);
+  const g = frameMoving([j], j, { ...o, thrown: j }, null);
+  assert.ok(Math.abs(Math.abs(g.yaw) - Math.PI) <= CAM.maxYaw + 1e-9);
+});
