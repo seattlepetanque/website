@@ -7,7 +7,7 @@ import { createBody, launch, createWorld, simulate } from '../../assets/js/petan
 import {
   LOFT_MIN, LOFT_MAX, styleForLoft, backspinForLoft, solveLaunch, SKILL, difficultyScale, coneFor,
   executeThrow, arcPath, coneEnvelope, predictRoll, releaseHeight, releaseFrom, snapAim, SNAP_SHORT,
-  fitToBudget, effortFor, energyFor, energyPenalty,
+  fitToBudget, effortFor, energyFor, energyPenalty, roughness,
 } from '../../assets/js/petanque/donnee.js';
 
 const DEG = Math.PI / 180;
@@ -211,7 +211,7 @@ test('predictRoll ends where a real noiseless sim does', () => {
     assert.equal(other.state, 'resting');
   }
   // with a fixed rand the prediction is identical to a manual run
-  const p = solveLaunch({ from, landing: { x: 2, y: 8 }, loft: 40 * DEG, terrain: terrain.perceived() });
+  const p = solveLaunch({ from, landing: { x: 2, y: 8 }, loft: 60 * DEG, terrain: terrain.perceived() }); // plombée: no roughness allowance
   const path = predictRoll({ world, terrain, throwParams: p, rand: mulberry32(1) });
   const w3 = world.clone(terrain.perceived(), mulberry32(1));
   const b3 = launch(createBody('boule', { team: -1 }), p);
@@ -330,4 +330,45 @@ test('cone grows with loft and with energyFrac', () => {
   assert.deepEqual(knee, lo);
   assert.ok(mid.sigmaLong > lo.sigmaLong && max.sigmaLong > mid.sigmaLong && max.sigmaLat > mid.sigmaLat);
   assert.ok(Math.abs(max.sigmaLong / lo.sigmaLong - energyPenalty(1)) < 1e-9 && energyPenalty(1) > 1.5);
+});
+
+// D19: the roll guide (predictRoll) plans on the perceived terrain with the low-loft roughness allowance, so its
+// predicted rest matches the mean real rest on seeded gravel (before: +1.7 m at 14 degrees, +0.3 m at 30)
+test('predictRoll: predicted rest matches the mean real rest at 14 and 30 degrees; plombée unchanged', () => {
+  const from = { x: 2, y: 1, z: 0.9 };
+  const diff = {};
+  for (const deg of [14, 30, 60]) {
+    let sp = 0, sr = 0, n = 0;
+    for (let ts = 0; ts < 8; ts++) {
+      const terrain = createTerrain(100 + ts);
+      for (const d of [4, 5.5, 7, 8.5]) {
+        const tp = solveLaunch({ from, landing: { x: 2, y: 1 + d }, loft: deg * DEG, terrain: terrain.perceived() });
+        const world = createWorld(terrain, mulberry32(ts * 7 + d));
+        const pred = predictRoll({ world, terrain, throwParams: tp, from });
+        let real = 0;
+        const R = 6;
+        for (let r = 0; r < R; r++) {
+          terrain.resetDivots();
+          const w = world.clone(terrain, mulberry32(r * 13 + ts));
+          const b = launch(createBody('boule', { team: 1 }), tp, from);
+          w.add(b);
+          simulate(w, 20);
+          real += (b.dead ? b.outY : b.y) / R;
+        }
+        sp += pred[pred.length - 1].y; sr += real; n++;
+      }
+    }
+    diff[deg] = (sp - sr) / n;
+  }
+  assert.ok(Math.abs(diff[14]) < 0.3, `14 deg: predicted minus real ${diff[14].toFixed(2)} m`);
+  assert.ok(Math.abs(diff[30]) < 0.3, `30 deg: predicted minus real ${diff[30].toFixed(2)} m`);
+  // plombée: the same path as the plain perceived-terrain sim
+  const terrain = createTerrain(100), world = createWorld(terrain, mulberry32(1));
+  const tp = solveLaunch({ from, landing: { x: 2, y: 8 }, loft: 60 * DEG, terrain: terrain.perceived() });
+  const a = predictRoll({ world, terrain, throwParams: tp, from, rand: mulberry32(1) });
+  const w2 = world.clone(terrain.perceived(), mulberry32(1));
+  const b2 = launch(createBody('boule', { team: -1 }), tp, from);
+  w2.add(b2); b2.state = 'airborne'; simulate(w2);
+  assert.ok(Math.hypot(a[a.length - 1].x - b2.x, a[a.length - 1].y - b2.y) < 1e-6);
+  assert.ok(roughness(60 * DEG) === 1 && roughness(14 * DEG) === 2);
 });

@@ -1,39 +1,41 @@
-// Monte Carlo AI on the donnée model: plans candidates as (donnée, loft), throws through donnee.js with the
-// player's own skill cone (like the human), and scores each candidate over several noisy sims on a perceived
-// clone of the world. A per-style roll-out table (flat terrain) gives first guesses for pointing données,
-// noiseless sims on the perceived terrain refine them.
+// Monte Carlo AI on the donnée model: tactics.js reads the situation and proposes candidate families
+// (donnée, loft, prior, reason); this module throws each through donnee.js with the player's own skill cone (like
+// the human), scores them over noisy sims on a perceived clone of the world (successive halving, with a
+// wall-clock guard), and returns the best with its tactical reason. A per-style roll-out table (flat terrain)
+// gives first guesses for pointing données, noiseless sims on the perceived terrain refine them.
 import { C } from './constants.js';
 import { mulberry32 } from './rng.js';
 import { createBody, launch, createWorld, simulate } from './physics.js';
-import { meneResult, boulesInHand, jackValid } from './rules.js';
-import { SKILL, scaledSkill, coneFor, executeThrow, solveLaunch, styleForLoft, releaseFrom, fitToBudget } from './donnee.js';
+import { jackValid } from './rules.js';
+import { coneFor, executeThrow, solveLaunch, styleForLoft, releaseFrom, fitToBudget, feltTerrain, roughness as roughnessOf, ROUGH_LOFT_FULL, ROUGH_LOFT_NONE } from './donnee.js';
+import { DEFAULT_CFG, DIFFICULTY, readSituation, plan, evalEnd, explain, skillOfPlayer, whoThrows } from './tactics.js';
+export { ROUGH_LOFT_FULL, ROUGH_LOFT_NONE };
+export { whoThrows };
 
 const DEG = Math.PI / 180;
 
 // Tuning
 export const AI = {
   sims: { easy: 8, medium: 12, hard: 16 },
-  lofts: { roulette: 14 * DEG, demi: 32 * DEG, plombee: 55 * DEG, tir: 22 * DEG, tirHigh: 42 * DEG, jackLow: 35 * DEG, jack: 55 * DEG },
-  shootBonus: { pointeur: 0, tireur: 0.6 }, // tireurs like a shot: added to the score of tir candidates
-  // personality: added to the score of pointing candidates of that style (Marcel the pointeur likes to roll)
-  // (Pierre likes to shoot: a small bonus on tir candidates; Odette is a tireur through her role)
-  stylePref: {
-    marcel: { roulette: 0.22, demi: 0.06 },
-    odette: { demi: 0.02 },
-    pierre: { demi: 0.04, tir: 0.08 },
-  },
-  styleNoise: 0.08, // random +- added to every candidate so equal-looking choices vary between turns
+  lofts: { ...DEFAULT_CFG.lofts },
+  // (personality now lives in tactics.js profiles; stylePref is only a test hook: extra prior per player and style)
+  stylePref: {},
+  noise: 0.08, // total width of the random +- added to a candidate's score (x3 on Easy) so equal-looking choices vary
+  timeGuard: true, // stop simulating at timeGuardMs of compute (yields between candidates do not count) and return the best so far
+  timeGuardMs: { easy: 40, medium: 40, hard: 90 },
+  firstSims: 4, // sims every candidate gets before the halving
+  keepTop: 3, // candidates that get the rest of the budget (plus any within 2 standard errors of the best)
   maxSimSeconds: 14,
   refineSims: 3,
+  refineTol: 0.1, // m: the refine search stops when the mean rest is this close to the target
   refineIters: 4, // evaluations of the refine search (each is refineSims noiseless sims)
-  riskAversion: 0.1,
   minHit: 0.4, // a shot needs at least this fraction of the sims to move its target (> hitMove)
   hitMove: 0.15, // m: a target that moves more than this counts as hit
-  hitFull: 0.5, // the shooter's bonus is full at this simulated hit rate, scaled down below it
-  shootRange: 1, // shoot opponent boules this close to the jack
-  tirHighShort: 0.1, // the higher shot lands almost on the target and stops there
-  tirShortClose: 0.25, // a second, closer aim: the sims prefer it when the thrower is accurate (Hard)
-  tirShort: 0.6, // aim the donnée this far short of the target: lands, then rolls or hops into it (D16 sweep: 22 degrees, 0.5-0.7 m short moved the target most often)
+  minHitJack: 0.25, // a shot at the jack needs this fraction of sims to move it
+  gateHit: DEFAULT_CFG.gateHit,
+  tirHighShort: DEFAULT_CFG.tirHighShort, // the higher shot lands almost on the target and stops there
+  tirShortClose: DEFAULT_CFG.tirShortClose, // a second, closer aim: the sims prefer it when the thrower is accurate (Hard)
+  tirShort: DEFAULT_CFG.tirShort, // aim the donnée this far short of the target: lands, then rolls or hops into it (D16 sweep: 22 degrees, 0.5-0.7 m short moved the target most often)
   roughK: 1.0, // extra rolling resistance fraction the planner assumes for a roulette (see roughness())
   jackTarget: 8, // m from circle for the jack throw
   minDonnee: 1.5, // m from the thrower
@@ -85,8 +87,6 @@ export function donneeDistFor(kind, loft, from, want) {
 function seedFrom(rand) { return (rand() * 4294967296) >>> 0; }
 const dist2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
-function liveBoules(world) { return world.bodies.filter((b) => b.kind === 'boule'); }
-function theJack(world) { return world.bodies.find((b) => b.kind === 'jack'); }
 
 // Noiseless landing of a donnée on `terrain` then the mean of a few settle sims
 function meanEnd(world, kind, from, donnee, loft, terrain, rand) {
@@ -118,7 +118,7 @@ function refineDonnee(world, kind, from, target, loft, donnee, perceived, rand) 
     const e = meanEnd(world, kind, from, d, loft, perceived, rand);
     const err = len - along(e), lat = -side(e);
     if (!best || Math.abs(err) < best.abs) best = { d: { ...d }, abs: Math.abs(err) };
-    if (best.abs < 0.1) break;
+    if (best.abs < AI.refineTol) break;
     const sNow = along(d);
     if (prev && Math.abs(sNow - prev.s) > 0.05) {
       slope = Math.max(0.6, Math.min(4, (along(e) - prev.r) / (sNow - prev.s)));
@@ -130,20 +130,9 @@ function refineDonnee(world, kind, from, target, loft, donnee, perceived, rand) 
   return best ? best.d : d;
 }
 
-// The perceived terrain has no micro-roughness (the ground jitter), which slows a low throw's roll: on real gravel a
-// 14 degree roulette rests 1 to 3 m short of where the smooth model says (D16: perceived 9.0 m vs real 6.3 m).
-// A pointeur knows the gravel is rougher than it looks, so low throws are planned with extra rolling resistance.
-// Calibrated with tests/petanque/measure-throws.js: planned rest vs target over AI-vs-AI mènes (mean shortfall
-// 1.1 m roulette / 0.75 m demi before, about 0.1 m after). Full effect at 14 degrees, fading to nothing by 45.
-export const ROUGH_LOFT_FULL = 14 * DEG, ROUGH_LOFT_NONE = 45 * DEG;
-export function roughness(loft) {
-  return 1 + AI.roughK * Math.max(0, Math.min(1, (ROUGH_LOFT_NONE - loft) / (ROUGH_LOFT_NONE - ROUGH_LOFT_FULL)));
-}
-function felt(view, loft, rough) {
-  const k = rough ? roughness(loft) : 1; // only when there is unseen roughness (a stub terrain's view is the terrain itself)
-  if (k === 1) return view;
-  return { ...view, sample(x, y) { const s = view.sample(x, y); return { ...s, friction: s.friction * k }; }, perceived() { return this; } };
-}
+// Low-loft roughness allowance (D16, shared with the roll guide in donnee.js, D19)
+export const roughness = (loft) => roughnessOf(loft, AI.roughK);
+const felt = (view, loft, rough) => feltTerrain(view, loft, rough, AI.roughK);
 
 // --- Candidates ---------------------------------------------------------------------------
 
@@ -157,68 +146,9 @@ function pointDonnee(world, kind, from, target, loft, perceived, rand) {
   return refineDonnee(world, kind, from, target, loft, d0, perceived, rand);
 }
 
-function buildCandidates(world, match, player) {
-  const jack = theJack(world);
-  if (!jack || jack.dead) return [];
-  const team = player.team, opp = 1 - team;
-  const c = [];
-  const pt = (style, dx, dy) => c.push({ style, loft: AI.lofts[style], target: { x: jack.x + dx, y: jack.y + dy }, intent: 'point', tag: style });
-  // pointing at the jack, plus offsets to get round blockers
-  pt('roulette', 0, 0); pt('demi', 0, 0); pt('plombee', 0, 0);
-  pt('roulette', 0.22, 0); pt('roulette', -0.22, 0);
-  pt('demi', 0, -0.25); pt('plombee', 0, 0.25);
-  // shots at opponent boules near the jack (closest first)
-  const targets = liveBoules(world)
-    .filter((b) => !b.dead && b.team === opp && dist2(b, jack) <= AI.shootRange)
-    .sort((a, b) => dist2(a, jack) - dist2(b, jack)).slice(0, 2);
-  for (const b of targets) {
-    c.push({ style: 'tir', loft: AI.lofts.tir, target: { x: b.x, y: b.y }, shortBy: AI.tirShort, intent: 'shoot', tag: 'boule' });
-    c.push({ style: 'tir', loft: AI.lofts.tir, target: { x: b.x, y: b.y }, shortBy: AI.tirShortClose, intent: 'shoot', tag: 'boule' });
-    c.push({ style: 'tir', loft: AI.lofts.tirHigh, target: { x: b.x, y: b.y }, shortBy: AI.tirHighShort, intent: 'shoot', tag: 'boule' });
-  }
-  // shoot the jack when the opponent holds 2+ points and we have boules after this one
-  const res = meneResult(jack, liveBoules(world));
-  if (!res.void && res.team === opp && res.points >= 2 && boulesInHand(match, team) > 1) {
-    c.push({ style: 'tir', loft: AI.lofts.tir, target: { x: jack.x, y: jack.y }, shortBy: AI.tirShort, intent: 'shoot', tag: 'jack' });
-  }
-  // keep within the field and the cap
-  return c.filter((k) => k.target.y < C.terrainL - 0.5 && k.target.y > 2 && k.target.x > 0.3 && k.target.x < C.terrainW - 0.3).slice(0, 14);
-}
-
-// --- Evaluation ---------------------------------------------------------------------------
-
-// Value of a settled state for `team`; handT/handO are boules still in hand after this throw
-function evaluate(world, team, handT, handO, deadBefore) {
-  const jack = theJack(world);
-  const boules = liveBoules(world);
-  if (!jack || jack.dead) {
-    if (handT > 0 && handO > 0) return -1; // void mène: wasteful, not a disaster
-    if (handT > 0) return handT * 0.8;
-    if (handO > 0) return -4 - handO * 1.5; // opponent scores their boules
-    return -1;
-  }
-  const res = meneResult(jack, boules);
-  const near = (t) => Math.min(3, ...boules.filter((b) => !b.dead && b.team === t).map((b) => dist2(b, jack)));
-  const dT = near(team), dO = near(1 - team);
-  let v = 0;
-  // A point is only worth what survives the other side's remaining boules: the further it is from
-  // the jack and the more boules they hold, the likelier it is to be beaten
-  const keep = (d, hand) => Math.max(0.05, 1 - hand * (0.08 + 0.18 * Math.min(d, 2)));
-  if (!res.void) {
-    if (res.team === team) v = res.points * keep(dT, handO) + (handO === 0 ? 0.3 : 0);
-    else v = -res.points * keep(dO, handT) - (handT === 0 ? 0.3 : 0);
-  }
-  v += 0.5 * Math.max(-1, Math.min(1, dO - dT)); // margin
-  v -= 0.3 * Math.min(dT, 2); // closeness of our best boule to the jack
-  const deadNow = boules.filter((b) => b.dead && b.team === team).length;
-  v -= 0.4 * Math.max(0, deadNow - deadBefore);
-  v += 0.15 * boules.filter((b) => b.dead && b.team === 1 - team).length;
-  return v;
-}
-
 // --- Decision (generator so the async variant can yield between candidates) ----------------
 
-const skillFor = (player, difficulty) => scaledSkill(SKILL[player && player.id] ?? SKILL.human, difficulty);
+const skillFor = skillOfPlayer;
 const clampDonnee = (d) => ({
   x: Math.max(0.2, Math.min(C.terrainW - 0.2, d.x)),
   y: Math.max(0.5, Math.min(C.terrainL - 0.2, d.y)),
@@ -232,15 +162,32 @@ function throwThrough({ from, donnee, loft, skill, terrain, rand, energyFrac = 0
   return tp;
 }
 
-function* decide({ world, match, player, difficulty = 'medium', rand, from = FROM }) {
-  const nSims = AI.sims[difficulty] ?? AI.sims.medium;
+const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+// Compute-time clock: time spent between yields only, so the UI breathing room does not count against the guard
+function makeClock(limit) {
+  let busy = 0, t0 = now();
+  return {
+    pause() { busy += now() - t0; },
+    resume() { t0 = now(); },
+    ms() { return busy + now() - t0; },
+    over() { return AI.timeGuard && busy + now() - t0 > limit; },
+  };
+}
+
+const cfgOf = () => ({
+  lofts: AI.lofts, tirShort: AI.tirShort, tirShortClose: AI.tirShortClose, tirHighShort: AI.tirHighShort,
+  gateHit: AI.gateHit, stylePref: AI.stylePref,
+});
+
+function* decide({ world, match, player, difficulty = 'medium', rand, from = FROM, advice = false }) {
+  const dk = DIFFICULTY[difficulty] ? difficulty : 'medium';
+  const nSims = AI.sims[dk] ?? AI.sims.medium;
   const team = player.team;
   const skill = skillFor(player, difficulty);
-  const handT = boulesInHand(match, team) - 1, handO = boulesInHand(match, 1 - team);
   const perceived = world.terrain.perceived();
   const rough = perceived !== world.terrain;
-  const deadBefore = liveBoules(world).filter((b) => b.dead && b.team === team).length;
-  const cands = buildCandidates(world, match, player);
+  const sit = readSituation({ match, bodies: world.bodies, player, difficulty, advice });
+  const clock = makeClock(AI.timeGuardMs[dk] ?? 40);
   const finish = (donnee, loft, intent, label, score, snapped, labelKey, fallback = false) => {
     const rel = releaseFrom(from, loft);
     const fit = fitToBudget({ from: rel, landing: donnee, loft, skill, terrain: world.terrain });
@@ -248,28 +195,93 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
     // info: for ?debug&ailog and the measure scripts (what the plan wanted, how far the budget pulled it in, a fallback pick)
     return {
       throwParams, from: rel, intent, label, labelKey, score, donnee: fit.landing, loft, style: styleForLoft(loft, snapped), energyFrac: fit.energyFrac,
+      who: player.id,
       info: { wanted: donnee, clampedBy: dist2(donnee, fit.landing), fallback, budgetClamped: fit.clamped },
     };
   };
-  if (!cands.length) {
-    // no jack to aim at: just lob towards the middle of the lane
-    return finish({ x: C.circle.x, y: 8 }, AI.lofts.demi, 'point', `${player.name} points a demi-portée`, 0, false, { event: 'spotPoint', style: 'demi-portee' });
-  }
-  const seeds = cands.map(() => seedFrom(rand));
-  let best = null, fallback = null;
-  for (let i = 0; i < cands.length; i++) {
-    const k = cands[i];
-    const fk = releaseFrom(from, k.loft);
-    const view = felt(perceived, k.loft, rough);
-    const srand = mulberry32(seeds[i]);
-    let donnee;
+  const lob = (fallback = false) => {
+    const out = finish({ x: C.circle.x, y: 8 }, AI.lofts.demi, 'point', `${player.name} points a demi-portée`, 0, false, { event: 'spotPoint', style: 'demi-portee' }, fallback);
+    out.why = { code: 'takePoint' };
+    out.family = 'pointJack';
+    return out;
+  };
+  const planned = plan(sit, cfgOf());
+  if (!planned.cands.length) return lob(); // no jack to aim at: just lob towards the middle of the lane
+
+  // The donnée a candidate aims at: short of the jack so the roll carries to it (refined), or just short of a target boule
+  const donneeFor = (k, view, fk, srand) => {
     if (k.intent === 'shoot') {
       const dx = k.target.x - from.x, dy = k.target.y - from.y, d = Math.hypot(dx, dy) || 1;
-      donnee = { x: k.target.x - dx / d * k.shortBy, y: k.target.y - dy / d * k.shortBy };
-    } else {
-      donnee = pointDonnee(world, 'boule', fk, k.target, k.loft, view, srand);
-      if (!donnee) continue;
+      return { x: k.target.x - dx / d * k.shortBy, y: k.target.y - dy / d * k.shortBy };
     }
+    return pointDonnee(world, 'boule', fk, k.target, k.loft, view, srand);
+  };
+  const finishCand = (k, donnee, score, isFallback, why, extra) => {
+    const out = finish(donnee, k.loft, k.intent, makeLabel(player, k), score, k.intent === 'shoot', labelKeyFor(k), isFallback);
+    out.info.target = k.target; out.info.tag = k.tag; out.info.cands = planned.cands.length;
+    out.family = k.family;
+    out.why = why;
+    out.reason = why;
+    Object.assign(out, extra);
+    return out;
+  };
+
+  // A tactical error (12.7): with probability eps the AI drops its principles and plays the other kind of throw
+  if (rand() < sit.diff.eps) {
+    const loose = plan(sit, cfgOf(), { loose: true }).cands.filter((c) => c.family !== 'shootJack');
+    const normal = planned.cands[0].intent;
+    let pool = loose.filter((c) => c.intent !== normal);
+    if (!pool.length) pool = loose.length ? loose : planned.cands;
+    const w = pool.map((c) => Math.exp(Math.max(-4, Math.min(2, c.a))));
+    let r = rand() * w.reduce((x, y) => x + y, 0), pick = pool[pool.length - 1];
+    for (let i = 0; i < pool.length; i++) { r -= w[i]; if (r <= 0) { pick = pool[i]; break; } }
+    const srand = mulberry32(seedFrom(rand));
+    const fk = releaseFrom(from, pick.loft);
+    const view = felt(perceived, pick.loft, rough);
+    const d = donneeFor(pick, view, fk, srand) || { x: pick.target.x, y: pick.target.y - 0.5 };
+    const out = finishCand(pick, clampDonnee(d), 0, false, { code: 'mistake' }, { mistake: true });
+    out.info.sit = { BA: sit.BA };
+    return out;
+  }
+
+  // Successive halving (12.6): every candidate gets a few sims, the best get the rest of the budget
+  const lambda = sit.lambda;
+  const n1 = Math.min(AI.firstSims, nSims);
+  const states = [];
+  let fallback = null;
+  const runSims = (st, n) => {
+    for (let s = 0; s < n; s++) {
+      const w = world.clone(st.view, mulberry32(seedFrom(st.srand)));
+      const tp = throwThrough({ from: st.fk, donnee: st.donnee, loft: st.k.loft, skill, terrain: st.view, rand: st.srand, energyFrac: st.energyFrac });
+      const b = launch(createBody('boule', { team, owner: player.id }), tp, st.fk);
+      // a shot's target, to count how often the sims move it (D16: don't shoot when a hit is unlikely)
+      const victim = st.k.intent === 'shoot'
+        ? w.bodies.find((x) => x.kind === (st.k.tag === 'jack' ? 'jack' : 'boule') && !x.dead && Math.hypot(x.x - st.k.target.x, x.y - st.k.target.y) < 0.02)
+        : null;
+      const vx = victim ? victim.x : 0, vy = victim ? victim.y : 0;
+      w.add(b);
+      simulate(w, AI.maxSimSeconds);
+      if (victim && (victim.dead || Math.hypot(victim.x - vx, victim.y - vy) > AI.hitMove)) st.hits++;
+      const v = evalEnd(w.bodies, sit);
+      st.vs.push(v);
+    }
+  };
+  const stat = (st) => {
+    const n = st.vs.length;
+    let sum = 0, sum2 = 0;
+    for (const v of st.vs) { sum += v; sum2 += v * v; }
+    const mean = sum / n, sd = Math.sqrt(Math.max(0, sum2 / n - mean * mean));
+    return { mean, sd, se: sd / Math.sqrt(n), n };
+  };
+  const scoreOf = (st) => { const m = stat(st); return m.mean - lambda * m.sd + st.k.prior; };
+
+  for (const k of planned.cands) {
+    if (states.length && clock.over()) break;
+    const fk = releaseFrom(from, k.loft);
+    const view = felt(perceived, k.loft, rough);
+    const srand = mulberry32(seedFrom(rand));
+    let donnee = donneeFor(k, view, fk, srand);
+    if (!donnee) continue;
     donnee = clampDonnee(donnee);
     // candidates beyond the throw budget are dropped (the first one is kept, pulled in, in case nothing fits)
     const fit = fitToBudget({ from: fk, landing: donnee, loft: k.loft, skill, terrain: view });
@@ -277,39 +289,61 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
       if (!fallback) fallback = { k, donnee: fit.landing, score: -9 };
       continue;
     }
-    const energyFrac = fit.energyFrac;
-    let sum = 0, sum2 = 0, hits = 0;
-    for (let s = 0; s < nSims; s++) {
-      const w = world.clone(view, mulberry32(seedFrom(srand)));
-      const tp = throwThrough({ from: fk, donnee, loft: k.loft, skill, terrain: view, rand: srand, energyFrac });
-      const b = launch(createBody('boule', { team, owner: player.id }), tp, fk);
-      // a shot's target, to count how often the sims move it (D16: don't shoot when a hit is unlikely)
-      const victim = k.intent === 'shoot'
-        ? w.bodies.find((x) => x.kind === (k.tag === 'jack' ? 'jack' : 'boule') && !x.dead && Math.hypot(x.x - k.target.x, x.y - k.target.y) < 0.02)
-        : null;
-      const vx = victim ? victim.x : 0, vy = victim ? victim.y : 0;
-      w.add(b);
-      simulate(w, AI.maxSimSeconds);
-      if (victim && (victim.dead || Math.hypot(victim.x - vx, victim.y - vy) > AI.hitMove)) hits++;
-      const v = evaluate(w, team, handT, handO, deadBefore);
-      sum += v; sum2 += v * v;
-    }
-    const hitP = hits / nSims;
-    if (k.intent === 'shoot' && hitP < AI.minHit) continue; // a shot the sims say will miss is not worth taking
-    const mean = sum / nSims;
-    const sd = Math.sqrt(Math.max(0, sum2 / nSims - mean * mean));
-    const pref = (AI.stylePref[player.id] || {})[k.style] || 0;
-    const score = mean - AI.riskAversion * sd + (k.intent === 'shoot' ? (AI.shootBonus[player.role] || 0) * Math.min(1, hitP / AI.hitFull) : 0) +
-      pref + (srand() - 0.5) * AI.styleNoise;
-    if (!best || score > best.score) best = { k, donnee, score };
-    yield;
+    const st = { k, donnee, fk, view, srand, energyFrac: fit.energyFrac, vs: [], hits: 0 };
+    runSims(st, n1);
+    // early cut: a shot whose first sims never move the target
+    if (k.intent === 'shoot' && st.hits === 0) continue;
+    states.push(st);
+    clock.pause(); yield; clock.resume();
   }
-  const isFallback = !best;
-  if (!best) best = fallback;
-  if (!best) return finish({ x: C.circle.x, y: 8 }, AI.lofts.demi, 'point', `${player.name} points a demi-portée`, 0, false, { event: 'spotPoint', style: 'demi-portee' }, true);
-  const { k, donnee } = best;
-  const out = finish(donnee, k.loft, k.intent, makeLabel(player, k), best.score, k.intent === 'shoot', labelKeyFor(k), isFallback);
-  out.info.target = k.target; out.info.tag = k.tag; out.info.cands = cands.length;
+  // early cut: a pointing candidate whose sims are all worse than the best candidate's worst
+  if (states.length > 1) {
+    const top = states.reduce((a, b) => (scoreOf(b) > scoreOf(a) ? b : a));
+    const floor = Math.min(...top.vs);
+    for (let i = states.length - 1; i >= 0; i--) {
+      const st = states[i];
+      if (st !== top && st.k.intent === 'point' && Math.max(...st.vs) < floor) states.splice(i, 1);
+    }
+  }
+  let finalists = states;
+  if (states.length) {
+    const ranked = states.slice().sort((a, b) => scoreOf(b) - scoreOf(a));
+    const bestStat = stat(ranked[0]);
+    const bestScore = scoreOf(ranked[0]);
+    finalists = ranked.filter((st, i) => i < AI.keepTop || scoreOf(st) >= bestScore - 2 * Math.max(bestStat.se, stat(st).se));
+    for (const st of finalists) {
+      if (nSims > st.vs.length) {
+        if (clock.over()) break;
+        runSims(st, nSims - st.vs.length);
+        clock.pause(); yield; clock.resume();
+      }
+    }
+  }
+  const minHit = (st) => (st.k.tag === 'jack' ? AI.minHitJack : AI.minHit);
+  const ok = (st) => st.k.intent !== 'shoot' || st.hits / st.vs.length >= minHit(st);
+  const scored = finalists.filter(ok).map((st) => ({ st, score: scoreOf(st) + (st.srand() - 0.5) * AI.noise * sit.diff.noiseMul }));
+  scored.sort((a, b) => b.score - a.score);
+  if (!scored.length) {
+    // no finalist is good enough: take the best candidate that is, among everything simulated, else the fallback
+    const rest = states.filter(ok).map((st) => ({ st, score: scoreOf(st) })).sort((a, b) => b.score - a.score);
+    if (rest.length) scored.push(...rest);
+  }
+  if (!scored.length) {
+    if (!fallback) return lob(true);
+    const out = finishCand(fallback.k, fallback.donnee, fallback.score, true, { code: 'takePoint' }, {});
+    return out;
+  }
+  const win = scored[0], run = scored.find((s) => s.st.k.family !== scored[0].st.k.family) || scored[1];
+  const why = explain(win.st.k, run ? run.st.k : null, sit);
+  const other = scored.find((s) => s.st.k.intent !== win.st.k.intent);
+  const alt = other ? { intent: other.st.k.intent, family: other.st.k.family, gap: win.score - other.score } : null;
+  const out = finishCand(win.st.k, win.st.donnee, win.score, false, why, { alt });
+  Object.defineProperty(out.info, 'ms', { value: clock.ms(), enumerable: false }); // compute time; hidden so equal decisions compare equal
+  out.info.sims = states.reduce((n, st) => n + st.vs.length, 0);
+  out.info.finalists = finalists.length;
+  // per-candidate table for ?debug&ailog and the scenario tools
+  out.info.table = states.map((st) => { const m = stat(st); return { family: st.k.family, style: st.k.style, prior: st.k.prior, mean: m.mean, sd: m.sd, n: m.n, hits: st.hits, final: finalists.includes(st) }; });
+  out.info.hitRate = win.st.k.intent === 'shoot' ? win.st.hits / win.st.vs.length : null;
   return out;
 }
 

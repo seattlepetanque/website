@@ -5,7 +5,9 @@ import { mulberry32, gauss } from '../../assets/js/petanque/rng.js';
 import { createBody, launch, createWorld, simulate } from '../../assets/js/petanque/physics.js';
 import { createMatch, jackValid } from '../../assets/js/petanque/rules.js';
 import { LOFT_MIN, LOFT_MAX, styleForLoft, SKILL, energyFor } from '../../assets/js/petanque/donnee.js';
-import { chooseThrow, chooseThrowAsync, chooseJackThrow, chooseJackPlacement } from '../../assets/js/petanque/ai.js';
+import { AI, chooseThrow, chooseThrowAsync, chooseJackThrow, chooseJackPlacement } from '../../assets/js/petanque/ai.js';
+
+AI.timeGuard = false; // the wall-clock guard would make the determinism checks load-dependent (it is exercised in tactics.test.js)
 
 // Flat packed terrain, no stones
 function flat() {
@@ -81,7 +83,7 @@ test('chooseThrow does not modify the world', () => {
 test('a medium decision takes under 100 ms', () => {
   const s = setup({ boules: [{ x: 2.2, y: 8.6, team: 0 }, { x: 1.7, y: 8.4, team: 1 }] });
   const args = { world: s.world, match: s.match, player: odette(s.match), difficulty: 'medium', rand: mulberry32(9) };
-  chooseThrow(args); // builds the roll-out tables
+  for (let i = 0; i < 6; i++) chooseThrow({ ...args, difficulty: i % 2 ? 'hard' : 'medium', rand: mulberry32(100 + i) }); // builds the roll-out tables (one per style and release height)
   const t0 = performance.now();
   chooseThrow({ ...args, rand: mulberry32(10) });
   const ms = performance.now() - t0;

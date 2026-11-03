@@ -8,7 +8,7 @@ import {
   createMatch, defaultPlayers, apply, nextTeam, playersWithBoules, holdingTeam, jackValid, jackFault,
 } from './rules.js';
 import { createHud } from './hud.js';
-import { chooseThrowAsync, chooseJackThrow, chooseJackPlacement } from './ai.js';
+import { chooseThrowAsync, chooseJackThrow, chooseJackPlacement, whoThrows } from './ai.js';
 import { createTossInput } from './toss.js';
 import {
   SKILL, scaledSkill, coneFor, coneEnvelope, executeThrow, solveLaunch, predictRoll, styleForLoft, releaseFrom, snapAim, fitToBudget,
@@ -794,7 +794,9 @@ function boot() {
       tail = ` (lands at ${dist(choice.donnee).toFixed(1)} m, should roll to about ${dist(end).toFixed(1)} m).`;
     } else if (choice.donnee) tail = ` (lands at ${dist(choice.donnee).toFixed(1)} m).`;
     const facts = (choice.label || `${player.name} picks ${player.id === 'odette' ? 'her' : 'his'} spot`) + tail;
-    const quip = talk.say(player.id, key.event, { target });
+    // the tactical reason (D13) first, then the generic line for the event
+    const why = choice.why;
+    const quip = (why && why.code !== 'mistake' && talk.say(player.id, 'why.' + why.code, { target, ...why })) || talk.say(player.id, key.event, { target });
     return quip ? `${facts} ${quip}` : facts;
   }
 
@@ -843,22 +845,26 @@ function boot() {
   async function suggest(pierre) {
     const mine = ++thinkToken;
     const t = token;
-    let choice;
+    let choice, who;
     try {
-      choice = await chooseThrowAsync({ world, match, player: pierre, difficulty, rand: aiRand, from: aiBase(pierre) });
+      // who should throw (analytic, each with their own cone), then what that player should do: Pierre's blended advice
+      const avail = playersWithBoules(match, pierre.team);
+      who = whoThrows({ match, bodies: world.bodies, team: pierre.team, difficulty, players: avail }).player || pierre;
+      choice = await chooseThrowAsync({ world, match, player: who, difficulty, rand: aiRand, from: aiBase(pierre), advice: true });
     } catch (err) { return; }
     if (mine !== thinkToken || t !== token) return;
-    pierreChoice = { id: pierre.id, choice };
     const j = jackBody();
     const foes = world.bodies.filter((b) => b.kind === 'boule' && !b.dead && b.team === 1 && j);
     foes.sort((a, b) => Math.hypot(a.x - j.x, a.y - j.y) - Math.hypot(b.x - j.x, b.y - j.y));
-    const mineHold = j && holdingTeam(match.jack, match.boules) === 0;
-    let event = 'suggestYou', target = 'the jack', fact = '';
-    if (choice.intent === 'shoot') {
-      event = 'suggestShoot';
-      if (foes.length) { target = `${ownerName(foes[0])} boule`; fact = ` (${target} is ${gapText(foes[0], j)} from the jack.)`; }
-    } else if (choice.intent === 'point' && !mineHold) event = 'suggestPoint';
-    hud.setSuggestion(`${talk.say('pierre', event, { target })}${fact}`);
+    const shoot = choice.intent === 'shoot';
+    const target = shoot && foes.length ? `${ownerName(foes[0])} boule` : 'the jack';
+    const fact = shoot && foes.length ? ` (${target} is ${gapText(foes[0], j)} from the jack.)` : '';
+    const code = choice.why && choice.why.code !== 'mistake' ? choice.why.code : 'takePoint';
+    const reason = talk.say('pierre', 'suggest.' + code, { target, ...choice.why });
+    const pierreLeft = playersWithBoules(match, pierre.team).some((p) => p.id === pierre.id);
+    const kind = who.isHuman ? (shoot ? 'youShoot' : pierreLeft && pierre.boulesLeft > 0 ? 'youPoint' : 'youPointAlone') : who.id === pierre.id && playersWithBoules(match, pierre.team).length === 1 ? 'only' : shoot ? 'iShoot' : 'iPoint';
+    const whoLine = talk.say('pierre', 'who.' + kind);
+    hud.setSuggestion(`${whoLine} ${reason}${fact}`.trim());
     if (pickHuman !== null && pickHuman !== 'chooser') beginTurn('you'); // debug: go straight to the human throw
   }
 
@@ -876,8 +882,8 @@ function boot() {
       if (pierre) suggest(pierre);
       return;
     }
-    // AI side: whoever holds more boules goes first, the first listed on ties
-    const pl = avail.slice().sort((a, b) => b.boulesLeft - a.boulesLeft)[0];
+    // AI side: the better-placed player throws (tactics.whoThrows; on a tie the one with more boules)
+    const pl = avail.length > 1 ? whoThrows({ match, bodies: world.bodies, team, difficulty, players: avail }).player : avail[0];
     beginTurn(pl.id);
   }
 

@@ -316,11 +316,32 @@ export function coneEnvelope({ from = C.throwFrom, landing, loft, cone, terrain 
   };
 }
 
-// Noiseless sim on the perceived terrain; returns the thrown body's path (every ~1/30 s) until it settles
+// --- Roughness allowance (D16 for the AI, D19 for the roll guide) -----------------------------
+// The perceived terrain has no micro-roughness (the ground jitter), which slows a low throw's roll: on real gravel a
+// 14 degree roulette rests 1 to 3 m short of where the smooth model says (D16: perceived 9.0 m vs real 6.3 m).
+// A planner (the AI, or the human's roll guide) therefore assumes extra rolling resistance for low throws.
+// Calibrated with tests/petanque/measure-throws.js: planned rest vs target over AI-vs-AI mènes (mean shortfall
+// 1.1 m roulette / 0.75 m demi before, about 0.1 m after). Full effect at 14 degrees, fading to nothing by 45.
+export const ROUGH_K = 1.0;
+export const ROUGH_LOFT_FULL = 14 * DEG, ROUGH_LOFT_NONE = 45 * DEG;
+export function roughness(loft, k = ROUGH_K) {
+  return 1 + k * Math.max(0, Math.min(1, (ROUGH_LOFT_NONE - loft) / (ROUGH_LOFT_NONE - ROUGH_LOFT_FULL)));
+}
+// `view` with its rolling resistance scaled by roughness(loft). Pass the perceived terrain; `rough` is false when
+// there is no unseen roughness (a stub terrain's view is the terrain itself).
+export function feltTerrain(view, loft, rough = true, k = ROUGH_K) {
+  const f = rough ? roughness(loft, k) : 1;
+  if (f === 1) return view;
+  return { ...view, sample(x, y) { const s = view.sample(x, y); return { ...s, friction: s.friction * f }; }, perceived() { return this; } };
+}
+
+// Noiseless sim on the perceived terrain (with the low-loft roughness allowance, D19); returns the thrown body's
+// path (every ~1/30 s) until it settles
 export function predictRoll({ world, terrain, throwParams, from = C.throwFrom, kind = 'boule', rand, maxSeconds = 12 }) {
   let seed = 12345; // fixed local rng so the guide never flickers
   const r = rand || (() => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; });
-  const w = world.clone(terrain.perceived(), r);
+  const view = terrain.perceived();
+  const w = world.clone(feltTerrain(view, throwParams.loft, view !== terrain), r);
   const b = launch(createBody(kind, { team: -1 }), throwParams, from);
   w.add(b);
   b.state = 'airborne';

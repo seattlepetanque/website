@@ -53,9 +53,58 @@ export function specFor(id) {
 // Events: spotPoint, spotShoot, spotJack (as the AI picks its spot), jackPlace (as it places your invalid jack), good (takes or extends the point), great
 // (biberon), carreau, miss, dead (dead boule), oppScores (an opponent just took the point), ownScores (your
 // side took it), meneWon, meneLost, gameWon, gameLost, suggestPoint, suggestShoot, suggestYou (Pierre).
+// Tactical reasons (tactics.js explain): `why.<code>` lines for the AI's spot text and `suggest.<code>` for Pierre's
+// advice, with `who.<kind>` naming who should throw. Templates: {target} 'the jack' or 'your boule', {n}, {gap}.
 // Templates: {target} 'the jack' or 'your boule'.
 export const LINES = {
   marcel: {
+    why: {
+      'takePoint': [
+        'Doucement. I take the point.', 'A gentle one, and the point is mine.',
+      ],
+      'holdPoint': [
+        'A little more, to be safe.', 'We are in front. I add a little.',
+      ],
+      'downOnBoules': [
+        'They have more boules. I do not gamble.', 'Fewer boules than them. Patience.',
+      ],
+      'upOnBoules': [
+        'We have the boules. I can afford a bold one.', 'More boules than them. Why not a shot?',
+      ],
+      'bringInBoules': [
+        'Move that one, and ours count.', 'Out goes that boule, and ours come in.',
+      ],
+      'removePoints': [
+        'Odette, take that one away.', 'They hold too much. That one must go.',
+      ],
+      'protectOwn': [
+        'Too near our own boule. I point.', 'I will not knock our own boule.',
+      ],
+      'lastBoule': [
+        'The last one. Safe.', 'Last boule. No heroics.',
+      ],
+      'closeOut': [
+        '{n} to go. A safe point wins it.', 'Nearly there. No gambling now.',
+      ],
+      'voidMene': [
+        'Pff. We shoot the cochonnet and start again.', 'This mène is lost. Out with the cochonnet.',
+      ],
+      'jackScoreTrick': [
+        'They have none left. Cochonnet out, and mine are points.', 'No boules for them. The cochonnet goes, mine count.',
+      ],
+      'blockFront': [
+        'I put one in front, as a door.', 'A door in front of the jack.',
+      ],
+      'safetyBehind': [
+        'Behind the jack, in case she shoots it.', 'Behind, for safety.',
+      ],
+      'coverJack': [
+        'Behind the jack, in case she shoots it.', 'The jack is near the line. I cover it.',
+      ],
+      'noReply': [
+        'They have none left. Points, points.', 'Nobody answers. I add points.',
+      ],
+    },
     spotPoint: [
       'Doucement, doucement. Like this.', 'I have pointed here since 1974.', 'A little roll, and the gravel does the rest.',
       'Patience, mes amis.', 'The terrain tells me where to go.', 'No hurry. The jack is not going anywhere.',
@@ -115,6 +164,53 @@ export const LINES = {
     ],
   },
   odette: {
+    why: {
+      'takePoint': [
+        'The point should be ours. Observe.', 'A measured throw to take the point.',
+      ],
+      'holdPoint': [
+        'We lead. I extend it, carefully.', 'Hold the point. Elementary.',
+      ],
+      'downOnBoules': [
+        'They hold more boules. I shall not gamble.', 'Outnumbered. Precision, not risk.',
+      ],
+      'upOnBoules': [
+        'We outnumber them. A shot is affordable.', 'More boules than they. Let us be bold.',
+      ],
+      'bringInBoules': [
+        'Remove that one and ours count.', 'One shot, and two of ours score.',
+      ],
+      'removePoints': [
+        'They hold {n}. A lesson is in order.', 'That boule is worth several points. It goes.',
+      ],
+      'protectOwn': [
+        'Too close to our own boule. I point.', "One does not knock one's own boule.",
+      ],
+      'lastBoule': [
+        'The last boule. Safe, if you please.', 'Last one. No theatrics.',
+      ],
+      'closeOut': [
+        'Only {n} to win. No gambling.', 'Nearly won. Safety first.',
+      ],
+      'voidMene': [
+        'Down {n}. The cochonnet goes, and we begin again.', 'A void mène is better than this.',
+      ],
+      'jackScoreTrick': [
+        'They have none left. The cochonnet goes; mine score.', 'Remove the cochonnet, and my boules are points.',
+      ],
+      'blockFront': [
+        'A boule in front, to stop the roller.', 'A door, in front of the jack.',
+      ],
+      'safetyBehind': [
+        'Behind the jack, in case it is shot.', 'A safety behind.',
+      ],
+      'coverJack': [
+        'The jack is near the line. I cover it from behind.', 'Behind the jack, near the line.',
+      ],
+      'noReply': [
+        'They have none left. Points, then.', 'No reply possible. I add points.',
+      ],
+    },
     spotPoint: [
       'I shall place it precisely.', 'A measured throw. As it should be.', 'Observe the technique.',
       'Elementary, really.', 'It is all in the wrist.',
@@ -174,6 +270,120 @@ export const LINES = {
     ],
   },
   pierre: {
+    why: {
+      'takePoint': [
+        'Easy. I take the point!', 'Right next to the jack, you will see.',
+      ],
+      'holdPoint': [
+        'We are in front. A little more!', 'Keep it, add more. Allez!',
+      ],
+      'downOnBoules': [
+        'They have more boules. OK, I point. Boring.', 'Fewer boules than them. Careful, careful.',
+      ],
+      'upOnBoules': [
+        'We have the boules. Time to shoot!', 'More boules! Bam, let us go for it.',
+      ],
+      'bringInBoules': [
+        'Knock that one out and ours come in!', 'One shot, two boules scoring. Allez!',
+      ],
+      'removePoints': [
+        'They hold {n}. I will blast the first one!', 'That is a lot of points. It is going.',
+      ],
+      'protectOwn': [
+        'Too close to ours. I will point.', 'Not touching our own boule. Probably.',
+      ],
+      'lastBoule': [
+        'Last boule. Safe, for once.', 'The last one. No fireworks.',
+      ],
+      'closeOut': [
+        'Only {n} to win. Careful now!', 'Almost there. A safe one.',
+      ],
+      'voidMene': [
+        'We are losing {n}. Bye-bye, cochonnet!', 'Shoot the jack and void it. Genius.',
+      ],
+      'jackScoreTrick': [
+        'They are out of boules. Cochonnet out, ours score!', 'No boules for them. Bam, the jack!',
+      ],
+      'blockFront': [
+        'A door in front. They will not roll past!', 'One in front, stop their roller.',
+      ],
+      'safetyBehind': [
+        'Behind the jack, just in case.', 'A safety behind.',
+      ],
+      'coverJack': [
+        'The jack is near the line. Cover it!', 'Behind the jack, it is near the line.',
+      ],
+      'noReply': [
+        'They are out. Points, points, points!', 'Nobody can answer. Add points.',
+      ],
+    },
+    suggest: {
+      'takePoint': [
+        'Their boule is {gap} off the jack. Point it, you have got this.', 'Point it, {gap} is all it takes.',
+      ],
+      'holdPoint': [
+        'We are in front. Keep pointing.', 'We lead. Add one, softly.',
+      ],
+      'downOnBoules': [
+        'They have {n} more boules than us. Point, do not shoot.', 'We are short of boules. Point.',
+      ],
+      'upOnBoules': [
+        'We are up on boules, you can shoot.', 'We have the boules. Shoot if you like.',
+      ],
+      'bringInBoules': [
+        'Knock that boule out and our {n} come into the point.', 'Hit that one and ours count.',
+      ],
+      'removePoints': [
+        'They hold {n}. Shoot the first one.', 'They hold {n}. Take out the closest.',
+      ],
+      'protectOwn': [
+        'Do not shoot, you would knock our boule.', 'Our own boule is too close. Point.',
+      ],
+      'lastBoule': [
+        'Last boule, play it safe.', 'The last one. Safe.',
+      ],
+      'closeOut': [
+        'Only {n} to win, do not gamble.', 'So close. Safe point.',
+      ],
+      'voidMene': [
+        'We are losing {n}. Shoot the jack and void it.', 'Knock the jack out, we start again.',
+      ],
+      'jackScoreTrick': [
+        'They are out of boules, knock the jack out and we score ours.', 'No boules left for them. Jack out, ours count.',
+      ],
+      'blockFront': [
+        'Put one in front, stop their roller.', 'A blocker in front of the jack.',
+      ],
+      'safetyBehind': [
+        'Cover the jack from behind.', 'Behind the jack, just in case.',
+      ],
+      'coverJack': [
+        'The jack is near the line. Cover it from behind.', 'Behind the jack, it is near the line.',
+      ],
+      'noReply': [
+        'They are out. Just add points.', 'Nobody can answer. Points.',
+      ],
+    },
+    who: {
+      'youPoint': [
+        'You point, I will shoot after.', 'You point. I will be the hero afterwards.',
+      ],
+      'youPointAlone': [
+        'You point this one.', 'Your turn to point.',
+      ],
+      'youShoot': [
+        'You shoot this one.', 'Go on, you shoot.',
+      ],
+      'iShoot': [
+        'I will shoot this one.', 'Let me take this shot.',
+      ],
+      'iPoint': [
+        'Let me point this one.', 'I will point this one, then you.',
+      ],
+      'only': [
+        'Mine to throw.', 'Only my boules are left.',
+      ],
+    },
     spotPoint: [
       'Easy. Watch this one.', 'Right on the jack, you will see.', 'Allez! Like a laser.', 'I have got this.',
       'Nice and smooth. Smooth like me.',
@@ -261,7 +471,7 @@ export const LINES = {
 export function createCommentary(rand) {
   const last = new Map();
   function line(id, event, vars = {}) {
-    const pool = LINES[id] && LINES[id][event];
+    const pool = LINES[id] && event.split('.').reduce((o, k) => (o ? o[k] : undefined), LINES[id]);
     if (!pool || !pool.length) return null;
     const key = id + '/' + event;
     let i = Math.floor(rand() * pool.length) % pool.length;

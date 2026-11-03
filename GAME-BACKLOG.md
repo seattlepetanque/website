@@ -269,20 +269,21 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D05 | done | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
 | D06 | done | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
 | D07 | done | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
-| D08 | todo | sonnet | D01–D07, D09–D21 | Round 3 review |
+| D08 | todo | sonnet | D01–D07, D09–D22 | Round 3 review |
 | D09 | todo | sonnet | — | Flight camera follows every moving object, the cochonnet first when it moves fast |
 | D10 | done | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
 | D11 | todo | sonnet | D10 | Players fetch dead balls and walk the cochonnet to its spot |
 | D12 | todo | sonnet | — | Paused game: frozen, sepia, UI inert, free orbit camera |
-| D13 | in-progress | sonnet | D04, D16 | AI tactics system: design done (GAME-PLAN §12, decisions in §12.10); step 2 implement next |
+| D13 | done | sonnet | D04, D16 | AI tactics system (GAME-PLAN §12): first version built; tuning in D22 |
 | D14 | todo | sonnet | — | Placed cochonnet: legal region runs out to the strings; settle the ground under it |
 | D15 | done | sonnet | — | Surroundings: grass, nearby trees, Seattle skyline with Mount Rainier and the Space Needle |
 | D16 | done | sonnet | — | Investigate AI throws that fall far short, and why Pierre misses most shots |
 | D17 | done | haiku | — | Bright orange cochonnet; arrow only while the human aims, fading after the throw |
 | D18 | done | haiku | — | No target marking for AI throws (boules or cochonnet) |
-| D19 | in-progress | haiku | — | Roll guide over-predicts low throws (same perceived-terrain bias D16 fixed for the AI) |
+| D19 | done | haiku | — | Roll guide over-predicts low throws (same perceived-terrain bias D16 fixed for the AI) |
 | D20 | todo | haiku | D13 | Centre the "who throws" choice on screen |
 | D21 | todo | sonnet | D13 | Simpler, steadier roll guide: a gist of direction and distance, flaring with uncertainty |
+| D22 | todo | sonnet | D13 | Tune tactics: defensive when down on boules, and rebalance difficulty and teams |
 
 ### D00 Invalid jack: the other team places it (sonnet)
 Current rule (FIPJP): if the jack throw is invalid (out of bounds, closer than 6 m, further than 10 m, or within 1 m of a line), the opposing team places the jack by hand anywhere valid. The team that threw the jack still plays the first boule. Replace the current hand-over (other team throws again):
@@ -465,6 +466,22 @@ Today the roll guide traces one noiseless simulated path on the perceived terrai
 - **Stability:** the guide must change smoothly as you drag. Debounce or throttle updates (e.g. recompute when the donnée moves more than ~5 cm or loft changes more than ~1°), interpolate between results, and keep a fixed random seed per throw so it doesn't flicker.
 - **Looks:** keep the orange-dashes palette but as a soft translucent band with a dashed centre line and a faint rest ellipse, readable from the shoulder view, distinct from the cone.
 - It depends on D13, which touches `predictRoll` in `donnee.js` for D19. Tests: the band's mean rest is within ~0.3 m of the average real rest on seeded gravel for 14°, 30° and 55° throws, and a 1-pixel drag changes the drawn rest point by at most a few cm.
+
+### D13 notes
+- Built: `tactics.js` (situation model, candidate families with priors and reasons, analytic shot pruning, risk λ, evaluator and dead-jack payoff, personality and difficulty tables with 30/8/2% tactical errors, `explain`, `whoThrows`, Pierre's 50/50 advice blend); `ai.js` successive halving with a 40 ms Medium time guard, decisions return `why`/`family`/`who`/`alt`; `why.*`, `suggest.*`, `who.*` line pools; Pierre's chooser suggestion names who should throw; the AI side picks its thrower with `whoThrows`. Medium decision ≈ 24 ms (scenario courts). Tests: `tactics.test.js` (static checks and the §12.8 scenarios), harness `measure-tactics.js`. `match.test.js` now runs 2 seeds with a 40 s limit (flaky under heavy load).
+- Deviations from §12 are listed in the D13 report: boule advantage measured before the throw, HOLDER_BONUS 0.25, R3 raises the removal gain, blockers only when something is on the ground, errors never shoot the jack, scenario 7/9/12 tweaks, EPnet tuned on scenarios rather than fitted to rollouts.
+- Statistics (20 matches per row, noisy): AI team vs scripted pointer won 90% at Medium (old AI 75%), 70% Easy, 90% Hard; vs shooter 95%, vs tactician 35%; Hard v Hard 90% for Marcel & Odette (teams asymmetric). Voids 1–5%. Shot target-moved: Pierre 40%, Odette 43%, Marcel 46%.
+- **Wrong:** the AI shoots more when down on boules (~25%) than when up and holding (9–13%), the opposite of the core principle.
+
+### D19 notes
+- Roughness helper moved to donnee.js and applied in `predictRoll`: 14° roll guide error +1.69 m → −0.08 m, 30° +0.34 → −0.26 m, plombée unchanged.
+
+### D22 Tune tactics (sonnet)
+Fix and tune the first version of the tactics system (D13 notes):
+- **Down on boules → defensive:** the AI currently shoots more when down on boules than when up. Find why (e.g. boule advantage measured before the throw so even hands read zero, the removal-gain gate, the λ sign, the "up on boules" prior scaling) and fix it so shoot rate falls clearly when down on boules and rises when up, as in GAME-PLAN §12.3. Add a statistical test for the trend.
+- **Balance:** with ≥100 matches per row on a quiet machine, target AI-team win rates vs the scripted pointer of ~30–45% Easy, ~50% Medium, ~60–75% Hard (or matched to a scripted "reasonable human"), and Hard v Hard ≈ 50% (find the team asymmetry: Pierre's skill, the human seat's stand-in, or the jack team).
+- **Scenario fidelity:** make Marcel point in scenario 9 and shoot in scenario 4 per §12.8, and raise Odette's jack shot rate in scenario 9, or document why the design should change.
+- Keep `npm test` under ~15 s (move heavy Monte Carlo checks to measure scripts or reduce seeds).
 
 ### D08 Round 3 review (sonnet)
 Run `npm test`, the build check and the full-match test, take screenshots on desktop and phone, review the code for bugs, and add a "Round 3 remaining issues" list at the end of this file.
