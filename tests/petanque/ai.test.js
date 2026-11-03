@@ -3,10 +3,13 @@ import assert from 'node:assert/strict';
 import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { mulberry32, gauss } from '../../assets/js/petanque/rng.js';
 import { createBody, launch, createWorld, simulate } from '../../assets/js/petanque/physics.js';
-import { createMatch, jackValid } from '../../assets/js/petanque/rules.js';
+import { createMatch, jackValid, jackPlaceValid } from '../../assets/js/petanque/rules.js';
 import { LOFT_MIN, LOFT_MAX, styleForLoft, SKILL, energyFor } from '../../assets/js/petanque/donnee.js';
 import { AI, chooseThrow, chooseThrowAsync, chooseJackThrow, chooseJackPlacement } from '../../assets/js/petanque/ai.js';
 
+// the balance multipliers (DIFFICULTY.*.skillMul, D22) are measured in measure-tactics.js; this file checks accuracy at donnee.js's own scaling
+import { DIFFICULTY } from '../../assets/js/petanque/tactics.js';
+for (const d of Object.values(DIFFICULTY)) d.skillMul = 1;
 AI.timeGuard = false; // the wall-clock guard would make the determinism checks load-dependent (it is exercised in tactics.test.js)
 
 // Flat packed terrain, no stones
@@ -214,7 +217,7 @@ test('chooseJackPlacement always returns a valid spot and varies with personalit
       for (let i = 0; i < 12; i++) {
         const terrain = createTerrain(i + 1);
         const r = chooseJackPlacement({ match: s.match, player: byId(id), difficulty, rand: mulberry32(i), terrain });
-        assert.ok(jackValid({ x: r.x, y: r.y }), `${id} ${difficulty} ${i}: ${r.x},${r.y}`);
+        assert.ok(jackPlaceValid({ x: r.x, y: r.y }), `${id} ${difficulty} ${i}: ${r.x},${r.y}`);
         assert.ok(/places the cochonnet at \d+\.\d m/.test(r.label));
         (dists[id] ||= []).push(r.distance);
       }

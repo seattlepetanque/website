@@ -11,9 +11,14 @@ import { createWorld, createBody, launch, simulate } from '../../assets/js/petan
 import { createMatch, defaultPlayers, apply, nextTeam, playersWithBoules, boulesInHand, holdingTeam } from '../../assets/js/petanque/rules.js';
 import { SKILL, coneFor, executeThrow, releaseFrom, fitToBudget } from '../../assets/js/petanque/donnee.js';
 import { baseFor } from './measure-throws.js';
+import { readSituation, plan, DEFAULT_CFG, DIFFICULTY } from '../../assets/js/petanque/tactics.js';
 const AIM = await import(process.env.AI_MOD || '../../assets/js/petanque/ai.js');
 const { chooseThrow, chooseJackThrow, chooseJackPlacement, donneeDistFor } = AIM;
 const whoThrows = AIM.whoThrows || null;
+// tuning hooks: SKMUL=easy,medium,hard overrides the extra skill spread; EPS=easy,medium,hard overrides the tactical error rates for a run
+if (process.env.SKMUL) process.env.SKMUL.split(',').forEach((v, i) => { DIFFICULTY[['easy', 'medium', 'hard'][i]].skillMul = +v; });
+if (process.env.EPS) process.env.EPS.split(',').forEach((v, i) => { DIFFICULTY[['easy', 'medium', 'hard'][i]].eps = +v; });
+if (AIM.AI && !process.env.TIME_GUARD) AIM.AI.timeGuard = false; // the 40 ms wall-clock guard makes results load-dependent; TIME_GUARD=1 keeps it
 
 const DEG = Math.PI / 180;
 const d2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -33,8 +38,13 @@ function botThrow(kind, { world, match, player, rand, from: base, terrain }) {
     const dx = t.x - from.x, dy = t.y - from.y, dd = Math.hypot(dx, dy);
     landing = { x: t.x - dx / dd * 0.6, y: t.y - dy / dd * 0.6 };
   } else {
-    const dist = d2(jack, from), dd = donneeDistFor('boule', loft, from, dist) ?? dist, k = Math.min(dd, dist) / dist;
-    landing = { x: from.x + (jack.x - from.x) * k, y: from.y + (jack.y - from.y) * k };
+    // a reasonable human uses the roll guide: refined on the felt terrain (NAIVE_POINTER=1 keeps the old flat-table aim)
+    const refined = !process.env.NAIVE_POINTER && AIM.planPoint && AIM.planPoint({ world, from, target, loft, rand });
+    if (refined) landing = refined;
+    else {
+      const dist = d2(jack, from), dd = donneeDistFor('boule', loft, from, dist) ?? dist, k = Math.min(dd, dist) / dist;
+      landing = { x: from.x + (jack.x - from.x) * k, y: from.y + (jack.y - from.y) * k };
+    }
   }
   const fit = fitToBudget({ from, landing, loft, skill: SKILL.human, terrain });
   const cone = coneFor({ skill: SKILL.human, from, landing: fit.landing, loft, energyFrac: fit.energyFrac });
@@ -44,14 +54,17 @@ function botThrow(kind, { world, match, player, rand, from: base, terrain }) {
 
 const bucket = (sit) => {
   const ba = sit.hand.us - sit.hand.them;
-  return `${ba < 0 ? 'down' : ba > 0 ? 'up' : 'even'}/${sit.holding ? 'hold' : 'notHold'}/${sit.hand.us === 1 ? 'last' : 'more'}`;
+  return `BA${ba <= -2 ? '-2' : ba >= 2 ? '+2' : ba < 0 ? '-1' : ba > 0 ? '+1' : ' 0'}/${sit.holding ? 'hold' : 'notHold'}/${sit.hand.us === 1 ? 'last' : 'more'}`;
 };
 
 export function playMatch(seed, { diffs = ['medium', 'medium'], bot = null, target = 13, rec }) {
   const terrain = createTerrain(seed);
   const world = createWorld(terrain, mulberry32(seed ^ 0x9e3779b9));
   const rand = mulberry32(seed ^ 0x51ed270b);
-  const players = defaultPlayers().map((p) => ({ ...p, isHuman: false }));
+  // AI v AI rows: the human seat is an AI with the human's skill, scaled by the row's difficulty like the others (STANDIN=raw keeps it unscaled-as-human, the old harness)
+  const players = defaultPlayers().map((p) => ({ ...p, isHuman: false, ...(!bot && p.id === 'you' && process.env.STANDIN !== 'raw' ? { skill: process.env.SYMMETRIC ? SKILL.marcel : SKILL.human } : {}),
+    ...(!bot && p.id === 'pierre' && process.env.SYMMETRIC ? { skill: SKILL.odette } : {}) }));
+  // SYMMETRIC=1 (AI v AI rows): the human seat throws like Marcel and Pierre like Odette, so both teams are equal
   let match = createMatch({ target, players, firstJackTeam: seed % 2 });
   const out = { menes: 0, voids: 0, points: 0, throws: 0, decisionMs: [] };
   let guard = 0;
@@ -81,6 +94,13 @@ export function playMatch(seed, { diffs = ['medium', 'medium'], bot = null, targ
       const yaw = Math.atan2(jk.x - C.circle.x, jk.y - C.circle.y);
       const base = baseFor(player.id, yaw, terrain);
       const difficulty = diffs[team];
+      // shot opportunity, independent of the boule advantage: would the planner admit a shot if the hands were even?
+      let opp = false, ptsSigned = 0, dTheirs = null;
+      if (rec) {
+        const sit0 = readSituation({ match, bodies: world.bodies, player, difficulty });
+        ptsSigned = sit0.ptsSigned; dTheirs = sit0.d && sit0.d.them.slice(0, 3);
+        if (!sit0.void) opp = plan({ ...sit0, BA: 0 }, DEFAULT_CFG).cands.some((c) => c.family === 'shootBoule');
+      }
       const t0 = performance.now();
       let choice;
       if (botTeam && player.id === 'you' && bot !== 'tactician') choice = botThrow(bot, { world, match, player, rand, from: base, terrain });
@@ -98,7 +118,7 @@ export function playMatch(seed, { diffs = ['medium', 'medium'], bot = null, targ
       simulate(world, 20);
       out.throws++;
       const r = {
-        player: player.id, team, difficulty, bucket: bucket(sitInfo), intent: choice.intent, family: choice.family || choice.intent, why: choice.why ? choice.why.code : 'none',
+        player: player.id, team, difficulty, opp, ptsSigned, dTheirs, table: choice.info && choice.info.table, estHit: choice.info && choice.info.hitRate, bucket: bucket(sitInfo), intent: choice.intent, family: choice.family || choice.intent, why: choice.why ? choice.why.code : 'none',
         shootBoule: choice.intent === 'shoot' && choice.info.tag === 'boule', shootJack: choice.intent === 'shoot' && choice.info.tag === 'jack',
         hit: false, carreau: false, ownMoved: 0, jackMoved: d2(jk, { x: jx, y: jy }) > 0.15 || jk.dead, jackDead: !!jk.dead,
       };
@@ -162,14 +182,14 @@ function report(label, parts, { detail = false } = {}) {
   if (!detail) return;
   const ai = recs.filter((r) => !String(r.family).startsWith('bot'));
   // decision mix by situation bucket
-  console.log('  decision mix by situation (AI throws): bucket  n  point%  shootBoule%  shootJack%  top reasons');
+  console.log('  decision mix by situation (AI throws): bucket  n  point%  shootBoule%  shootJack%  shoot% when a shot is on (even-hands plan admits one)  top reasons');
   const buckets = [...new Set(ai.map((r) => r.bucket))].sort();
   for (const b of buckets) {
     const a = ai.filter((r) => r.bucket === b);
     const why = {};
     for (const r of a) why[r.why] = (why[r.why] || 0) + 1;
     const top = Object.entries(why).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([k, v]) => `${k} ${pct(v, a.length)}`).join(', ');
-    console.log(`    ${b.padEnd(18)} ${String(a.length).padStart(5)}  ${pct(a.filter((r) => r.intent === 'point').length, a.length).padStart(4)}  ${pct(a.filter((r) => r.shootBoule).length, a.length).padStart(4)}  ${pct(a.filter((r) => r.shootJack).length, a.length).padStart(4)}   ${top}`);
+    console.log(`    ${b.padEnd(18)} ${String(a.length).padStart(5)}  ${pct(a.filter((r) => r.intent === 'point').length, a.length).padStart(4)}  ${pct(a.filter((r) => r.shootBoule).length, a.length).padStart(4)}  ${pct(a.filter((r) => r.shootJack).length, a.length).padStart(4)}  ${pct(a.filter((r) => r.opp && r.shootBoule).length, a.filter((r) => r.opp).length).padStart(4)}/${String(a.filter((r) => r.opp).length).padStart(4)}   ${top}`);
   }
   const fam = {};
   for (const r of ai) fam[r.family] = (fam[r.family] || 0) + 1;

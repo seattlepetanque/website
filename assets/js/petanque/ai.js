@@ -6,7 +6,7 @@
 import { C } from './constants.js';
 import { mulberry32 } from './rng.js';
 import { createBody, launch, createWorld, simulate } from './physics.js';
-import { jackValid } from './rules.js';
+import { jackValid, jackPlaceValid } from './rules.js';
 import { coneFor, executeThrow, solveLaunch, styleForLoft, releaseFrom, fitToBudget, feltTerrain, roughness as roughnessOf, ROUGH_LOFT_FULL, ROUGH_LOFT_NONE } from './donnee.js';
 import { DEFAULT_CFG, DIFFICULTY, readSituation, plan, evalEnd, explain, skillOfPlayer, whoThrows } from './tactics.js';
 export { ROUGH_LOFT_FULL, ROUGH_LOFT_NONE };
@@ -144,6 +144,13 @@ function pointDonnee(world, kind, from, target, loft, perceived, rand) {
   const k = Math.min(dd, dist) / dist;
   const d0 = { x: from.x + dx * k, y: from.y + dy * k };
   return refineDonnee(world, kind, from, target, loft, d0, perceived, rand);
+}
+
+// A refined pointing donnée for `target`, as a human using the roll guide would find it (measure scripts' scripted pointer)
+export function planPoint({ world, from, target, loft, rand }) {
+  const perceived = world.terrain.perceived();
+  const view = felt(perceived, loft, perceived !== world.terrain);
+  return pointDonnee(world, 'boule', from, target, loft, view, rand);
 }
 
 // --- Decision (generator so the async variant can yield between candidates) ----------------
@@ -447,10 +454,10 @@ export function chooseJackPlacement({ match, player, difficulty = 'medium', rand
   const pad = 0.1; // keep clear of the legal edges
   let best = null;
   for (let d = C.jackMinDist + pad; d <= C.jackMaxDist - pad + 1e-9; d += 0.25) {
-    for (let dx = -1.0; dx <= 1.0 + 1e-9; dx += 0.25) {
+    for (let dx = -1.9; dx <= 1.9 + 1e-9; dx += 0.2) { // full court width (D14)
       const x = c.x + dx, y = c.y + Math.sqrt(Math.max(0, d * d - dx * dx));
       const spot = { x, y };
-      if (!jackValid(spot, geometry)) continue;
+      if (!jackPlaceValid(spot, geometry)) continue;
       const dist = Math.hypot(x - c.x, y - c.y);
       let score = -Math.abs(dist - taste.dist) * 0.5 - Math.abs(dx - taste.side) * 0.4;
       if (view) {

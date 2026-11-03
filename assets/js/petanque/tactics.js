@@ -23,7 +23,7 @@ export const DEFAULT_CFG = {
 // ---------- Profiles and difficulty (12.7) ----------
 // gate = minimum removal gain G to consider a shot (0.9 / appetite)
 export const profiles = {
-  marcel: { id: 'marcel', lambda0: 0.30, appetite: 0.5, awareness: 1.0, gate: 1.8, jackShy: 0.6, taste: { roulette: 0.22, demi: 0.06 } },
+  marcel: { id: 'marcel', lambda0: 0.30, appetite: 0.5, awareness: 1.0, gate: 1.5, jackShy: 0.6, taste: { roulette: 0.22, demi: 0.06 } },
   odette: { id: 'odette', lambda0: 0.15, appetite: 1.3, awareness: 1.0, gate: 0.7, jackShy: 0, taste: { demi: 0.02 } },
   pierre: { id: 'pierre', lambda0: 0.05, appetite: 1.6, awareness: 0.5, gate: 0.5625, jackShy: 0, taste: { demi: 0.04, tir: 0.08 } },
   advice: { id: 'advice', lambda0: 0.15, appetite: 1.0, awareness: 1.0, gate: 0.9, jackShy: 0, taste: {} }, // "You": neutral
@@ -36,12 +36,13 @@ export function adviceProfile(id = 'pierre') {
   return { id: 'advice-' + id, lambda0: mix('lambda0'), appetite, awareness: mix('awareness'), gate: 0.9 / appetite, jackShy: mix('jackShy'), taste: {} };
 }
 
+// skillMul: extra spread on top of donnee.js difficultyScale (D22 balance against the scripted pointer; belongs in difficultyScale)
 // eps: tactical error rate; pw: weight of priors, awareness and the game term; cap: candidates kept by the pruning;
 // jackGain: gain a shot at the jack must promise (Infinity: never considered)
 export const DIFFICULTY = {
-  easy: { eps: 0.30, pw: 0.3, cap: 6, jackGain: Infinity, baMul: 0.5, noiseMul: 3 },
-  medium: { eps: 0.08, pw: 0.8, cap: 8, jackGain: 1.5, baMul: 1, noiseMul: 1 },
-  hard: { eps: 0.02, pw: 1.0, cap: 10, jackGain: 0.8, baMul: 1, noiseMul: 1 },
+  easy: { skillMul: 0.85, eps: 0.30, pw: 0.3, cap: 6, jackGain: Infinity, baMul: 0.5, noiseMul: 3 },
+  medium: { skillMul: 1.4, eps: 0.08, pw: 0.8, cap: 8, jackGain: 1.5, baMul: 1, noiseMul: 1 },
+  hard: { skillMul: 2.0, eps: 0.02, pw: 1.0, cap: 10, jackGain: 0.8, baMul: 1, noiseMul: 1 },
 };
 
 // Evaluator weights (12.4); wG is scaled by the principle weight
@@ -56,8 +57,10 @@ export function profileFor(player, { advice = false } = {}) {
 
 // The skill a player throws with: the human is never scaled, AI players are scaled by difficulty
 export function skillOfPlayer(p, difficulty = 'medium') {
-  if (!p || p.isHuman || !SKILL[p.id]) return SKILL.human;
-  return scaledSkill(SKILL[p.id], difficulty);
+  if (!p || p.isHuman || !(p.skill || SKILL[p.id])) return SKILL.human;
+  // a stand-in seat (measure scripts) may carry any skill; it is scaled like an AI's
+  const sk = scaledSkill(p.skill || SKILL[p.id], difficulty), m = (DIFFICULTY[difficulty] || DIFFICULTY.medium).skillMul || 1;
+  return { lat: sk.lat * m, long: sk.long * m, loft: sk.loft * m, maxSpeed: sk.maxSpeed };
 }
 
 // ---------- Analytic cone maths ----------
@@ -374,7 +377,7 @@ export function plan(sit, cfg = DEFAULT_CFG, { loose = false } = {}) {
 
   // shootBoule
   const shots = [];
-  const gate = Math.max(0.2, prof.gate * (1 + 0.4 * Math.max(0, -BA)) - 0.2 * upW * aw);
+  const gate = Math.max(0.2, prof.gate * (1 + 0.6 * Math.max(0, -BA)) - 0.2 * upW * aw);
   for (const t of themBoules) {
     if (t.dist > 1.4) continue;
     if (t.y > C.terrainL - 1 || t.y < 2) continue;
@@ -404,16 +407,17 @@ export function plan(sit, cfg = DEFAULT_CFG, { loose = false } = {}) {
       const c = mk('shootBoule', style, 'shoot', { x: s.t.x, y: s.t.y }, { shortBy: short, tag: 'boule', targetId: s.t.id, info: s });
       const pos = [], neg = [];
       const add = (code, v) => { addPart(c, code, v); (v >= 0 ? pos : neg).push(v); };
-      if (downW) add('downOnBoules', -0.3 * downW * aw);
+      if (downW) add('downOnBoules', -0.4 * downW * aw);
       if (upW) add('upOnBoules', 0.25 * upW * aw * clamp(s.G, 0, 1)); // a free shot is only worth taking if the target is worth removing
       if (s.unlock > 0 && s.collateral === 0) add('bringInBoules', 0.3 * s.unlock * pw);
       if (s.removed >= 2) add('removePoints', 0.2 * pw);
       else if (s.removed >= 1) c.credit.removePoints = 0.4 * pw; // reason only: the closest boule of a holder goes
       if (s.collateral > 0) add('protectOwn', -0.25 * s.collateral * pw);
-      if (pushRisk(sit, s.t)) add('protectOwn', -0.4 * pw);
+      if (pushRisk(sit, s.t)) add('protectOwn', -(s.removed >= 1 ? 0.2 : 0.4) * pw); // taking out their holder is worth some jack movement
       if (sit.noReply) add('noReply', -0.5);
       // appetite stretches the pull towards a shot and softens what holds it back
-      for (const code of Object.keys(c.parts)) c.parts[code] *= c.parts[code] >= 0 ? prof.appetite : 1 / prof.appetite;
+      // (downOnBoules is a hard fact about ammunition, not a taste: appetite does not soften it)
+      for (const code of Object.keys(c.parts)) if (code !== 'downOnBoules') c.parts[code] *= c.parts[code] >= 0 ? prof.appetite : 1 / prof.appetite;
       const tot = Object.values(c.parts).reduce((x, y) => x + y, 0);
       if (Math.abs(tot) > 0.5) for (const code of Object.keys(c.parts)) c.parts[code] *= 0.5 / Math.abs(tot);
       if (taste(style === 'tirHigh' ? 'tir' : style)) c.parts.taste = taste(style === 'tirHigh' ? 'tir' : style);
@@ -435,10 +439,13 @@ export function plan(sit, cfg = DEFAULT_CFG, { loose = false } = {}) {
       const pOut = 0.45 + 0.3 * exposure;
       const A = pHit * pOut * gain - (1 - pHit * pOut) * 0.3;
       const code = sit.handAfter.us > 0 && sit.handAfter.them === 0 ? 'jackScoreTrick' : 'voidMene';
-      for (const [style, short] of [['tir', cfg.tirShort], ['tirHigh', cfg.tirHighShort]]) {
+      for (const [style, short] of [['tir', cfg.tirShort], ['tir', cfg.tirShortClose], ['tirHigh', cfg.tirHighShort]]) {
         const c = mk('shootJack', style, 'shoot', { x: J.x, y: J.y }, { shortBy: short, tag: 'jack', info: { G: gain, pHit: pHit * pOut, A } });
         c.credit[code] = 0.5;
-        if (prof.jackShy) c.parts.jackShy = -prof.jackShy * (1 - desperate);
+        // the trick is a sure score the sims undervalue (a cluster shot scatters the boules, a jack shot ends the mène); appetite stretches it
+        if (code === 'jackScoreTrick') addPart(c, 'jackScoreTrick', 0.45 * pw * prof.appetite);
+        else if (-sit.ptsSigned >= 3) addPart(c, 'voidMene', 0.3 * pw); // wiping out a mène we are losing by 3 or more
+        if (prof.jackShy) c.parts.jackShy = -prof.jackShy * (1 - 0.6 * desperate);
         if (sit.closeOut.them && sit.EPnow < -1) c.credit.closeOut = 0.3 * pw;
         if (taste('tir')) c.parts.taste = taste('tir');
         c.a = A;

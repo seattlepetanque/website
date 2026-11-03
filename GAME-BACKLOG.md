@@ -269,7 +269,7 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D05 | done | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
 | D06 | done | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
 | D07 | done | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
-| D08 | todo | sonnet | D01–D07, D09–D22 | Round 3 review |
+| D08 | in-progress | sonnet | D01–D07, D09–D22 | Round 3 review |
 | D09 | done | sonnet | — | Flight camera follows every moving object, the cochonnet first when it moves fast |
 | D10 | done | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
 | D11 | done | sonnet | D10 | Players fetch dead balls and walk the cochonnet to its spot |
@@ -283,7 +283,7 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D19 | done | haiku | — | Roll guide over-predicts low throws (same perceived-terrain bias D16 fixed for the AI) |
 | D20 | done | haiku | D13 | Centre the "who throws" choice on screen |
 | D21 | done | sonnet | D13 | Simpler, steadier roll guide: a gist of direction and distance, flaring with uncertainty |
-| D22 | in-progress | sonnet | D13 | Tune tactics: defensive when down on boules, and rebalance difficulty and teams |
+| D22 | done | sonnet | D13 | Tune tactics: defensive when down on boules, and rebalance difficulty and teams |
 
 ### D00 Invalid jack: the other team places it (sonnet)
 Current rule (FIPJP): if the jack throw is invalid (out of bounds, closer than 6 m, further than 10 m, or within 1 m of a line), the opposing team places the jack by hand anywhere valid. The team that threw the jack still plays the first boule. Replace the current hand-over (other team throws again):
@@ -469,6 +469,11 @@ The You throw / Pierre throws choice is a critical decision, but in the full-win
 ### D14 notes
 - `jackPlaceValid` / `jackPlaceFault` (6–10 m, whole jack inside the strings), `terrain.settleSpot` (stones within 0.15 m removed, 0.35 m pad flattened, reset with divots), placed jack set at rest with no drop; `chooseJackPlacement` searches the full width; the placement zone is drawn string to string with a faint fill. Committed in two parts (rules/terrain/tests first; ai.js, render.js, main.js with the shared-file commit).
 - Not done: removed stones stay drawn (meshes built once); the pad isn't shown in the ground mesh (a few mm); small skewed triangles where the fill is clipped at the strings.
+
+### D22 notes
+- The "shoots more when down" figure was mostly a measurement artefact (down-and-not-holding courts have boules worth shooting; up-and-holding ones don't), plus real bugs: appetite divided the downOnBoules penalty (Pierre and Odette barely restrained), and the gate and prior were too weak. Fixed: shoot gate +0.6 per boule down, prior −0.4 per boule down, appetite no longer weakens it. Medium, 100 matches, "shoot% when a shot is on": down 24–28%, even 29%, up 38–44% (Hard 24–30 / 42 / 45–48). Easy shows no trend by design (half-weight boule advantage + 30% errors). New seeded trend test.
+- Balance (100 matches, AI team vs a pointer that now plans with `planPoint`): Easy 38%, Medium 46%, Hard 71%, via `DIFFICULTY.*.skillMul` (0.85 / 1.4 / 2.0) in tactics.js stacked on donnee's `difficultyScale`. Follow-up: fold `skillMul` into `difficultyScale`. Hard is now looser than D16's Hard accuracy. Hard v Hard 68% for Marcel & Odette, 53% with a symmetric harness: the rest is the skill table (Pierre looser than Odette) and the human stand-in, not an AI fault.
+- Scenarios: Marcel shoots in scenario 4 (60% of seeds at Hard); Odette shoots the jack in scenario 9 (~90%); Marcel also shoots the jack in scenario 9 (it is right there), and points in a two-point variant. `npm test` ≈ 6–9 s. Also commits D14's full-width `chooseJackPlacement`.
 
 ### D11 notes
 - `fetch.js` (pure route planning around live boules, high-step over timbers, where to stand for a pick-up) with tests; character.js bend/pick-up/put-down (`playBend`), carrying, a `give` stance and waypoint walks. After a throw settles the thrower's teammate fetches each dead ball to `deadRowSlot`/`deadJackSpot`; a failed cochonnet is fetched and handed to the placer, who walks it out and sets it down (the human can skip their walk). `nextTurn` waits up to 20 s while a fetcher is in view (click or key skips). Instant mode teleports; reduced motion teleports after ~0.4 s (no fade yet). `?debug&fetch` with `&fetchat`, `&followc`, `&fetchcam`.
