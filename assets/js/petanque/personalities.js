@@ -7,7 +7,7 @@ export const PERSONALITIES = {
   you: {
     id: 'you', name: 'You', model: 'you', skill: 'human', team: 0,
     spec: {
-      height: 1.76, build: 'average', stance: 'crouch',
+      height: 1.76, build: 'average', stance: 'stand', // the human always stands to throw
       colors: { shirt: '#2fa3a0', trousers: '#23396b', skin: '#d9a37c' },
     },
     quirks: { idle: ['shift', 'lookaround'], celebrate: 'cheer', dismay: 'shrug' },
@@ -16,7 +16,7 @@ export const PERSONALITIES = {
   pierre: {
     id: 'pierre', name: 'Pierre', model: 'pierre', skill: 'pierre', team: 0,
     spec: {
-      height: 1.82, build: 'average', stance: 'stand',
+      height: 1.82, build: 'average', stance: 'stand', stances: ['crouch', 'stand'], // picked per throw (pickStance)
       colors: { shirt: '#f2c230', trousers: '#23396b', skin: '#b98258', scarf: '#d8322c' }, // yellow shirt, red neckerchief
     },
     quirks: { idle: ['bounce', 'fidget', 'practice'], celebrate: 'jump', dismay: 'head' },
@@ -34,7 +34,7 @@ export const PERSONALITIES = {
   odette: {
     id: 'odette', name: 'Odette', model: 'odette', skill: 'odette', team: 1,
     spec: {
-      height: 1.74, build: 'slim', stance: 'stand',
+      height: 1.74, build: 'slim', stance: 'stand', hand: 'left',
       colors: { shirt: '#e9e1d2', trousers: '#9c6a34', skin: '#efc6a4', hat: '#e9d9a0' },
     },
     quirks: { hat: 'sunhat', idle: ['fold', 'checkwatch', 'tilt'], celebrate: 'clap', dismay: 'sigh' },
@@ -47,6 +47,14 @@ export const CAST_IDS = ['you', 'pierre', 'marcel', 'odette'];
 export function specFor(id) {
   const p = PERSONALITIES[id];
   return { model: p.model, name: p.name, personality: id, ...p.spec, quirks: p.quirks };
+}
+
+// The stance for one throw: spec.stances (e.g. Pierre's crouch or stand) picked 50/50 from `rand`, else spec.stance.
+// Only draws from `rand` when there is a choice, so fixed-stance players leave the random stream alone.
+export function pickStance(spec, rand) {
+  const options = spec.stances && spec.stances.length ? spec.stances : [spec.stance];
+  if (options.length === 1) return options[0];
+  return options[Math.min(options.length - 1, Math.floor(rand() * options.length))];
 }
 
 // ---------- commentary pools ----------
@@ -325,19 +333,19 @@ export const LINES = {
         'We are in front. Keep pointing.', 'We lead. Add one, softly.',
       ],
       'downOnBoules': [
-        'They have {n} more boules than us. Point, do not shoot.', 'We are short of boules. Point.',
+        'They have {n} more boules than us. Point.', 'We are short of boules. Point.',
       ],
       'upOnBoules': [
         'We are up on boules, you can shoot.', 'We have the boules. Shoot if you like.',
       ],
       'bringInBoules': [
-        'Knock that boule out and our {n} come into the point.', 'Hit that one and ours count.',
+        'Knock that boule out and our {n} count.', 'Hit that one and ours count.',
       ],
       'removePoints': [
         'They hold {n}. Shoot the first one.', 'They hold {n}. Take out the closest.',
       ],
       'protectOwn': [
-        'Do not shoot, you would knock our boule.', 'Our own boule is too close. Point.',
+        'Our own boule is too close. Point.', 'Our boule is in the way. Point and keep it safe.',
       ],
       'lastBoule': [
         'Last boule, play it safe.', 'The last one. Safe.',
@@ -366,7 +374,7 @@ export const LINES = {
     },
     who: {
       'youPoint': [
-        'You point, I will shoot after.', 'You point. I will be the hero afterwards.',
+        'You point this one, I will take the next.', 'You point. I will be the hero afterwards.',
       ],
       'youPointAlone': [
         'You point this one.', 'Your turn to point.',
@@ -485,4 +493,30 @@ export function createCommentary(rand) {
     return l ? `${PERSONALITIES[id].name}: “${l}”` : '';
   }
   return { line, say };
+}
+
+// E09: Pierre's chooser suggestion is ONE line built from ONE decision: who throws plus what they do (intent).
+// Each tactical reason belongs to an action; a reason from the other action is left out, never merged in.
+export const REASON_ACTION = Object.freeze({
+  takePoint: 'point', holdPoint: 'point', downOnBoules: 'point', protectOwn: 'point', lastBoule: 'point',
+  closeOut: 'point', blockFront: 'point', safetyBehind: 'point', coverJack: 'point', noReply: 'point',
+  upOnBoules: 'shoot', bringInBoules: 'shoot', removePoints: 'shoot', voidMene: 'shoot', jackScoreTrick: 'shoot',
+});
+
+// Which who.<kind> line fits: the thrower (human or Pierre), whether they are alone, and the action
+export function whoKind({ intent, thrower, pierre, pierreHasBoules, teamSize }) {
+  const shoot = intent === 'shoot';
+  if (thrower.isHuman) return shoot ? 'youShoot' : pierreHasBoules ? 'youPoint' : 'youPointAlone';
+  if (thrower.id === pierre.id && teamSize === 1) return 'only';
+  return shoot ? 'iShoot' : 'iPoint';
+}
+
+// talk: createCommentary(). { intent: 'point'|'shoot', code: tactics reason, kind: whoKind(), vars: template vars, fact }
+// Returns 'Pierre: “<who> <reason> <fact>”' (a single quoted line, no second speaker prefix).
+export function composeSuggestion(talk, { intent, code, kind, vars = {}, fact = '' }) {
+  const who = talk.line('pierre', 'who.' + kind) || '';
+  const c = REASON_ACTION[code] === intent ? code : null; // a reason for the other action would contradict
+  const reason = (c && talk.line('pierre', 'suggest.' + c, vars)) || '';
+  const body = [who, reason, intent === 'shoot' ? fact : ''].filter(Boolean).join(' ').trim();
+  return body ? `${PERSONALITIES.pierre.name}: “${body}”` : '';
 }
