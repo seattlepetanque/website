@@ -561,7 +561,9 @@ From the user's play-testing (2026-11-02). Earlier contracts still apply. Shared
 | E14 | todo | haiku | — | Full-screen toggle as a video-player-style icon |
 | E15 | todo | sonnet | — | Game ends at 13 on the ground; leftover boules aren't played |
 | E16 | todo | sonnet | E01, E06 | Holding the boules: slow-mode pick-up and hand positions; quick-mode underarm palm-down toss |
-| E17 | todo | sonnet | E01–E16 | Round 4 review |
+| E17 | todo | sonnet | E01–E19 | Round 4 review |
+| E18 | todo | haiku | — | Choppy yellow placement-zone fill: clip it properly instead of clamping cells |
+| E19 | todo | sonnet | — | Bug: AI throws to the middle when the jack is near a string |
 
 ### E01 Quick and slow modes (sonnet)
 - **Toggle:** add a game mode setting, shown on the setup screen and switchable mid-game from an in-game control. It is remembered in localStorage (with try/catch).
@@ -629,6 +631,12 @@ The game ends as soon as a team reaches 13 counting the points currently on the 
 - **Slow mode:** at the start of a mène, players take turns quickly picking up their three boules. Each holds one in the dominant hand and two side by side in the other hand (Odette is the lefty). Hands visibly carry them between throws, and the count drops as they're thrown.
 - **Quick mode:** show the boule held with the hand upright at first. During the backswing it comes round the inside to the bottom of the hand, for an underarm, palm-down toss at release.
 - Update character.js poses (hand orientation now matters: give the hand a visible direction or a flat palm), and keep the release point accurate.
+
+### E18 Choppy placement-zone fill (haiku)
+Cause (render.js, the D14 placement zone): the faint fill is a polar grid of cells between the 6 m and 10 m arcs. Cells that cross a string are kept, with their vertices clamped onto the string, so neighbouring cells fold and overlap. With `depthTest: false` and transparency, the overlaps stack and show as darker triangles along the strings. It isn't z-fighting. The mottling in the middle is mostly the gravel texture showing through the 16% fill. Fix: build the fill as a clean annular sector without clamping, and clip it exactly at the strings and the far line. Either use three.js clipping planes (`material.clippingPlanes` with `renderer.localClippingEnabled`) or clip each cell polygon to the court rectangle (Sutherland–Hodgman), so no triangles overlap. Keep it draped on the terrain and drawn behind people (E05). Check by screenshot.
+
+### E19 Bug: AI throws to the middle when the jack is near a string (sonnet)
+Cause: `tactics.js` (around line 463) drops every candidate whose target is within 0.3 m of a side string (`target.x > 0.3 && target.x < W - 0.3`) or past 14.5 m. With the jack touching a string, all the "point at the jack" and nearby-offset candidates are discarded and the AI falls back to what's left (the middle). D14's string-to-string placement makes this common. Fix: keep candidates whose target is inside the strings, clamping the target a boule radius inside the line rather than dropping it. Make sure the roll and refine logic copes with targets near a line (risk of going out is part of the evaluation, not a filter), and that tirs at boules near the line are allowed. Tests: with the jack 2 cm inside each side string (and near the far line), the AI's pointing plan aims at the jack and its predicted rest is within ~0.5 m of it.
 
 ### E17 Round 4 review (sonnet)
 Tests, build, integration across modes (quick vs slow on every flow), screenshots, bug review, and a "Round 4 remaining issues" list.
