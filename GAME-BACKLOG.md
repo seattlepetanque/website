@@ -270,20 +270,20 @@ From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: 
 | D06 | done | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
 | D07 | done | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
 | D08 | todo | sonnet | D01–D07, D09–D22 | Round 3 review |
-| D09 | todo | sonnet | — | Flight camera follows every moving object, the cochonnet first when it moves fast |
+| D09 | done | sonnet | — | Flight camera follows every moving object, the cochonnet first when it moves fast |
 | D10 | done | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
-| D11 | todo | sonnet | D10 | Players fetch dead balls and walk the cochonnet to its spot |
-| D12 | todo | sonnet | — | Paused game: frozen, sepia, UI inert, free orbit camera |
+| D11 | done | sonnet | D10 | Players fetch dead balls and walk the cochonnet to its spot |
+| D12 | done | sonnet | — | Paused game: frozen, sepia, UI inert, free orbit camera |
 | D13 | done | sonnet | D04, D16 | AI tactics system (GAME-PLAN §12): first version built; tuning in D22 |
-| D14 | todo | sonnet | — | Placed cochonnet: legal region runs out to the strings; settle the ground under it |
+| D14 | done | sonnet | — | Placed cochonnet: legal region runs out to the strings; settle the ground under it |
 | D15 | done | sonnet | — | Surroundings: grass, nearby trees, Seattle skyline with Mount Rainier and the Space Needle |
 | D16 | done | sonnet | — | Investigate AI throws that fall far short, and why Pierre misses most shots |
 | D17 | done | haiku | — | Bright orange cochonnet; arrow only while the human aims, fading after the throw |
 | D18 | done | haiku | — | No target marking for AI throws (boules or cochonnet) |
 | D19 | done | haiku | — | Roll guide over-predicts low throws (same perceived-terrain bias D16 fixed for the AI) |
-| D20 | todo | haiku | D13 | Centre the "who throws" choice on screen |
-| D21 | todo | sonnet | D13 | Simpler, steadier roll guide: a gist of direction and distance, flaring with uncertainty |
-| D22 | todo | sonnet | D13 | Tune tactics: defensive when down on boules, and rebalance difficulty and teams |
+| D20 | done | haiku | D13 | Centre the "who throws" choice on screen |
+| D21 | done | sonnet | D13 | Simpler, steadier roll guide: a gist of direction and distance, flaring with uncertainty |
+| D22 | in-progress | sonnet | D13 | Tune tactics: defensive when down on boules, and rebalance difficulty and teams |
 
 ### D00 Invalid jack: the other team places it (sonnet)
 Current rule (FIPJP): if the jack throw is invalid (out of bounds, closer than 6 m, further than 10 m, or within 1 m of a line), the opposing team places the jack by hand anywhere valid. The team that threw the jack still plays the first boule. Replace the current hand-over (other team throws again):
@@ -458,6 +458,28 @@ The human's roll guide (`predictRoll` in donnee.js) simulates on `terrain.percei
 
 ### D20 Centre the "who throws" choice (haiku)
 The You throw / Pierre throws choice is a critical decision, but in the full-window layout it sits in the bottom-left strip. Make it a centred card over the court: a short heading ("Your team to play"), Pierre's suggestion (D13 adds who he thinks should throw), and two large buttons, "You throw" and "Pierre throws", with the suggested one visually marked (e.g. a "Pierre suggests" tag), not pre-selected. Focus moves to the card for keyboard users; Enter or Space activates and arrow keys switch. Keep the court visible behind it with a translucent backdrop. It must fit on phones in portrait and landscape. The card closes as soon as a choice is made. Remove the old strip version. Depends on D13 because D13 changes the suggestion text in `hud.js`.
+
+### D20 notes
+- Centred card over the court (heading, Pierre's suggestion, two large buttons, "Pierre suggests" tag on his pick, focus and arrow keys); old strip removed. The one-line `hud.setSuggestion(text, who.id)` call in main.js was committed with a later main.js change. Keyboard use not tested in a browser.
+
+### D12 notes
+- `clock.js` pause clock (frame-driven; sleep/later/cancelAll) with tests; main.js routes waits, AI min-think, reactions and the AI decision through it; pausing freezes physics, characters and rolling audio, sets `inert` on the game widgets, turns the toss off, draws the scene in sepia (render-target shader pass) and the widgets via CSS, and lets drags orbit and zoom around a ground point, easing back on resume. `?debug&paused`. Committed in two parts: standalone files first, main.js/render.js wiring with the next shared-file commit.
+- Not checked: the paused bar staying in colour, the inert widgets, the orbit and zoom, and reduced motion. The agent ran the 19:22 stash/pop; all agents were told to check their edits.
+
+### D14 notes
+- `jackPlaceValid` / `jackPlaceFault` (6–10 m, whole jack inside the strings), `terrain.settleSpot` (stones within 0.15 m removed, 0.35 m pad flattened, reset with divots), placed jack set at rest with no drop; `chooseJackPlacement` searches the full width; the placement zone is drawn string to string with a faint fill. Committed in two parts (rules/terrain/tests first; ai.js, render.js, main.js with the shared-file commit).
+- Not done: removed stones stay drawn (meshes built once); the pad isn't shown in the ground mesh (a few mm); small skewed triangles where the fill is clipped at the strings.
+
+### D11 notes
+- `fetch.js` (pure route planning around live boules, high-step over timbers, where to stand for a pick-up) with tests; character.js bend/pick-up/put-down (`playBend`), carrying, a `give` stance and waypoint walks. After a throw settles the thrower's teammate fetches each dead ball to `deadRowSlot`/`deadJackSpot`; a failed cochonnet is fetched and handed to the placer, who walks it out and sets it down (the human can skip their walk). `nextTurn` waits up to 20 s while a fetcher is in view (click or key skips). Instant mode teleports; reduced motion teleports after ~0.4 s (no fade yet). `?debug&fetch` with `&fetchat`, `&followc`, `&fetchcam`.
+- Not seen in a live game: the full real-time flow (only the scripted scene). The placer's put-down with the tiny jack in the fist wasn't visible; the camera only loosely follows a dead-ball fetch and stays wide during the jack hand-over; mesh figures untried.
+
+### D09 notes
+- `camera.js` `frameMoving`: airborne bodies, rolling > 0.05 m/s and the thrown body until it settles (ghosts at weight 0.3 while rolling); a jack faster than 2 m/s or heading out within 1 s becomes primary with look-ahead (≤ 3 m); distance ≤ 16 m, yaw ±0.6, pitch 0.12–0.95, ≥ 0.4 m above ground; capped springs, slow zoom-in. The flight mode uses it when given `bodies`. `?debug&jackshot` (`&jspeed&jloft&jyaw`) and `&freezeat=T`. Committed in two parts.
+- Not seen in a browser: the jack becoming primary after a strike (verified in a Node sim and tests; the browser shot's seed differs). The thrower's body fills early flight frames from behind the circle (unchanged from before).
+
+### D21 notes
+- `predictRollBand`: 17 noiseless sims across the cone, smoothed to 25 points, half-widths and a rest ellipse, cached; recomputed only after 5 cm / 1° and eased over 150 ms; drawn as nested translucent orange strips with a dashed centre and a faint rest ellipse. Mean rest within ~0.1 m of real at 14°/30°/55°. Committed in two parts like D12.
 
 ### D21 Simpler, steadier roll guide (sonnet)
 Today the roll guide traces one noiseless simulated path on the perceived terrain. Every pebble and slope bends it, so it draws a complex wiggly shape that jumps with every pixel of drag. Replace it with a gist:

@@ -2,20 +2,22 @@
 import { C } from './constants.js';
 import { mulberry32 } from './rng.js';
 import { createTerrain } from './terrain.js';
-import { createWorld, createBody, launch, placeDeadBall } from './physics.js';
+import { createWorld, createBody, launch, placeDeadBall, deadRowSlot, deadJackSpot } from './physics.js';
 import { createRenderer } from './render.js';
 import {
-  createMatch, defaultPlayers, apply, nextTeam, playersWithBoules, holdingTeam, jackValid, jackFault,
+  createMatch, defaultPlayers, apply, nextTeam, playersWithBoules, holdingTeam, jackValid, jackFault, jackPlaceValid, jackPlaceFault,
 } from './rules.js';
 import { createHud } from './hud.js';
 import { chooseThrowAsync, chooseJackThrow, chooseJackPlacement, whoThrows } from './ai.js';
 import { createTossInput } from './toss.js';
 import {
-  SKILL, scaledSkill, coneFor, coneEnvelope, executeThrow, solveLaunch, predictRoll, styleForLoft, releaseFrom, snapAim, fitToBudget,
+  SKILL, scaledSkill, coneFor, coneEnvelope, executeThrow, solveLaunch, predictRoll, predictRollBand, styleForLoft, releaseFrom, snapAim, fitToBudget,
 } from './donnee.js';
 import { createAudio } from './audio.js';
+import { createClock } from './clock.js';
 import * as THREE from '../vendor/three.module.js';
-import { createCharacter, releaseOffset } from './character.js';
+import { createCharacter, releaseOffset, bendReach } from './character.js';
+import { planPath, standPoint } from './fetch.js';
 import { attachModels } from './models.js';
 import { PERSONALITIES, CAST_IDS, specFor, createCommentary } from './personalities.js';
 
@@ -179,7 +181,35 @@ function boot() {
   let rollGuide = false;
   let rollOverride = store(ROLL_KEY); // '1' | '0' | null
   let lastToss = null; // last onPreview payload, to redraw when the roll guide toggles
-  const roll = { key: '', path: null, t: 0, timer: 0 };
+  // D21: the roll band is recomputed only when the donnée moves 5 cm or the loft 1 degree, and the drawn band eases
+  // toward each new result over 150 ms so it never jumps
+  const roll = { target: null, from: null, t0: 0, landing: null, loft: 0, kind: '', raf: 0 };
+  const ROLL_MOVE = 0.05, ROLL_LOFT = Math.PI / 180, ROLL_BLEND = 150;
+  const lerpN = (a, b, u) => a + (b - a) * u;
+  function rollShown(now) {
+    const { from, target } = roll;
+    const u = !from || reduceMotion() ? 1 : Math.min(1, (now - roll.t0) / ROLL_BLEND);
+    if (u >= 1) { roll.from = null; return target; }
+    const e = u * u * (3 - 2 * u);
+    const pt = (a, b) => ({ x: lerpN(a.x, b.x, e), y: lerpN(a.y, b.y, e), z: lerpN(a.z, b.z, e) });
+    return {
+      center: target.center.map((q, i) => pt(from.center[i] || q, q)),
+      halfWidths: target.halfWidths.map((h, i) => lerpN(from.halfWidths[i] ?? h, h, e)),
+      restMean: pt(from.restMean, target.restMean),
+      restCov: { xx: lerpN(from.restCov.xx, target.restCov.xx, e), xy: lerpN(from.restCov.xy, target.restCov.xy, e), yy: lerpN(from.restCov.yy, target.restCov.yy, e) },
+      blending: true,
+    };
+  }
+  function rollBandFor(from, landing, loft, cone, kind) {
+    const now = performance.now(), k = kind === 'jack' ? 'jack' : 'boule';
+    if (!roll.target || roll.kind !== k || Math.hypot(landing.x - roll.landing.x, landing.y - roll.landing.y) > ROLL_MOVE || Math.abs(loft - roll.loft) > ROLL_LOFT) {
+      const shown = roll.target ? rollShown(now) : null;
+      roll.target = predictRollBand({ world, terrain, from, landing, loft, cone, kind: k });
+      roll.from = shown && shown.center.length === roll.target.center.length ? shown : null;
+      roll.t0 = now; roll.landing = landing; roll.loft = loft; roll.kind = k;
+    }
+    return rollShown(now);
+  }
   const demo = debug && params.has('demo');
 
   function applyRollDefault() {
@@ -206,34 +236,21 @@ function boot() {
     }
     const cone = coneFor({ skill: SKILL.human, from, landing, loft: t.loft, energyFrac });
     const env = coneEnvelope({ from, landing, loft: t.loft, cone, terrain: world.terrain });
-    let path = null;
+    let band = null;
+    cancelAnimationFrame(roll.raf); roll.raf = 0;
     // the jack rolls on a metre or more after landing, so its guide is on unless the player turned guides off
     if (rollGuide || (kind === 'jack' && rollOverride !== '0')) {
-      const key = `${landing.x.toFixed(3)},${landing.y.toFixed(3)},${t.loft.toFixed(4)},${kind}`;
-      const now = performance.now();
-      if (key === roll.key) path = roll.path;
-      else if (now - roll.t >= 100) {
-        const throwParams = solveLaunch({ from, landing, loft: t.loft, terrain: world.terrain });
-        const full = predictRoll({ world, terrain, throwParams, from, kind: kind === 'jack' ? 'jack' : 'boule' });
-        // the guide starts where the boule first touches down, not in the air
-        const hit = full.findIndex((q) => q.z <= terrain.sample(q.x, q.y).h + 0.1);
-        path = hit < 0 ? [] : full.slice(hit);
-        roll.key = key; roll.path = path; roll.t = now;
-        clearTimeout(roll.timer); roll.timer = 0;
-      } else { // throttled: keep the last guide and refresh shortly
-        path = roll.path;
-        clearTimeout(roll.timer);
-        roll.timer = setTimeout(() => { roll.timer = 0; if (lastToss === t) showToss(t, kind); }, 110);
-      }
+      band = rollBandFor(from, landing, t.loft, cone, kind);
+      if (band.blending) roll.raf = requestAnimationFrame(() => { roll.raf = 0; if (lastToss === t) showToss(t, kind); });
     }
     renderer.setThrowPreview({
-      ...env, roll: path, donnee: clamped ? landing : t.donnee, style: styleForLoft(t.loft, !!t.snappedTo),
+      ...env, roll: band, donnee: clamped ? landing : t.donnee, style: styleForLoft(t.loft, !!t.snappedTo),
       snapped: !!t.snappedTo && !clamped, legalZone: kind === 'jack',
     });
   }
   function clearToss() {
     lastToss = null; reachShown = false;
-    clearTimeout(roll.timer); roll.timer = 0;
+    cancelAnimationFrame(roll.raf); roll.raf = 0; roll.target = roll.from = null;
     renderer.setThrowPreview(null);
     renderer.showJackZone(!!pending && pending.kind === 'jack' && !flying);
   }
@@ -253,11 +270,11 @@ function boot() {
     onThrow: (t) => humanToss(t),
     onCancel: () => clearToss(),
     // placing an invalid jack by hand: marker preview, valid click places, invalid click gives a hint
-    placeValid: (p) => !!match && jackValid(p, match.geometry),
+    placeValid: (p) => !!match && jackPlaceValid(p, match.geometry),
     placeStart: { x: 2, y: 9 },
     onPlacePreview: (m) => renderer.setPlaceMarker(m ? { x: m.point.x, y: m.point.y, valid: m.valid } : null),
-    onPlace: (p) => placeJack(p),
-    onPlaceInvalid: (p) => say2(`Not there: ${faultText(jackFault(p, match && match.geometry))} Pick a green spot 6 to 10 m out, 1 m inside the lines.`),
+    onPlace: (p) => placeJackWalk(p),
+    onPlaceInvalid: (p) => say2(`Not there: ${faultText(jackPlaceFault(p, match && match.geometry))} Pick a green spot 6 to 10 m out, inside the lines.`),
     targets: () => world.bodies.filter((b) => !b.dead).map((b) => ({ id: b.id, x: b.x, y: b.y, r: b.r })),
   });
 
@@ -306,7 +323,7 @@ function boot() {
     store(ROLL_KEY, rollOverride);
     rollBtn.classList.toggle('is-on', rollGuide);
     rollBtn.setAttribute('aria-pressed', String(rollGuide));
-    roll.key = '';
+    roll.target = roll.from = null;
     if (lastToss && pending) showToss(lastToss, pending.kind);
   });
   rollBtn.setAttribute('aria-pressed', 'false');
@@ -345,13 +362,18 @@ function boot() {
     inCircle = null;
     for (const id of cast.keys()) {
       const ch = cast.get(id);
-      ch.setHolding(false); ch.setStance('watch'); shadow(id, false);
+      ch.setHolding(false); ch.setCarrying(false); ch.setStance('watch'); shadow(id, false);
       placeAt(id, HOME[id].x, HOME[id].y, homeYaw(id));
     }
   }
   // The thrower walks into the circle (the previous one walks out); returns a promise for the arrival
   function enterCircle(id, yaw, snap) {
     const ch = cast.get(id), c = C.circle;
+    if (fetchJob && fetchJob.id === id) { // D11: a fetcher called to throw drops what they carry; far from the circle they are simply there
+      const p = ch.root.position;
+      if (Math.hypot(p.x - c.x, p.y - c.y) > 5) snap = true;
+      cancelFetch(); ch.setCarrying(false);
+    }
     if (inCircle && inCircle !== id) walkOut(inCircle);
     inCircle = id;
     shadow(id, true);
@@ -400,6 +422,10 @@ function boot() {
   // Per frame: animate, keep feet on the terrain, everyone watches the boule in flight (or the jack)
   function tickCast(dt) {
     if (frozen) return;
+    if (fetchScript) { // ?debug&fetch: fixed steps; with &fetchat the animation is pumped synchronously (headless frames are too few)
+      if (fetchFreezeAt && !fetchPump) return;
+      dt = 1 / 60; clock.tick(1000 / 60);
+    }
     const thrower = inCircle && cast.get(inCircle);
     shoulderCam.wide = thrower && thrower.isMesh ? 1.45 : 1;
     const w = flying && !flying.dead ? flying : jackBody();
@@ -409,6 +435,8 @@ function boot() {
       if (w) ch.lookAt(w.x, w.y, Math.max(0.3, w.z)); else ch.lookAt(null);
       ch.update(dt);
     }
+    followCarry();
+    if (fetchFreezeAt && (fetchClockT += dt) >= fetchFreezeAt) frozen = true; // ?debug&fetch&fetchat=seconds
   }
 
   // After a throw settles: celebrate a point gained, dismay for a poor throw, otherwise watch
@@ -503,12 +531,14 @@ function boot() {
   }
 
   const jackBody = () => world.bodies.find((b) => b.kind === 'jack');
+  const clock = createClock(); // D12: every game delay goes through this, so a pause freezes them all
   const later = (fn, ms) => {
     const t = token;
-    setTimeout(() => { if (t === token) fn(); }, instant ? 0 : ms);
+    clock.later(() => { if (t === token) fn(); }, instant ? 0 : ms);
   };
 
   function clearWorld() {
+    cancelFetch(); carry = null; jackFetch = null; placing = null; // D11
     world.bodies.length = 0;
     world.events.length = 0;
     terrain.resetDivots();
@@ -535,7 +565,7 @@ function boot() {
     launch(body, p, from || C.throwFrom);
     flying = body;
     clearToss();
-    renderer.setCamera('flight', { body });
+    renderer.setCamera('flight', { body, bodies: world.bodies });
     enableControls(false);
     if (instant) {
       let guard = 0;
@@ -726,7 +756,7 @@ function boot() {
     console.log('[ailog]', JSON.stringify({ ...rec, restY: +(was.y - C.circle.y).toFixed(2), dead: was.dead, toJackM: j && !was.dead ? +Math.hypot(was.x - j.x, was.y - j.y).toFixed(2) : null }));
   }
 
-  const sleep = (ms) => new Promise((res) => setTimeout(res, instant ? 0 : ms));
+  const sleep = (ms) => clock.sleep(instant ? 0 : ms);
 
   async function aiJack(player, lead) {
     refreshHud({ team: player.team, playerId: player.id, text: `${player.name} throws the jack` });
@@ -816,6 +846,7 @@ function boot() {
         cached || chooseThrowAsync({ world, match, player, difficulty, rand: aiRand, from: base }),
         sleep(AI_MIN_THINK),
       ]);
+      await clock.resumed(); // D12: a decision that finishes while paused waits for Resume
     } catch (err) {
       console.error(err);
       if (t !== token) return;
@@ -864,12 +895,266 @@ function boot() {
     const pierreLeft = playersWithBoules(match, pierre.team).some((p) => p.id === pierre.id);
     const kind = who.isHuman ? (shoot ? 'youShoot' : pierreLeft && pierre.boulesLeft > 0 ? 'youPoint' : 'youPointAlone') : who.id === pierre.id && playersWithBoules(match, pierre.team).length === 1 ? 'only' : shoot ? 'iShoot' : 'iPoint';
     const whoLine = talk.say('pierre', 'who.' + kind);
-    hud.setSuggestion(`${whoLine} ${reason}${fact}`.trim());
+    hud.setSuggestion(`${whoLine} ${reason}${fact}`.trim(), who.id);
     if (pickHuman !== null && pickHuman !== 'chooser') beginTurn('you'); // debug: go straight to the human throw
+  }
+
+  // ---- D11: players fetch dead balls and place the cochonnet (GAME-PLAN section 10) ----
+  // A teammate of the thrower walks out to each dead ball at rest, bends, picks it up (the body then follows the hand)
+  // and sets it down in the row beyond the far string; a failed cochonnet is carried to the player who places it,
+  // handed over, and walked out to the chosen spot. Instant mode and reduced motion teleport. Fetching never holds
+  // up a turn for long: the next turn waits (briefly) only while the fetcher is still in view.
+  const FETCH_SPEED = 1.35; // m/s
+  const FETCH_VIEW_WAIT = 20000; // ms: longest a new turn waits for a fetcher to leave the court's view (a click or key ends it)
+  let fetchJob = null; // { id, tok, cancelled } the character at work
+  let carry = null; // { body, id }: a ball riding in somebody's hand
+  let jackFetch = null; // { placer, ready } while a failed cochonnet is brought to its placer
+  let lastThrowerId = null;
+  let placing = null; // { id, spot, skipped, start } while the cochonnet is walked out
+  let fetchFreezeAt = 0; // ?debug&fetch&fetchat=seconds
+  let fetchClockT = 0;
+  let fetchPump = false;
+  const fetchScript = debug && params.has('fetch');
+  const fetchAlive = (job) => !job.cancelled && job.tok === token && (!!match || !!job.scripted);
+  const reachOf = (ch) => { const r = bendReach(ch.height); return { x: r[0], y: r[1] }; };
+  const rowCount = () => world.bodies.filter((b) => b.slotted && b.kind === 'boule').length;
+  const deadTargets = () => world.bodies.filter((b) => b.dead && !b.slotted && b.state === 'resting' && !(carry && carry.body === b));
+  const courtView = (p) => p.x > -0.3 && p.x < C.terrainW + 0.3 && p.y > -0.3 && p.y < C.terrainL + 0.8; // roughly what the shoulder camera sees
+  const obstaclesExcept = (body) => world.bodies.filter((b) => !b.dead && b !== body).map((b) => ({ x: b.x, y: b.y }));
+  // a ball in the hand hangs just under the fist (the hand is 5 cm across), never below the ground
+  const handBall = (id, r) => { const h = cast.get(id).handWorldPosition(); return { x: h.x, y: h.y, z: Math.max(h.z - 0.03 - r, terrain.sample(h.x, h.y).h + r) }; };
+  function followCarry() { // the carried ball rides in the hand (called after the characters are posed)
+    if (!carry) return;
+    const b = carry.body, h = handBall(carry.id, b.r);
+    b.x = h.x; b.y = h.y; b.z = h.z; b.vx = b.vy = b.vz = 0; b.state = 'resting';
+  }
+  function dropDead(body, slot) { // set a dead ball down in the row (or its jack spot): out of play, nobody's
+    const s = slot || (body.kind === 'jack' ? deadJackSpot() : deadRowSlot(rowCount()));
+    placeDeadBall(world, body, s.x, s.y);
+    body.slotted = true;
+    if (carry && carry.body === body) carry = null;
+  }
+  function dropAllDead() { for (const b of deadTargets()) dropDead(b); }
+  async function walkVia(job, id, to) { // walk a planned route (around live boules, over the timbers) to { x, y, yaw }
+    const ch = cast.get(id), p = ch.root.position;
+    const path = planPath({ x: p.x, y: p.y }, to, job.obstacles ? job.obstacles() : obstaclesExcept(null));
+    const last = path[path.length - 1] || { lift: 1 };
+    await ch.walkTo({ x: to.x, y: to.y, yaw: to.yaw, speed: FETCH_SPEED, lift: last.lift, via: path.slice(0, -1) });
+  }
+  // The head camera follows the fetch loosely: it frames the fetcher and where they are going (never over an aim)
+  function fetchCam(job, ids, spots = []) {
+    if (pending || flying || job.jack || !fetchAlive(job) || (job.scripted && !params.has('fetchcam'))) return;
+    const pts = ids.map((i) => cast.get(i).root.position).concat(spots).map((q) => ({ x: q.x, y: q.y }));
+    const cx = pts.reduce((s, q) => s + q.x, 0) / pts.length, cy = pts.reduce((s, q) => s + q.y, 0) / pts.length;
+    renderer.setCamera('head', { target: { x: cx, y: cy }, points: pts });
+  }
+  async function pickUp(job, body) {
+    const ch = cast.get(job.id), p = ch.root.position;
+    fetchCam(job, [job.id], [body]);
+    const sp = standPoint(body, p, reachOf(ch));
+    shadow(job.id, true);
+    job.obstacles = () => obstaclesExcept(body);
+    await walkVia(job, job.id, sp);
+    if (!fetchAlive(job)) return false;
+    await ch.playBend({ kind: 'pickup', onAct: () => { carry = { body, id: job.id }; ch.setCarrying(true); followCarry(); } });
+    return fetchAlive(job);
+  }
+  async function putDown(job, body, slot, then) { // stand at the slot, bend, let go
+    const ch = cast.get(job.id), r = reachOf(ch);
+    fetchCam(job, [job.id], [slot]);
+    await walkVia(job, job.id, { x: slot.x - r.x, y: slot.y - r.y, yaw: 0 });
+    if (!fetchAlive(job)) return false;
+    await ch.playBend({ kind: 'putdown', onAct: () => { ch.setCarrying(false); if (then) then(); else dropDead(body, slot); } });
+    return fetchAlive(job);
+  }
+  async function walkHome(job) { // out of the court by the nearer side (so they leave the shoulder view), then round to the waiting spot
+    const id = job.id, ch = cast.get(id), home = HOME[id], p = ch.root.position;
+    if (inCircle === id) return;
+    let at = { x: p.x, y: p.y };
+    if (courtView(at)) {
+      const side = { x: at.x < C.terrainW / 2 ? -1.1 : C.terrainW + 1.1, y: Math.max(at.y, 1.5) };
+      await walkVia(job, id, side);
+      if (!fetchAlive(job) || inCircle === id) return;
+    }
+    await walkVia(job, id, { x: home.x, y: home.y, yaw: homeYaw(id) });
+    if (fetchAlive(job) && inCircle !== id) { ch.setStance('watch'); shadow(id, false); }
+  }
+  function sendHome(id) { // teleport to the waiting spot (a skipped walk, a preempted fetch)
+    if (inCircle === id) return;
+    const ch = cast.get(id);
+    ch.setCarrying(false); ch.setHolding(false); ch.setStance('watch'); shadow(id, false);
+    placeAt(id, HOME[id].x, HOME[id].y, homeYaw(id));
+  }
+  // Stop whoever is fetching: a ball in hand goes straight to its place. Returns the job that was running.
+  function cancelFetch() {
+    const job = fetchJob;
+    if (!job) return null;
+    job.cancelled = true; fetchJob = null;
+    if (carry && carry.id === job.id) { if (carry.body.dead) dropDead(carry.body); else carry = null; }
+    cast.get(job.id).setCarrying(false);
+    return job;
+  }
+  async function runFetch(id, scripted) {
+    const job = { id, tok: token, cancelled: false, scripted };
+    fetchJob = job;
+    const ch = cast.get(id);
+    try {
+      await sleep(900); // let the reactions play first
+      for (let n = 0; n < 12 && fetchAlive(job); n++) {
+        const p = ch.root.position;
+        const body = deadTargets().sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[0];
+        if (!body) break;
+        if (!(await pickUp(job, body))) break;
+        const slot = body.kind === 'jack' ? deadJackSpot() : deadRowSlot(rowCount());
+        if (!(await putDown(job, body, slot))) break;
+      }
+      if (fetchAlive(job)) await walkHome(job);
+    } catch (err) { console.error(err); }
+    if (fetchJob === job) fetchJob = null;
+  }
+  // After a throw settles: queue the fetching (the thrower's teammate, or the thrower if alone)
+  function kickFetch(was) {
+    if (!deadTargets().length) return;
+    if (instant) { dropAllDead(); return; }
+    if (snapMove()) { later(dropAllDead, 400); return; } // reduced motion: no walking
+    if (fetchJob || jackFetch) return;
+    const thrower = match && match.players.find((p) => p.id === (was && was.owner));
+    const mates = thrower ? match.players.filter((p) => p.team === thrower.team && p.id !== thrower.id && p.id !== inCircle) : [];
+    const fetcher = mates[0] || thrower;
+    if (fetcher) runFetch(fetcher.id);
+  }
+  // True while a new turn should hold on for a moment because the fetcher is still walking about in view. Gives up
+  // after FETCH_VIEW_WAIT: the fetcher is then sent home (a ball in hand is put in its place).
+  let gateSince = 0;
+  function fetchGate() {
+    const job = fetchJob;
+    if (!job || job.scripted || snapMove() || !courtView(cast.get(job.id).root.position)) { gateSince = 0; return false; }
+    if (!gateSince) gateSince = clock.now();
+    if (clock.now() - gateSince < FETCH_VIEW_WAIT) return true;
+    gateSince = 0;
+    cancelFetch(); sendHome(job.id);
+    return false;
+  }
+  // A cochonnet that failed: the thrower's teammate fetches it and hands it to the placer (D00 rules)
+  function startJackFetch(placing_, aiPlaces) {
+    if (snapMove() || jackFetch || !match) return;
+    const jack = jackBody();
+    if (!jack) return;
+    const thrower = match.players.find((p) => p.id === lastThrowerId);
+    const team = thrower ? thrower.team : match.jackTeam;
+    const mates = match.players.filter((p) => p.team === team && p !== thrower);
+    const fetcher = mates[0] || thrower || match.players.find((p) => p.team === team);
+    let placer;
+    if (aiPlaces) {
+      const cands = match.players.filter((p) => p.team === placing_ && !p.isHuman);
+      placer = cands[Math.floor(chance() * cands.length)] || cands[0];
+    } else placer = match.players.find((p) => p.team === placing_ && p.isHuman);
+    if (!fetcher || !placer) return;
+    cancelFetch();
+    const job = { id: fetcher.id, tok: token, cancelled: false, jack: true };
+    fetchJob = job;
+    jackFetch = { placer, tok: token, ready: null };
+    jackFetch.ready = (async () => {
+      try {
+        await sleep(700);
+        if (!fetchAlive(job) || !(await pickUp(job, jack))) return;
+        await handOver(job, placer.id);
+        if (fetchAlive(job)) await walkHome(job);
+      } catch (err) { console.error(err); }
+      if (fetchJob === job) fetchJob = null;
+    })();
+    // `ready` resolves once the jack is in the placer's hand (the fetcher's walk home carries on)
+    const handed = new Promise((res) => { jackFetch.handed = res; });
+    jackFetch.ready = Promise.race([handed, jackFetch.ready]);
+  }
+  async function handOver(job, toId) { // meet the receiver face to face and pass the ball hand to hand
+    const a = cast.get(job.id), b = cast.get(toId), pa = a.root.position, pb = b.root.position;
+    const dx = pa.x - pb.x, dy = pa.y - pb.y, l = Math.hypot(dx, dy) || 1;
+    const meet = { x: pb.x + dx / l * 0.95, y: pb.y + dy / l * 0.95 };
+    const yawA = Math.atan2(pb.x - meet.x, pb.y - meet.y);
+    b.walkTo({ x: pb.x, y: pb.y, yaw: yawA + Math.PI, speed: FETCH_SPEED });
+    await walkVia(job, job.id, { ...meet, yaw: yawA });
+    if (!fetchAlive(job)) return;
+    a.setStance('give'); b.setStance('give');
+    await sleep(600);
+    if (!fetchAlive(job) || !carry) return;
+    carry = { body: carry.body, id: toId };
+    a.setCarrying(false); b.setCarrying(true);
+    await sleep(500);
+    a.setStance('watch'); b.setStance('watch');
+    if (jackFetch && jackFetch.handed) jackFetch.handed();
+  }
+  // The placer walks the cochonnet out to `spot`, crouches, sets it down (placeJack at the release), walks back.
+  async function placeWalk(id, spot) {
+    const ch = cast.get(id), tok = token;
+    const job = { id, tok, cancelled: false, scripted: !match };
+    const mine = placing && placing.id === id && placing.spot === spot ? placing : (placing = { id, spot, skipped: false, start: performance.now() });
+    const gone = () => mine.skipped || tok !== token;
+    if (!carry || carry.id !== id) { // the jack must be in this placer's hand; if not (a cancelled fetch) it appears there
+      const j = jackBody();
+      if (j) carry = { body: j, id };
+      ch.setCarrying(true);
+    }
+    shadow(id, true);
+    const p = ch.root.position;
+    const r = reachOf(ch);
+    const sp = standPoint(spot, { x: p.x, y: p.y }, r);
+    job.obstacles = () => obstaclesExcept(null).filter((o) => Math.hypot(o.x - spot.x, o.y - spot.y) > 0.01);
+    await walkVia(job, id, sp);
+    if (gone()) return;
+    await ch.playBend({
+      kind: 'putdown',
+      onAct: () => {
+        const held = carry && carry.body;
+        carry = null; jackFetch = null; ch.setCarrying(false);
+        if (match) placeJack(spot);
+        else if (held) { held.dead = held.ghost = false; held.x = spot.x; held.y = spot.y; held.z = terrain.sample(spot.x, spot.y).h + held.r; } // ?debug&fetch
+      },
+    });
+    if (gone()) return;
+    if (placing === mine) placing = null;
+    walkHome(job).catch((err) => console.error(err));
+  }
+  // The human may skip the walk with a click or key: straight to the end state (jack down, everyone back)
+  function skipPlacement() {
+    const p = placing;
+    if (!p || p.skipped) return;
+    p.skipped = true; placing = null;
+    const fetcher = fetchJob && fetchJob.id;
+    cancelFetch();
+    carry = null; jackFetch = null;
+    if (match && match.phase === 'jackPlace') placeJack(p.spot);
+    sendHome(p.id);
+    if (fetcher) sendHome(fetcher);
+    jackFetch = null;
+  }
+  function skipFetchWait() { // a click or key while the next turn waits on a fetcher: they finish at once
+    const job = cancelFetch();
+    if (job) sendHome(job.id);
+    gateSince = 0;
+  }
+  const skipEvent = (ev) => {
+    if (placing && ev.timeStamp - placing.start > 350) skipPlacement();
+    else if (!placing && gateSince && fetchJob) skipFetchWait();
+  };
+  window.addEventListener('keydown', skipEvent);
+  canvas.addEventListener('pointerdown', skipEvent);
+  // Human click on a green spot: the human's character carries the jack out (after the fetch hands it over)
+  function placeJackWalk(spot) {
+    if (!match || match.phase !== 'jackPlace') return;
+    if (snapMove() || !jackFetch) { placeJack(spot); return; }
+    toss.setPhase('off');
+    renderer.setPlaceMarker({ x: spot.x, y: spot.y, valid: true });
+    const id = jackFetch.placer.id, fetch = jackFetch;
+    placing = { id, spot, skipped: false, start: performance.now() };
+    const mine = placing;
+    say2('You carry the cochonnet out (click or press a key to skip the walk).');
+    fetch.ready.then(() => { if (!mine.skipped && token === fetch.tok) return placeWalk(id, spot); }).catch((err) => console.error(err));
   }
 
   // Pick who throws next, from rules.nextTeam()
   function nextTurn() {
+    if (fetchGate()) { later(nextTurn, 300); return; } // D11: wait while a fetcher is still in view
     const team = nextTeam(match);
     if (team === null) return; // mène already ended
     const avail = playersWithBoules(match, team);
@@ -984,14 +1269,15 @@ function boot() {
   }
   // Wide view over the whole 6 to 10 m zone, with the legal-zone arcs
   function placeView() {
-    renderer.showJackZone(true);
-    renderer.setCamera('head', { target: { x: 2, y: 8.6 }, points: [{ x: 0.6, y: 5.8 }, { x: 3.4, y: 11.6 }] });
+    renderer.showJackZone(true, 'place');
+    renderer.setCamera('head', { target: { x: 2, y: 8.6 }, points: [{ x: 0.1, y: 5.8 }, { x: 3.9, y: 11.6 }] });
   }
   function jackFailed(jack, note) {
     const placing = match.placingTeam;
     const why = faultText(jackFault(jack, match.geometry));
     const aiPlaces = placing === 1 || !match.players.some((p) => p.team === placing && p.isHuman);
     pending = null;
+    startJackFetch(placing, aiPlaces); // D11: the thrower's teammate fetches the cochonnet and hands it to the placer
     refreshHud({ team: placing, playerId: null, text: aiPlaces ? 'Placing the jack' : 'Place the jack' });
     placeView();
     if (aiPlaces) {
@@ -1000,6 +1286,7 @@ function boot() {
     } else {
       say2(`${why} You and Pierre place the cochonnet: click a green spot between the yellow arcs (6 to 10 m out).`);
       later(() => humanPlaceJack(), 1300);
+      if (debug && params.has('px')) humanPlaceMarker(); // screenshots: show the marker at once
     }
   }
   function removeJack() {
@@ -1009,21 +1296,22 @@ function boot() {
   }
   function humanPlaceJack() {
     if (!match || match.phase !== 'jackPlace') return;
-    removeJack();
+    if (!jackFetch) removeJack(); // D11: still out there until the fetcher picks it up
     enableControls(false);
     placeView();
     toss.setPhase('place');
-    if (debug && params.has('px')) { // ?debug&px=2&py=8.5: show the marker without a pointer
-      const p = { x: +params.get('px'), y: +params.get('py') || 8.5 };
-      renderer.setPlaceMarker({ ...p, valid: jackValid(p, match.geometry) });
-    }
+    if (debug && params.has('px')) humanPlaceMarker();
+  }
+  function humanPlaceMarker() { // ?debug&px=2&py=8.5: show the marker without a pointer
+    const p = { x: +params.get('px'), y: +params.get('py') || 8.5 };
+    renderer.setPlaceMarker({ ...p, valid: jackPlaceValid(p, match.geometry) });
   }
   async function aiPlaceJack(why) {
     const t = token;
     if (!match || match.phase !== 'jackPlace') return;
     const cands = match.players.filter((p) => p.team === match.placingTeam && !p.isHuman);
-    const placer = cands[Math.floor(chance() * cands.length)] || cands[0];
-    removeJack();
+    const placer = (jackFetch && jackFetch.placer) || cands[Math.floor(chance() * cands.length)] || cands[0];
+    if (!jackFetch) removeJack(); // D11: with a fetch under way the jack is still lying out there until it is picked up
     const spot = chooseJackPlacement({ match, player: placer, difficulty, rand: aiRand, terrain: world.terrain });
     const quip = talk.say(placer.id, 'jackPlace');
     say2(`${why} ${spot.label}.${quip ? ' ' + quip : ''}`);
@@ -1031,8 +1319,10 @@ function boot() {
       placeView();
       renderer.setPlaceMarker({ x: spot.x, y: spot.y, valid: true });
     }
-    await sleep(debug && params.has('jphold') ? 1e8 : 2000); // ?debug&jackplace=ai&jphold keeps the marker up for screenshots
+    const fetched = jackFetch;
+    await Promise.all([sleep(debug && params.has('jphold') ? 1e8 : 2000), fetched && fetched.ready]); // ?debug&jackplace=ai&jphold keeps the marker up for screenshots
     if (t !== token) return;
+    if (fetched && !instant && !snapMove()) { await placeWalk(placer.id, spot); return; } // D11: walk it out and set it down
     placeJack(spot);
   }
   // Apply the placement and drop the jack onto the ground; play starts once it has settled
@@ -1045,12 +1335,12 @@ function boot() {
     renderer.setPlaceMarker(null);
     renderer.showJackZone(false);
     toss.setPhase('off');
-    const h = terrain.sample(spot.x, spot.y).h;
-    const body = createBody('jack', { team: -1, x: spot.x, y: spot.y, z: h + C.jack.r + (instant ? 0 : 0.1), state: instant ? 'resting' : 'airborne' });
+    // D14: settle the ground (no stones within 15 cm, a small flat pad) and set the jack at rest exactly on the spot
+    terrain.settleSpot(spot.x, spot.y);
+    const body = createBody('jack', { team: -1, x: spot.x, y: spot.y, state: 'resting' });
     world.add(body);
     renderer.sync(world);
-    if (instant) { onDropped(true); return; }
-    dropping = { token };
+    onDropped(true);
   }
   function onDropped(fromInstant) {
     if (!fromInstant && (!dropping || dropping.token !== token)) { dropping = null; return; }
@@ -1083,6 +1373,7 @@ function boot() {
       else aimView();
       return;
     }
+    lastThrowerId = was.owner || lastThrowerId; // D11: who fetches
     const evs = throwEvents.concat(world.events);
     if (instant) markLandings(world.events);
     const snap = snapshot();
@@ -1102,6 +1393,7 @@ function boot() {
     const prevHold = holdingTeam(match.jack, match.boules);
     match = apply(match, { type: 'throwSettled', jack: snap.jack, boules: snap.boules });
     if (match.phase === 'meneEnd' || match.phase === 'gameOver') {
+      cancelFetch();
       endOfMene(note);
       return;
     }
@@ -1111,6 +1403,7 @@ function boot() {
     say2(remark ? `${note} ${remark}` : note);
     refreshHud(null);
     react(was, prevHold);
+    kickFetch(was); // D11
     later(nextTurn, instant ? 0 : 1800);
   }
 
@@ -1203,16 +1496,37 @@ function boot() {
     beginMene(false);
   }
 
+  // ---- Pause (D12): the page is showing with a game in progress. One switch freezes the game clock (every sleep and
+  // later), physics, characters, camera transitions and audio; the scene goes sepia with a free orbit camera, and the
+  // game widgets (not the page's paused bar) go sepia and inert. ?debug&paused holds off until the human's turn.
+  let pauseHold = debug && params.has('paused');
+  const isPaused = () => !pauseHold && !playing && !!match;
+  let pausedNow = false, tossPhase = 'off';
+  function syncPause() {
+    const p = isPaused();
+    if (p === pausedNow) return;
+    pausedNow = p;
+    root.classList.toggle('is-paused', p);
+    for (const n of root.querySelectorAll('.pt-board, .pt-dock, .petanque-controls, .pt-overlay')) n.inert = p;
+    if (p) { clock.pause(); tossPhase = toss.getPhase() === 'toss' ? 'aim' : toss.getPhase(); toss.setPhase('off'); } else { clock.resume(); toss.setPhase(tossPhase); }
+    audio.setPaused(p);
+    renderer.setPaused(p);
+  }
+
   // Fixed timestep loop (?debug&timerframes drives it from timers, for headless screenshots under virtual time)
   const nextFrame = debug && params.has('timerframes') ? (f) => setTimeout(() => f(performance.now()), 16) : requestAnimationFrame;
   let acc = 0, last = performance.now();
+  const freezeAt = debug ? +params.get('freezeat') || 0 : 0; // ?debug&freezeat=0.6 stops the sim at that time (camera checks)
   function frame(now) {
     const dt = Math.min((now - last) / 1000, 0.1);
     last = now;
+    if (pauseHold && (pending || now > 3500)) { pauseHold = false; if (playing) setPlaying(false); else hud.showPaused(true); }
+    syncPause();
+    clock.tick(dt * 1000);
     acc += dt;
     if (!playing && match) acc = 0; // paused: the page is showing, the game waits
     let n = 0;
-    while (acc >= C.dt && n < MAX_STEPS) {
+    while (acc >= C.dt && n < MAX_STEPS && !(freezeAt && world.t >= freezeAt)) {
       world.step(); acc -= C.dt; n++;
       if (flying && world.settled()) onSettled();
       else if (dropping && world.settled()) onDropped();
@@ -1224,10 +1538,10 @@ function boot() {
       audio.handleEvents(world.events, new Map(world.bodies.map((b) => [b.id, b])));
       world.events.length = 0;
     }
-    audio.update(world.bodies, dt); // rolling scrape loops (accepts an array)
-    tickCast(dt);
+    if (!pausedNow) audio.update(world.bodies, dt); // rolling scrape loops (accepts an array)
+    if (!pausedNow) tickCast(dt);
     renderer.sync(world);
-    renderer.render(dt);
+    renderer.render(pausedNow ? 0 : dt);
     nextFrame(frame);
   }
 
@@ -1238,7 +1552,8 @@ function boot() {
     window.__petanque = {
       world, terrain, renderer, seed, reset: toSetup, startGame,
       audio,
-      setPlaying,
+      setPlaying, clock,
+      get paused() { return pausedNow; },
       get match() { return match; },
       throw: (p) => launchBody(jackBody() && !jackBody().dead ? 'boule' : 'jack', 0, 'you', { ...readParams(), ...p }),
       throwJack: (p) => launchBody('jack', -1, null, { ...readParams(), ...p }),
@@ -1328,6 +1643,61 @@ function boot() {
     placePlayers('you');
     headView(jackBody());
     showBetween();
+  } else if (debug && params.has('jackshot')) {
+    // --- ?debug&jackshot[&jspeed=&jloft=&jyaw=&freezeat=0.6]: a boule shot hard into the jack, with the flight camera following ---
+    clearWorld();
+    hud.hideHint();
+    const put = (kind, team, x, y) => { const b = createBody(kind, { team, x, y }); b.z = b.r; world.add(b); return b; };
+    put('jack', -1, 2.1, 8);
+    put('boule', 1, 1.8, 8.2);
+    put('boule', 1, 2.6, 7.7);
+    renderer.sync(world);
+    placePlayers('you');
+    launchBody('boule', 0, 'you', { yaw: +params.get('jyaw') || 0.0143, loft: +params.get('jloft') || 0.14, speed: +params.get('jspeed') || 9, backspin: 0, sidespin: 0 });
+    if (freezeAt) { // step to the freeze time up front (headless frames are too slow to get there), moving the camera as it would
+      for (let k = 1; world.t < freezeAt; k++) { world.step(); if (k % 24 === 0) { renderer.sync(world); renderer.render(0.1); } }
+      renderer.sync(world);
+    }
+  } else if (debug && params.has('fetch')) {
+    // --- ?debug&fetch: a boule out beyond the side timber and a jack out beyond the far one. Pierre fetches the boule
+    // to the row, then the jack, which he hands to Odette; she walks it out and sets it down at (&jx, &jy), then both
+    // walk home. &fetchat=seconds freezes the animation then (frame screenshots); &dist/&az/&el/&lx/&ly give a close
+    // inspect camera ---
+    clearWorld();
+    hud.hideHint();
+    const put = (kind, team, x, y) => { const b = createBody(kind, { team, x, y }); b.z = b.r; return world.add(b); };
+    put('boule', 0, 1.9, 8.3);
+    put('boule', 1, 2.3, 8.6);
+    const deadBoule = placeDeadBall(world, put('boule', 1, 0, 0), C.terrainW + C.lumberGap + C.lumberSize + 0.5, 9.2);
+    const deadJack = placeDeadBall(world, put('jack', -1, 0, 0), 2.6, C.terrainL + C.lumberGap + C.lumberSize + 0.8);
+    renderer.sync(world);
+    placePlayers('you');
+    fetchFreezeAt = +params.get('fetchat') || 0;
+    if (params.has('dist')) renderer.setCamera('inspect', { target: { x: +params.get('lx') || 4, y: +params.get('ly') || 9 }, dist: +params.get('dist'), az: +params.get('az') || 1.2, el: +params.get('el') || 0.3 });
+    else renderer.setCamera('head', { target: { x: 2, y: 8 }, points: [{ x: -1.5, y: -0.5 }, { x: 6.5, y: 16.5 }] });
+    if (fetchFreezeAt) (async () => {
+      for (let i = 0; i < fetchFreezeAt * 60; i++) {
+        fetchPump = true; tickCast(1 / 60); fetchPump = false; await null; await null;
+      }
+      frozen = true;
+      if (params.has('followc')) { // &followc=pierre: close camera on that character (with &dist &az &el)
+        const q = cast.get(params.get('followc')).root.position;
+        renderer.setCamera('inspect', { target: { x: q.x, y: q.y }, dist: +params.get('dist') || 3.2, az: +params.get('az') || 0.6, el: +params.get('el') || 0.2, height: 0.6, reset: true });
+      }
+      renderer.sync(world);
+    })();
+    (async () => {
+      const job = { id: 'pierre', tok: token, cancelled: false, scripted: true };
+      fetchJob = job;
+      if (await pickUp(job, deadBoule) && await putDown(job, deadBoule, deadRowSlot(rowCount()))) {
+        if (await pickUp(job, deadJack)) {
+          await handOver(job, 'odette');
+          const spot = { x: +params.get('jx') || 2.3, y: +params.get('jy') || 8.2 };
+          await placeWalk('odette', spot);
+          await walkHome(job);
+        }
+      }
+    })().catch((err) => console.error(err));
   } else if (debug && params.has('lumber')) {
     // --- ?debug&lumber: ghosts resting against the timbers and beyond them, plus live boules (for screenshots);
     // &lx=&ly=&dist=&az=&el= place the inspect camera ---

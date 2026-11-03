@@ -3,6 +3,7 @@ import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
+import { frameMoving, cameraFromFrame } from './camera.js';
 import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeSkyPanorama, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 
 const TRANSITION = 0.6; // seconds for camera moves
@@ -473,7 +474,60 @@ export function createRenderer(canvas, terrain) {
     }
   }
   scene.add(jackZone);
-  function showJackZone(on) { jackZone.visible = !!on; }
+  // D14: the zone for a hand-placed jack runs string to string: both arcs across the whole court width, with a
+  // faint fill between them, clipped at the side strings and the far string
+  const placeZone = new THREE.Group();
+  placeZone.visible = false;
+  {
+    const mat = new THREE.MeshBasicMaterial({ color: '#ffd24a', transparent: true, opacity: 0.85, depthTest: false });
+    const c = C.circle, W = C.terrainW, L = C.terrainL;
+    const edge = (rad, a) => ({ x: c.x + rad * Math.sin(a), y: c.y + rad * Math.cos(a) });
+    const inside = (p) => p.x >= 0 && p.x <= W && p.y <= L;
+    for (const rad of [C.jackMinDist, C.jackMaxDist]) {
+      for (let a = -Math.PI / 2; a <= Math.PI / 2; a += 0.006) {
+        const p = edge(rad, a);
+        if (!inside(p)) continue;
+        const m = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.05, 0.004), mat);
+        m.position.set(p.x, p.y, terrain.sample(p.x, p.y).h + 0.008);
+        m.rotation.z = -a;
+        m.renderOrder = 3;
+        placeZone.add(m);
+      }
+    }
+    // faint fill: a grid of polar cells between the arcs, skipping cells that leave the court
+    const pos = [], idx = [], na = 90, nr = 6, vi = new Map();
+    const vert = (i, j) => {
+      const k = i * 100 + j;
+      if (!vi.has(k)) {
+        const a = -Math.PI / 2 + Math.PI * i / na, rad = C.jackMinDist + (C.jackMaxDist - C.jackMinDist) * j / nr;
+        const p = edge(rad, a);
+        const x = Math.min(W, Math.max(0, p.x)), y = Math.min(L, p.y);
+        pos.push(x, y, terrain.sample(x, y).h + 0.006);
+        vi.set(k, pos.length / 3 - 1);
+      }
+      return vi.get(k);
+    };
+    for (let i = 0; i < na; i++) {
+      for (let j = 0; j < nr; j++) {
+        const q = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]];
+        const cen = edge(C.jackMinDist + (C.jackMaxDist - C.jackMinDist) * (j + 0.5) / nr, -Math.PI / 2 + Math.PI * (i + 0.5) / na);
+        if (!inside(cen)) continue;
+        const v = q.map(([a, b]) => vert(a, b));
+        idx.push(v[0], v[1], v[2], v[0], v[2], v[3]);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    const fill = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: '#ffd24a', transparent: true, opacity: 0.16, depthTest: false, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+    fill.renderOrder = 2;
+    placeZone.add(fill);
+  }
+  scene.add(placeZone);
+  function showJackZone(on, mode) {
+    jackZone.visible = !!on && mode !== 'place';
+    placeZone.visible = !!on && mode === 'place';
+  }
 
   // Placement marker for an invalid jack: a green ring on a valid spot, a red X on an invalid one
   const placeMarker = new THREE.Group();
@@ -843,9 +897,9 @@ export function createRenderer(canvas, terrain) {
     f.mesh.visible = true;
   }
 
-  // Roll guide: dashes laid flat on the ground (dark under-layer, bright orange on top) plus a ring where the
-  // roll ends. Orange so it is never mistaken for the cream arc.
-  const DASHES = 160, DASH_LEN = 0.4, DASH_GAP = 0.3, DASH_W = 0.11;
+  // Roll guide (D21): a soft translucent orange band on the ground that widens toward the rest point, a dashed centre
+  // line (dark under-layer, bright orange on top) and a faint rest ellipse. Orange so it is never mistaken for the blue cone.
+  const DASHES = 160, DASH_LEN = 0.3, DASH_GAP = 0.25, DASH_W = 0.05;
   const dashMat = (color, opacity) => new THREE.MeshBasicMaterial({
     color, transparent: true, opacity, side: THREE.DoubleSide, fog: false, depthWrite: false,
     polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
@@ -853,17 +907,57 @@ export function createRenderer(canvas, terrain) {
   const dashGeo = new THREE.PlaneGeometry(1, 1);
   const dashBack = new THREE.InstancedMesh(dashGeo, dashMat('#241608', 0.75), DASHES);
   const dashTop = new THREE.InstancedMesh(dashGeo, dashMat('#ffae2b', 1), DASHES);
-  const restRing = new THREE.Mesh(new THREE.RingGeometry(0.15, 0.22, 32), dashMat('#ffae2b', 1));
-  const restRingBack = new THREE.Mesh(new THREE.RingGeometry(0.12, 0.25, 32), dashMat('#241608', 0.75));
-  for (const [o, order] of [[dashBack, 13], [dashTop, 14], [restRingBack, 13], [restRing, 14]]) {
+  // rest ellipse: a unit ring and fill in a group that is laid on the ground, rotated and scaled per band
+  const restGroup = new THREE.Group(), restInner = new THREE.Group();
+  for (const [geo, color, op, order] of [[new THREE.CircleGeometry(1, 40), '#ffae2b', 0.16, 11], [new THREE.RingGeometry(0.9, 1, 40), '#241608', 0.35, 12], [new THREE.RingGeometry(0.93, 0.985, 40), '#ffae2b', 0.7, 13]]) {
+    const m = new THREE.Mesh(geo, dashMat(color, op)); m.renderOrder = order; m.frustumCulled = false; restInner.add(m);
+  }
+  restGroup.add(restInner); restGroup.visible = false; scene.add(restGroup);
+  // the band: three nested ground strips (widest faintest) so it fades toward its edges
+  const BAND_N = 40, BAND_LAYERS = [[1, 0.2], [0.66, 0.2], [0.33, 0.2]];
+  const bandStrips = BAND_LAYERS.map(([w, op], li) => {
+    const geo = new THREE.BufferGeometry(), ix = [];
+    for (let i = 0; i < BAND_N - 1; i++) ix.push(2 * i, 2 * i + 1, 2 * i + 3, 2 * i, 2 * i + 3, 2 * i + 2);
+    const pos = new Float32Array(BAND_N * 6);
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setIndex(ix); geo.setDrawRange(0, 0);
+    const mesh = new THREE.Mesh(geo, dashMat('#ffae2b', op));
+    mesh.frustumCulled = false; mesh.renderOrder = 9 + li; mesh.visible = false; scene.add(mesh);
+    return { mesh, pos, w };
+  });
+  for (const [o, order] of [[dashBack, 13], [dashTop, 14]]) {
     o.frustumCulled = false; o.renderOrder = order; o.visible = false; scene.add(o);
   }
   dashBack.count = dashTop.count = 0;
   const dM = new THREE.Matrix4(), dPos = new THREE.Vector3(), dX = new THREE.Vector3(), dY = new THREE.Vector3(), dZ = new THREE.Vector3();
-  function setRoll(pts) {
+  // `band`: { center: [{x,y,z}], halfWidths, restMean, restCov } from predictRollBand (a bare point list also works)
+  function setRoll(band) {
     let n = 0;
-    restRing.visible = restRingBack.visible = false;
+    restGroup.visible = false;
+    for (const st of bandStrips) st.mesh.visible = false;
+    if (Array.isArray(band)) { // plain path: a narrow band with no spread
+      const m = band.length;
+      band = { center: band, halfWidths: band.map((_, i) => 0.04 + 0.06 * i / Math.max(1, m - 1)), restMean: band[m - 1], restCov: { xx: 0.003, xy: 0, yy: 0.003 } };
+    }
+    const pts = band && band.center;
     if (pts && pts.length > 1) {
+      // the band: perpendicular offsets of each centre point, widened to read from the shoulder view
+      const m = Math.min(pts.length, BAND_N);
+      for (const st of bandStrips) {
+        for (let i = 0; i < m; i++) {
+          const a = pts[Math.max(0, i - 1)], b = pts[Math.min(m - 1, i + 1)];
+          let tx = b.x - a.x, ty = b.y - a.y;
+          const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+          const hw = Math.max(0.16, (band.halfWidths[i] || 0.05) * 2.5) * st.w;
+          for (let sd = 0; sd < 2; sd++) {
+            const k = sd ? -1 : 1, x = pts[i].x - ty * hw * k, y = pts[i].y + tx * hw * k;
+            const o = (i * 2 + sd) * 3;
+            st.pos[o] = x; st.pos[o + 1] = y; st.pos[o + 2] = terrain.sample(x, y).h + 0.014;
+          }
+        }
+        st.mesh.geometry.attributes.position.needsUpdate = true;
+        st.mesh.geometry.setDrawRange(0, (m - 1) * 6);
+        st.mesh.visible = true;
+      }
       // walk the path by arc length, laying a dash every DASH_LEN + DASH_GAP
       let pos = 0; // distance along the path to the start of the next dash
       let acc = 0; // path length so far
@@ -891,12 +985,15 @@ export function createRenderer(canvas, terrain) {
         }
         acc += seg;
       }
-      const e = pts[pts.length - 1], h = terrain.sample(e.x, e.y);
-      for (const r of [restRing, restRingBack]) {
-        r.position.set(e.x, e.y, h.h + 0.018);
-        r.quaternion.setFromUnitVectors(upZ, dZ.set(h.nx || 0, h.ny || 0, h.nz || 1).normalize());
-        r.visible = true;
-      }
+      // rest ellipse at 1.5 sigma along the principal axes of the rest covariance
+      const e = band.restMean || pts[pts.length - 1], h = terrain.sample(e.x, e.y), c = band.restCov;
+      const tr = (c.xx + c.yy) / 2, df = Math.sqrt(((c.xx - c.yy) / 2) ** 2 + c.xy * c.xy);
+      const l1 = Math.max(0.0036, tr + df), l2 = Math.max(0.0036, tr - df);
+      restGroup.position.set(e.x, e.y, h.h + 0.018);
+      restGroup.quaternion.setFromUnitVectors(upZ, dZ.set(h.nx || 0, h.ny || 0, h.nz || 1).normalize());
+      restInner.rotation.z = 0.5 * Math.atan2(2 * c.xy, c.xx - c.yy);
+      restInner.scale.set(Math.max(0.14, 1.5 * Math.sqrt(l1)), Math.max(0.14, 1.5 * Math.sqrt(l2)), 1);
+      restGroup.visible = true;
     }
     dashTop.count = dashBack.count = n;
     dashTop.instanceMatrix.needsUpdate = dashBack.instanceMatrix.needsUpdate = true;
@@ -979,6 +1076,7 @@ export function createRenderer(canvas, terrain) {
   const clampZoom = (z) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
   const orbit = { az: 0, el: 0.6, dist: 3 };
   let heading = new THREE.Vector3(0, 1, 0);
+  let flightFrame = null; // camera.js spring state while the flight camera follows moving bodies
 
   function setCamera(m, o = {}) {
     if (m === 'inspect' && (mode !== 'inspect' || o.reset)) { // o.reset: a scripted cut replaces the user's orbit
@@ -990,6 +1088,7 @@ export function createRenderer(canvas, terrain) {
     }
     if (m === 'shoulder' && o.zoom !== undefined) zoom = clampZoom(o.zoom);
     mode = m; opts = o;
+    if (m === 'flight') flightFrame = null;
     from.pos.copy(cur.pos); from.tgt.copy(cur.tgt);
     trans = reduce() ? 1 : 0;
     if (trans === 1) computeGoal(0, true);
@@ -1002,6 +1101,15 @@ export function createRenderer(canvas, terrain) {
       const yaw = opts.yaw || 0, c = C.circle;
       goal.pos.set(c.x - Math.sin(yaw) * 1.4, c.y - Math.cos(yaw) * 1.4, 1.6);
       goal.tgt.set(c.x + Math.sin(yaw) * 5.5, c.y + Math.cos(yaw) * 5.5, 0);
+    } else if (mode === 'flight' && opts.bodies) { // D09: frame every moving body (camera.js), cochonnet first when it flies
+      const jack = opts.bodies.find((b) => b.kind === 'jack');
+      const f = frameMoving(opts.bodies, jack, { aspect: camera.aspect, fov: camera.fov, dt, reduced: reduce(), thrown: opts.body }, flightFrame);
+      if (f) {
+        flightFrame = f;
+        const cf = cameraFromFrame(f, (x, y) => terrain.sample(x, y).h);
+        goal.pos.set(cf.pos.x, cf.pos.y, cf.pos.z);
+        goal.tgt.set(f.target.x, f.target.y, f.target.z);
+      }
     } else if (mode === 'flight' && opts.body) {
       const b = opts.body;
       const v = tmpV.set(b.vx || 0, b.vy || 0, 0);
@@ -1053,7 +1161,98 @@ export function createRenderer(canvas, terrain) {
 
   // Toss focus: 0..1, eased while the shoulder camera shows a preview, so the cone is bigger on screen
   let focusK = 0;
+  // ---- Paused (D12): a free orbit camera round a ground point, and the sepia pass ----
+  let paused = false;
+  const PC = { P: new THREE.Vector3(), pos: new THREE.Vector3(), az: 0, el: 0.6, dist: 6 };
+  const PC_DIST = [0.8, 30], PC_EL = [0.06, 1.5];
+  const pcClamp = () => {
+    PC.dist = Math.max(PC_DIST[0], Math.min(PC_DIST[1], PC.dist));
+    PC.el = Math.max(PC_EL[0], Math.min(PC_EL[1], PC.el));
+  };
+  function setPaused(on) {
+    on = !!on;
+    if (on === paused) return;
+    if (on) {
+      // the orbit point: where the centre-screen ray meets the ground (else the point looked at)
+      const dir = cur.tgt.clone().sub(cur.pos).normalize();
+      const g0 = groundZ(cur.tgt);
+      PC.P.copy(cur.tgt);
+      if (dir.z < -0.03) { const k = (g0 - cur.pos.z) / dir.z; if (k > 0 && k < 80) PC.P.copy(cur.pos).addScaledVector(dir, k); }
+      PC.P.x = Math.max(-C.terrainW / 2, Math.min(C.terrainW / 2, PC.P.x));
+      PC.P.y = Math.max(-C.terrainL / 2, Math.min(C.terrainL / 2, PC.P.y));
+      PC.P.z = groundZ(PC.P) + 0.03;
+      const off = cur.pos.clone().sub(PC.P);
+      PC.dist = Math.max(0.01, off.length());
+      PC.el = Math.asin(Math.max(-1, Math.min(1, off.z / PC.dist)));
+      PC.az = Math.atan2(off.x, -off.y);
+      pcClamp();
+      pointers.clear(); pinch = 0;
+      paused = true;
+      sepiaTarget = 1;
+      if (reduce()) sepiaK = 1;
+    } else {
+      paused = false;
+      sepiaTarget = 0;
+      if (reduce()) sepiaK = 0;
+      from.pos.copy(PC.pos); from.tgt.copy(PC.P); // ease back to where the camera was before the pause
+      trans = reduce() ? 1 : 0;
+      pointers.clear(); pinch = 0;
+    }
+  }
+  function updatePausedCamera() {
+    pcClamp();
+    const ce = Math.cos(PC.el), se = Math.sin(PC.el);
+    PC.pos.set(PC.P.x + Math.sin(PC.az) * ce * PC.dist, PC.P.y - Math.cos(PC.az) * ce * PC.dist, PC.P.z + se * PC.dist);
+    const floor = groundZ(PC.pos) + 0.25;
+    if (PC.pos.z < floor) PC.pos.z = floor;
+    camera.position.copy(PC.pos);
+    camera.lookAt(PC.P);
+    sun.target.position.copy(PC.P);
+    sun.position.copy(PC.P).add(sunOffset);
+  }
+
+  // Sepia: while paused the scene is drawn to a target and a full-screen triangle redraws it in sepia
+  let sepiaK = 0, sepiaTarget = 0, sepiaRT = null, sepiaT0 = 0;
+  const sepiaScene = new THREE.Scene();
+  const sepiaCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const sepiaMat = new THREE.ShaderMaterial({
+    uniforms: { tDiffuse: { value: null }, k: { value: 0 } },
+    vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: `uniform sampler2D tDiffuse; uniform float k; varying vec2 vUv;
+      void main() {
+        vec4 t = texture2D(tDiffuse, vUv);
+        vec3 c = t.rgb;
+        vec3 s = vec3(dot(c, vec3(0.393, 0.769, 0.189)), dot(c, vec3(0.349, 0.686, 0.168)), dot(c, vec3(0.272, 0.534, 0.131)));
+        gl_FragColor = vec4(mix(c, s * 0.96, k), 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+    depthTest: false, depthWrite: false,
+  });
+  sepiaScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), sepiaMat));
+  sepiaScene.children[0].frustumCulled = false;
+  function renderScene() {
+    const now = performance.now(), sdt = Math.min(0.1, (now - sepiaT0) / 1000);
+    sepiaT0 = now;
+    if (!reduce() && sepiaK !== sepiaTarget) { // a short fade in and out, none under reduced motion
+      const step = sdt / 0.35;
+      sepiaK = sepiaTarget > sepiaK ? Math.min(sepiaTarget, sepiaK + step) : Math.max(sepiaTarget, sepiaK - step);
+    } else if (reduce()) sepiaK = sepiaTarget;
+    if (sepiaK <= 0 && !paused) { renderer.render(scene, camera); return; }
+    const size = renderer.getDrawingBufferSize(tmpSize);
+    if (!sepiaRT) sepiaRT = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
+    else if (sepiaRT.width !== size.x || sepiaRT.height !== size.y) sepiaRT.setSize(size.x, size.y);
+    renderer.setRenderTarget(sepiaRT);
+    renderer.render(scene, camera);
+    renderer.setRenderTarget(null);
+    sepiaMat.uniforms.tDiffuse.value = sepiaRT.texture;
+    sepiaMat.uniforms.k.value = sepiaK;
+    renderer.render(sepiaScene, sepiaCam);
+  }
+  const tmpSize = new THREE.Vector2();
+
   function updateCamera(dt) {
+    if (paused) { updatePausedCamera(); return; }
     const wantFocus = mode === 'shoulder' && preview && preview.donnee ? 1 : 0;
     focusK = reduce() ? wantFocus : focusK + (wantFocus - focusK) * (1 - Math.exp(-dt * 6));
     if (Math.abs(focusK - wantFocus) < 0.002) focusK = wantFocus;
@@ -1070,7 +1269,7 @@ export function createRenderer(canvas, terrain) {
       const k = smooth(trans);
       cur.pos.lerpVectors(from.pos, goal.pos, k);
       cur.tgt.lerpVectors(from.tgt, goal.tgt, k);
-    } else if (mode === 'flight' && !reduce()) {
+    } else if (mode === 'flight' && !reduce() && !opts.bodies) {
       const k = 1 - Math.exp(-dt * 8);
       cur.pos.lerp(goal.pos, k);
       cur.tgt.lerp(goal.tgt, k);
@@ -1088,6 +1287,12 @@ export function createRenderer(canvas, terrain) {
   const pointers = new Map();
   let pinch = 0;
   const onDown = (e) => {
+    if (paused) {
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* synthetic */ } }
+      if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch = Math.hypot(a.x - b.x, a.y - b.y); }
+      return;
+    }
     if (mode !== 'inspect' && mode !== 'shoulder') return;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     // shoulder mode only watches for a pinch; the toss input owns single-pointer gestures
@@ -1096,6 +1301,18 @@ export function createRenderer(canvas, terrain) {
   };
   const onMove = (e) => {
     const p = pointers.get(e.pointerId);
+    if (p && paused) {
+      const dx = e.clientX - p.x, dy = e.clientY - p.y;
+      p.x = e.clientX; p.y = e.clientY;
+      if (pointers.size === 1) { PC.az -= dx * 0.008; PC.el += dy * 0.008; }
+      else if (pointers.size === 2) {
+        const [a, b] = [...pointers.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (pinch > 0 && d > 0) PC.dist *= pinch / d;
+        pinch = d;
+      }
+      pcClamp();
+      return;
+    }
     if (!p || (mode !== 'inspect' && mode !== 'shoulder')) return;
     if (mode === 'shoulder') {
       p.x = e.clientX; p.y = e.clientY;
@@ -1119,6 +1336,7 @@ export function createRenderer(canvas, terrain) {
   };
   const onUp = (e) => { pointers.delete(e.pointerId); pinch = 0; };
   const onWheel = (e) => {
+    if (paused) { e.preventDefault(); PC.dist *= Math.exp(e.deltaY * 0.001); pcClamp(); return; }
     if (mode === 'shoulder') {
       e.preventDefault();
       zoom = clampZoom(zoom * Math.exp(e.deltaY * 0.001));
@@ -1162,7 +1380,7 @@ export function createRenderer(canvas, terrain) {
     updateCamera(dt);
     updatePreview();
     updateJackMark(dt);
-    renderer.render(scene, camera);
+    renderScene();
   }
 
   const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
@@ -1190,5 +1408,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { sync, setCamera, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, clearMeasure, showJackZone, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  return { sync, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, clearMeasure, showJackZone, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
 }
