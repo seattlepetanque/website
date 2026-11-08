@@ -804,7 +804,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | ID | Status | Model | Deps | Title |
 |---|---|---|---|---|
 | F01 | done | sonnet | — | Sports-broadcast follow camera for the roving view |
-| F02 | in-progress | sonnet | F07 | After a mène, players collect their boules from the head and walk to their spots |
+| F02 | done | sonnet | F07 | After a mène, players collect their boules from the head and walk to their spots |
 | F03 | in-progress | sonnet | — | Teams keep roles (pointer and shooter) instead of alternating throwers |
 | F04 | todo | sonnet | F03 | Tactics expansion: pointing vs shooting vs promotion, defensive play, the deliberate short drop (design first, then implement) |
 | F05 | done | sonnet | — | Slope and firmness fields tuned, plus an optional "Read the ground" analysis view |
@@ -812,9 +812,10 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F07 | done | sonnet | — | Last thrower picks up the ring straight away and carries it toward the jack |
 | F08 | done | haiku | — | Tree shadows cut off at the edge of the inner grass |
 | F09 | done | haiku | — | Remove the white halo around the cochonnet |
-| F10 | in-progress | sonnet | F07 | Cochonnet out of bounds: next ring goes at its last in-bounds spot |
-| F11 | in-progress | haiku | — | "Who holds the point" overlay before each throw |
-| F12 | todo | sonnet | — | Ambient park sounds with stereo movement |
+| F10 | done | sonnet | F07 | Cochonnet out of bounds: next ring goes at its last in-bounds spot |
+| F11 | done | haiku | — | "Who holds the point" overlay before each throw |
+| F12 | done | sonnet | — | Ambient park sounds with stereo movement |
+| F13 | todo | haiku | — | Dead-jack void message gives the wrong reason |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -903,3 +904,18 @@ A quiet, synthesized (no audio files) park soundscape under the game sounds, in 
 - **Optional:** faint distant city hum or a far-off dog bark, very rarely.
 
 Very low overall level (well under the boule sounds), its own volume control or toggle ("Ambience" on/off, remembered in localStorage), off when muted, paused with the game (pause clock / suspend), started only after a user gesture. Keep CPU low: schedule events ahead on the audio clock, reuse noise buffers, cap voices. Add audition buttons to the `?debug&sounds` drawer (bird, breeze, plane).
+
+### F02 notes
+- Slow mode: 2.6 s after the result, every player except the F07 ring carrier walks to their own boules (nearest first; dead ones round the timbers), staggered 1.3 s, avoiding each other; pick-ups grow held counts; then `nextMene` sends all but the next jack thrower to slots behind the new circle. `resetCast` no longer teleports or clears held boules; `collectBoules` skips players already holding. Click/key skips to the end state. Quick mode: fades. `&f02&f02at=`. Gaps: the ring carrier and jack thrower use the mène-start pick-up; `walkToSpots` copies `beginMene`'s thrower selection (keep in sync with F03). Quick mode and skip not tried. Committed with the next combined commit.
+
+### F10 notes
+- physics.js records each live body's last in-bounds centre (`lastInBounds()`, clamped `OUT_INSET` 2 cm inside the lines) as `outX`/`outY` when it dies; `snapshot()` gives a dead jack a `spot`; rules `nextMene` and `ringJackSpot()` build the circle from it. Slow mode `startJackReturn()`: the idle player nearest the dead jack (not the ring holder) fetches it round the timbers and sets it at the spot; the ring holder waits on `jackTask`; F02 collection skips the jack meanwhile. Quick mode: the ring just appears there. Tests in physics and court; ai.test.js out-of-bounds rest tolerances widened (1.8 m far end, 0.95 m side): review in the round 5 review. Committed with the next combined commit.
+
+### F11 notes
+- hud.js `showHolding(text, team)`/`hideHolding()` (aria-live polite, team accent); absolutely positioned under the controls bar (an early grid version squeezed phone layouts); fades via a class, instant under reduced motion, sepia when paused; shown in onSettled after a boule from `holdingTeam`/`meneResult`, hidden after 2 s of game clock or when aiming starts. `&holding` debug. Committed with the next combined commit.
+
+### F12 notes
+- `ambient.js` (all numbers in `AMBIENT`): four bird species (chirp, trill, two-note whistle, warble) at random pan ±0.9 and distance (level + low-pass), gaps 3–22 s with occasional lulls, 35% answered from the other side, ≤ 4 voices; breeze = looped band-passed noise with swells every 4–9 s and slow pan, leaf rustle every 14–40 s; airplane every 2–5 min, low-passed rumble + faint falling tone panning across over 22–30 s. Own gain 0.10 into the master bus. "Ambience" toggle (`petanque-ambience`, default on), silent when muted, suspended with the pause, starts after unlock. Audition buttons in `?debug&sounds`. Dog bark and city hum skipped. Not heard yet. Committed with the next combined commit.
+
+### F13 Dead-jack void message gives the wrong reason (haiku)
+main.js (~line 2021, the void-mène note in endOfMene) always says "The cochonnet went out of bounds, so it is dead … and neither side has boules left: mène void." whenever the jack is dead. By the rules (rules.js endMene) a dead jack voids the mène when both teams still hold boules, or when neither does; if only one team holds boules, that team scores them (not a void). Make the message state the actual case from the boules in hand at that moment: "The cochonnet went out: both teams still have boules, so the mène is void." / "… neither team has boules left, so the mène is void." Also check the non-void dead-jack case reads right (e.g. "The cochonnet went out with only Marcel & Odette holding boules: they score 2."). Add a small test of the message builder (pure helper) for all three cases.
