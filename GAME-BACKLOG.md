@@ -810,6 +810,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F05 | todo | sonnet | E17 | Slope and firmness fields tuned, plus an optional "Read the ground" analysis view |
 
 ### F01 Sports-broadcast follow camera (sonnet)
+**User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
 The user likes the roving (observer/TV) camera and wants it to cut like a sports broadcast when action happens:
 1. **Before the throw:** cut or pan to a full-body (at least waist-up) shot of the player getting ready, in the circle, holding the boule.
 2. **The throw:** hold on the player through the swing and release.
