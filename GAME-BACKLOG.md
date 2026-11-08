@@ -811,6 +811,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F06 | todo | haiku | — | Surface-to-surface measuring: circle to the rival boule's near edge, all distances to 0.1 cm |
 | F07 | todo | sonnet | — | Last thrower picks up the ring straight away and carries it toward the jack |
 | F08 | todo | haiku | — | Tree shadows cut off at the edge of the inner grass |
+| F09 | todo | haiku | — | Remove the white halo around the cochonnet |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -864,3 +865,6 @@ Slow mode. Today, after the mène ends, the last thrower walks back to the old c
 
 ### F08 Tree shadows cut off (haiku)
 Tree shadows show on the inner grass near the court but stop at its edge and don't appear on the wider field. Likely causes: the sun's shadow camera frustum is fitted tightly around the court (for sharp boule and character shadows), so shadows outside it aren't rendered; and/or the large outer grass plane (D15, 600 m) has `receiveShadow` off. Fix without blurring the important near shadows: e.g. enlarge or refit the frustum to include the trees and their shadows (they're within ~15 m), raise the shadow map size moderately on desktop only, or use a second cheap shadow source / baked blob shadows for the trees on the far field. Make sure the outer plane receives shadows. Check performance on phones and compare screenshots before and after.
+
+### F09 Remove the cochonnet halo (haiku)
+Remove D04's ground halo (the cream/white ring around the jack shown in the head view) entirely: the mesh, its material, its update and fade logic, and the `b` option of `?debug&jackvis`. Keep the orange jack and the D17 arrow behaviour unchanged.
