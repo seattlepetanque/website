@@ -1,6 +1,7 @@
 // Game loop: terrain, world, renderer, rules, AI, toss input (donnée throw), audio and HUD wired together.
 import { C } from './constants.js';
 import { court, setCourt, resetCourt, baseYaw, ahead, nextCircle } from './court.js';
+import { cameraStyle } from './camera.js';
 import { mulberry32 } from './rng.js';
 import { createTerrain } from './terrain.js';
 import { createWorld, createBody, launch, placeDeadBall, deadRowSlot, deadJackSpot } from './physics.js';
@@ -107,7 +108,13 @@ function boot() {
   // shared with the renderer so turning moves the camera without restarting its transition
   const shoulderCam = { player: court.circle, yaw: 0, viewYaw: 0, viewPitch: 0 }; // E12: viewYaw/viewPitch orbit offsets (rad)
   const shoulderView = () => renderer.setCamera('shoulder', shoulderCam);
-  const aimView = shoulderView;
+  // E11 / E27: the camera style is read here and nowhere else. Slow mode watches from the side like a spectator
+  // ('observer'); the human's own turn (shoulder view) and quick mode keep the game cameras. ?debug&cam=tv|game overrides.
+  const camStyle = (human = false) => cameraStyle({ slow: slow(), human, override: debug ? params.get('cam') : null });
+  const observing = () => camStyle() === 'observer';
+  const observerView = (points, extra) => renderer.setCamera('observer', { points, ...extra });
+  const watchCircle = () => observerView([{ x: court.circle.x, y: court.circle.y }, ahead(5)]); // somebody about to throw
+  const aimView = () => (observing() && match ? watchCircle() : shoulderView());
   const PITCH_MAX = 15 * DEG, KEEP_YAW = 35 * DEG; // E12 (see setAdjust)
   let adjusting = false, viewAnim = 0;
   const audio = createAudio();
@@ -340,7 +347,7 @@ function boot() {
     const j = jackBody();
     const target = j && !j.dead ? { x: j.x, y: j.y } : ahead(7);
     if (v === 'shoulder') shoulderView();
-    else if (v === 'head') headView(j && !j.dead ? j : ahead(7));
+    else if (v === 'head') headView(j && !j.dead ? j : ahead(7), undefined, undefined, undefined, true);
     else renderer.setCamera('inspect', { target, dist: 3, az: baseYaw(), el: 0.6 });
     if (pending && !flying) toss.setPhase(v === 'inspect' ? 'off' : 'aim');
   }
@@ -450,6 +457,9 @@ function boot() {
   // E01: every walk and teleport decision goes through slow(). Debug instant/autotest and reduced motion never walk.
   const slow = () => !instant && (!reduceMotion() || (debug && params.has('slow'))) && settings.mode === 'slow'; // ?debug&slow: slow mode despite reduced motion (screenshots)
   const snapMove = () => !slow(); // no walking: teleport
+  // E31: quick-mode changeover (fades, then a beat with the circle empty). Instant and reduced motion cut straight across.
+  const changeover = () => !slow() && !instant && !reduceMotion();
+  const FADE_S = 0.15, CHANGEOVER_BEAT_MS = 400;
   // E16: slow mode shows the boules in each player's hands (1 in the dominant hand, 2 in the other); the counts always
   // match boulesLeft. Quick mode shows just the one boule about to be thrown (the character's setHolding).
   const BOULE_COLORS = ['#a9bde0', '#e8aa6a']; // the team's boule look (render.js bouleMats)
@@ -515,9 +525,34 @@ function boot() {
     for (const id of cast.keys()) {
       const ch = cast.get(id);
       ch.setHolding(false); ch.setHeldBoules(null); ch.setCarrying(false); ch.setStance('watch'); shadow(id, false);
+      ch.setOpacity(1); // E31: cancels any changeover fade still running
       placeAt(id, homeAt(id).x, homeAt(id).y, homeYaw(id));
       claims.set(id, { x: homeAt(id).x, y: homeAt(id).y });
     }
+  }
+  // E31: the player who must leave the circle before `id` steps in (quick mode only; null otherwise)
+  function quickSwapFrom(id) {
+    const prev = inCircle && inCircle !== id && !(fetchJob && fetchJob.id === inCircle) ? inCircle : null;
+    return prev && changeover() ? prev : null;
+  }
+  // E31: quick-mode changeover: the previous thrower fades out and stands at their waiting spot, the circle stays empty
+  // for a beat, then the new thrower fades into it. Resolves once they are in place (the turn starts after this).
+  function changeoverIn(prev, id, yaw, c) {
+    const t = token, pc = cast.get(prev), ch = cast.get(id);
+    const live = () => t === token && inCircle === id;
+    ch.setOpacity(0); // the new thrower stays hidden until they step in
+    pc.fadeTo(0, FADE_S);
+    return sleep(FADE_S * 1000).then(() => {
+      if (!live()) return null;
+      walkOut(prev); // quick mode: placed at the waiting spot at once
+      pc.setOpacity(1);
+      return sleep(CHANGEOVER_BEAT_MS);
+    }).then(() => {
+      if (!live()) return null;
+      placeAt(id, c.x, c.y, yaw);
+      ch.fadeTo(1, FADE_S);
+      return sleep(FADE_S * 1000);
+    }).then(() => { if (live()) ch.setOpacity(1); });
   }
   let circleWalk = null; // { id, yaw, tok, start } while a thrower walks to the circle
   // The thrower walks into the circle (the previous one walks out); returns a promise for the arrival
@@ -526,7 +561,9 @@ function boot() {
     if (fetchJob && fetchJob.id === id) { // D11: a fetcher called to throw drops what they carry (E02: and walks from where they are)
       cancelFetch(); ch.setCarrying(false);
     }
-    if (inCircle && inCircle !== id && !(fetchJob && fetchJob.id === inCircle)) walkOut(inCircle);
+    const here = Math.hypot(ch.root.position.x - c.x, ch.root.position.y - c.y) < 0.05;
+    const swap = !snap && !here ? quickSwapFrom(id) : null; // E31: quick mode, the previous thrower changes over with fades
+    if (inCircle && inCircle !== id && !(fetchJob && fetchJob.id === inCircle) && !swap) walkOut(inCircle);
     inCircle = id;
     claims.delete(id);
     shadow(id, true);
@@ -535,8 +572,9 @@ function boot() {
     ch.setStance(stanceOf(id));
     if (jack) ch.setHeldBoules(null); // E23: a jack throw shows no boules in the hands
     ch.setHolding(jack ? 'jack' : 'boule', jack ? undefined : teamColor(id));
-    const here =Math.hypot(ch.root.position.x - c.x, ch.root.position.y - c.y) < 0.05;
-    if (here || snap || snapMove()) {
+    if (swap) {
+      arrival = changeoverIn(swap, id, yaw, c);
+    } else if (here || snap || snapMove()) {
       placeAt(id, c.x, c.y, yaw);
       arrival = Promise.resolve();
     } else {
@@ -625,6 +663,7 @@ function boot() {
       const pts = shown.length ? shown : [cast.get(inCircle || was.owner).root.position];
       const xs = pts.map((q) => q.x), ys = pts.map((q) => q.y);
       const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+      if (observing()) { observerView(pts.map((q) => ({ x: q.x, y: q.y }))); return; }
       renderer.setCamera('inspect', {
         target: { x: cx, y: cy }, dist: 3.8, az: baseYaw() + Math.PI, el: 0.12, height: 0.9, reset: true,
         fit: (Math.max(...xs) - Math.min(...xs)) / 2 + 1.1,
@@ -654,15 +693,17 @@ function boot() {
     later(() => { // (instant debug matches cut straight to it)
       if (!match || (match.phase !== 'meneEnd' && match.phase !== 'gameOver')) return;
       if (scoringShown) return; // keep the scoring circle framed (D07)
+      if (observing()) { observerView([{ x: c.x, y: c.y }, { x: c.x - 2.6, y: c.y + 1.4 * court.dir }, { x: c.x + 2.6, y: c.y + 1.4 * court.dir }]); return; }
       renderer.setCamera('inspect', { target: { x: c.x, y: c.y - 0.2 * court.dir }, dist: 5.5, az: baseYaw(), el: 0.4, height: 0.2, reset: true, fit: 3.4 });
     }, 2200);
   }
 
   // Head camera framing the jack and live boules within 2 m of it
-  function headView(jack, extra, lift, tight) {
+  function headView(jack, extra, lift, tight, game) { // game: the user's own View button, never the observer
     const pts = world.bodies
       .filter((b) => b.kind === 'boule' && !b.dead && Math.hypot(b.x - jack.x, b.y - jack.y) < 2)
       .map((b) => ({ x: b.x, y: b.y }));
+    if (!game && observing()) { observerView([{ x: jack.x, y: jack.y }].concat(tight ? [] : pts, extra || [])); return; }
     renderer.setCamera('head', { target: { x: jack.x, y: jack.y }, points: (tight ? [] : pts).concat(extra || []), lift, ...(tight ? { margin: 0.25, minHalf: 0.55, dist: 1.3 } : {}) });
   }
   // D07 between throws: ribbons from the cochonnet to the closest live boule of each team (a team with none is dropped)
@@ -729,7 +770,13 @@ function boot() {
     launch(body, p, from || court.throwFrom);
     flying = body;
     clearToss();
-    renderer.setCamera('flight', { body, bodies: world.bodies });
+    const humanOwner = !!(match && match.players.find((q) => q.id === owner && q.isHuman));
+    if (observing()) { // E11: the spectator watches the flight; after the human's own release, a short flight follow first
+      if (humanOwner) {
+        renderer.setCamera('flight', { body, bodies: world.bodies });
+        later(() => { if (flying === body) renderer.setCamera('observer', { body, bodies: world.bodies }); }, 1100);
+      } else renderer.setCamera('observer', { body, bodies: world.bodies });
+    } else renderer.setCamera('flight', { body, bodies: world.bodies });
     enableControls(false);
     if (instant) {
       let guard = 0;
@@ -974,7 +1021,7 @@ function boot() {
     const yaw = Math.atan2(choice.donnee.x - from.x, choice.donnee.y - from.y);
     throwerYaw = yaw;
     shoulderCam.yaw = yaw;
-    shoulderView();
+    if (observing()) watchCircle(); else shoulderView();
     const snapped = choice.style === 'tir';
     const showArc = debug && params.has('aispot'); // the arc, cone, donnée and legal zone stay hidden from players (D18)
     renderer.setThrowPreview(null);
@@ -1171,6 +1218,7 @@ function boot() {
     if (pending || flying || job.jack || !fetchAlive(job) || (job.scripted && !params.has('fetchcam'))) return;
     const pts = ids.map((i) => cast.get(i).root.position).concat(spots).map((q) => ({ x: q.x, y: q.y }));
     const cx = pts.reduce((s, q) => s + q.x, 0) / pts.length, cy = pts.reduce((s, q) => s + q.y, 0) / pts.length;
+    if (observing()) { observerView(pts); return; }
     renderer.setCamera('head', { target: { x: cx, y: cy }, points: pts });
   }
   async function pickUp(job, body) {
@@ -1474,6 +1522,9 @@ function boot() {
       const t = token;
       say2(`${player.isHuman ? 'You walk' : player.name + ' walks'} to the circle…`);
       enterCircle(playerId, baseYaw()).then(() => { if (t === token && match && match.phase === 'play') start(); });
+    } else if (quickSwapFrom(playerId)) { // E31: the changeover (fades, the beat) finishes before the turn starts
+      const t = token;
+      enterCircle(playerId, baseYaw()).then(() => { if (t === token && match && match.phase === 'play') start(); });
     } else start();
   }
 
@@ -1757,10 +1808,11 @@ function boot() {
         const rivalE = live.find((e) => e.b.team !== r.team);
         const scoringE = live.filter((e) => e.b.team === r.team && (!rivalE || e.m.dist < rivalE.m.dist));
         if (scoringE.length) {
-          const edge = (e) => e.m.dist + e.b.r;
-          let radius = Math.max(...scoringE.map(edge));
-          const room = rivalE ? (rivalE.m.dist - rivalE.b.r - radius) / 2 : 0.07; // keep the rival just outside when it fits
-          radius += Math.min(0.07, Math.max(0.01, room));
+          // E22: the circle reaches the losing team's best live boule. Its centre sits on the line, and its cm label is
+          // the gap from the jack's edge to its edge, so radius = gap + both radii = centre distance. Every scoring boule
+          // stays inside (the max keeps them in if one ever touches the rival). No live rival: enclose them plus a margin.
+          const reach = Math.max(...scoringE.map((e) => e.m.dist + e.b.r));
+          const radius = rivalE ? Math.max(rivalE.m.dist, reach) : reach + 0.07;
           const ink = r.team === 0 ? { fill: '#2f5fb8', edge: '#16315f' } : { fill: '#d9893a', edge: '#8a4a0c' };
           renderer.showScoring(j, {
             radius, fill: ink.fill, edge: ink.edge,

@@ -5,7 +5,7 @@ import { court } from './court.js';
 import { JACK_END_MARGIN } from './rules.js';
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
-import { frameMoving, cameraFromFrame } from './camera.js';
+import { frameMoving, cameraFromFrame, frameObserver, gatherMoving } from './camera.js';
 import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeSkyPanorama, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 
 const TRANSITION = 0.6; // seconds for camera moves
@@ -681,7 +681,7 @@ export function createRenderer(canvas, terrain) {
   function showScoring(jack, o) {
     clearMeasure();
     scoring.add(groundRing(jack.x, jack.y, 0, o.radius, o.fill, 0.3, 0.014, 2));
-    scoring.add(groundRing(jack.x, jack.y, o.radius - 0.012, o.radius + 0.006, o.edge, 0.95, 0.018, 3));
+    scoring.add(groundRing(jack.x, jack.y, o.radius - 0.009, o.radius + 0.009, o.edge, 0.95, 0.018, 3)); // centred on the radius (the rival's centre)
     const placed = [];
     for (const it of o.items) {
       let lift = 0.11;
@@ -1145,6 +1145,7 @@ export function createRenderer(canvas, terrain) {
   const orbit = { az: 0, el: 0.6, dist: 3 };
   let heading = new THREE.Vector3(0, 1, 0);
   let flightFrame = null; // camera.js spring state while the flight camera follows moving bodies
+  let obsFrame = null; // E11: camera.js state of the casual-observer camera (kept while it stays in that mode)
 
   function setCamera(m, o = {}) {
     if (m === 'inspect' && (mode !== 'inspect' || o.reset)) { // o.reset: a scripted cut replaces the user's orbit
@@ -1153,6 +1154,7 @@ export function createRenderer(canvas, terrain) {
       orbit.el = o.el !== undefined ? o.el : 0.6;
     }
     if (m === 'shoulder' && o.zoom !== undefined) zoom = clampZoom(o.zoom);
+    if (m === 'observer' && mode !== 'observer') obsFrame = null; // a fresh spectator spot; later subjects only pan and dolly
     mode = m; opts = o;
     if (m === 'flight') flightFrame = null;
     from.pos.copy(cur.pos); from.tgt.copy(cur.tgt);
@@ -1167,6 +1169,19 @@ export function createRenderer(canvas, terrain) {
       const yaw = opts.yaw || 0, c = court.circle;
       goal.pos.set(c.x - Math.sin(yaw) * 1.4, c.y - Math.cos(yaw) * 1.4, 1.6);
       goal.tgt.set(c.x + Math.sin(yaw) * 5.5, c.y + Math.cos(yaw) * 5.5, 0);
+    } else if (mode === 'observer') { // E11: a spectator beside the court; opts.points (or moving opts.bodies) is what to watch
+      let pts = opts.points || [];
+      if (opts.bodies) {
+        pts = gatherMoving(opts.bodies, opts.body).map((m) => ({ x: m.x, y: m.y, z: m.z }));
+        const jk = opts.bodies.find((b) => b.kind === 'jack' && !b.dead);
+        if (jk) pts.push({ x: jk.x, y: jk.y, z: 0 });
+        if (!pts.length && opts.body) pts = [{ x: opts.body.x, y: opts.body.y, z: 0 }];
+      }
+      if (opts.target) pts = pts.concat([opts.target]);
+      const f = frameObserver(pts, { aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50, dt, reduced: reduce(), groundAt: (x, y) => terrain.sample(x, y).h, dir: court.dir }, obsFrame);
+      obsFrame = f;
+      goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
+      goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
     } else if (mode === 'flight' && opts.bodies) { // D09: frame every moving body (camera.js), cochonnet first when it flies
       const jack = opts.bodies.find((b) => b.kind === 'jack');
       const f = frameMoving(opts.bodies, jack, { aspect: camera.aspect, fov: camera.fov, dt, reduced: reduce(), thrown: opts.body, dir: court.dir }, flightFrame);
@@ -1322,6 +1337,7 @@ export function createRenderer(canvas, terrain) {
   const tmpSize = new THREE.Vector2();
 
   function updateCamera(dt) {
+    dt = Math.max(0, dt); // a negative first frame (timer skew) must not run the transition backwards
     if (paused) { updatePausedCamera(); return; }
     const wantFocus = mode === 'shoulder' && preview && preview.donnee ? 1 : 0;
     focusK = reduce() ? wantFocus : focusK + (wantFocus - focusK) * (1 - Math.exp(-dt * 6));
@@ -1333,6 +1349,7 @@ export function createRenderer(canvas, terrain) {
       const d = Math.hypot(preview.donnee.x - court.circle.x, preview.donnee.y - court.circle.y);
       fov = baseFov * (1 - 0.32 * focusK * Math.max(0, Math.min(1, (d - 3) / 5)));
     }
+    if (mode === 'observer' && obsFrame) fov *= obsFrame.fovK; // E11: the spectator's slow zoom
     if (Math.abs(fov - camera.fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
     if (trans < 1) {
       trans = Math.min(1, trans + dt / TRANSITION);

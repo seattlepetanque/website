@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { frameMoving, cameraFromFrame, CAM } from '../../assets/js/petanque/camera.js';
+import { frameMoving, cameraFromFrame, CAM, frameObserver, OBS, cameraStyle } from '../../assets/js/petanque/camera.js';
 import { createBody } from '../../assets/js/petanque/physics.js';
 
 const OPTS = { aspect: 1.6, fov: 50, dt: 1 / 60 };
@@ -149,3 +149,83 @@ test('E10: toward y = 0 the camera stays behind the play (never flips to face th
   const g = frameMoving([j], j, { ...o, thrown: j }, null);
   assert.ok(Math.abs(Math.abs(g.yaw) - Math.PI) <= CAM.maxYaw + 1e-9);
 });
+
+// ---- E11: the observer camera ----
+{
+  const W = 4, L = 17, ground = (x, y) => 0.05 * Math.sin(y);
+  const run = (subjectAt, secs, o = {}) => {
+    let f = null; const log = [];
+    for (let i = 0; i < secs * 60; i++) {
+      const s = subjectAt(i / 60);
+      f = frameObserver(s, { dt: 1 / 60, aspect: 1.6, fov: 50, groundAt: ground, width: W, length: L, ...o }, f);
+      log.push(f);
+    }
+    return log;
+  };
+  const angleTo = (f, p) => {
+    const d = [f.tgt.x - f.pos.x, f.tgt.y - f.pos.y, f.tgt.z - f.pos.z], e = [p.x - f.pos.x, p.y - f.pos.y, (p.z || 0) - f.pos.z];
+    const dot = d[0] * e[0] + d[1] * e[1] + d[2] * e[2];
+    return Math.acos(dot / (Math.hypot(...d) * Math.hypot(...e)));
+  };
+
+  test('observer stands outside the timbers, above the ground, at eye height', () => {
+    for (const dir of [1, -1]) {
+      const head = { x: 1.5 + dir, y: dir > 0 ? 12 : 5 };
+      const log = run((t) => [head, { x: 2, y: dir > 0 ? 1 : 16 }], 20, { dir });
+      for (const f of log) {
+        assert.ok(f.pos.x <= -OBS.side + 1e-9 || f.pos.x >= W + OBS.side - 1e-9, 'outside the court');
+        assert.ok(Math.abs(f.pos.z - ground(f.pos.x, f.pos.y) - OBS.eye) < 1e-9);
+        assert.ok(f.pos.y > 0 && f.pos.y < L);
+      }
+    }
+  });
+
+  test('observer pans slowly: angular speed is capped, and it never cuts', () => {
+    // the subject jumps from one end of the court to the other
+    const log = run((t) => [t < 3 ? { x: 2, y: 3 } : { x: 2.5, y: 14 }], 25);
+    let worst = 0, moveMax = 0;
+    for (let i = 1; i < log.length; i++) {
+      worst = Math.max(worst, Math.abs(log[i].yaw - log[i - 1].yaw) * 60, Math.abs(log[i].pitch - log[i - 1].pitch) * 60);
+      moveMax = Math.max(moveMax, Math.hypot(log[i].pos.x - log[i - 1].pos.x, log[i].pos.y - log[i - 1].pos.y) * 60);
+    }
+    assert.ok(worst <= OBS.pan.boost + 1e-6, 'angular speed ' + worst);
+    assert.ok(moveMax <= OBS.dolly.max + 1e-6, 'dolly at walking speed ' + moveMax);
+    assert.ok(Math.abs(log.at(-1).pos.y - 14) < 3, 'the spectator walked along the side to keep up');
+  });
+
+  test('observer keeps the head in view, and a small shift needs no dolly', () => {
+    const head = { x: 2, y: 9 };
+    const log = run(() => [head, { x: 2.8, y: 8.6 }], 15);
+    assert.ok(angleTo(log.at(-1), { ...head, z: 0.6 }) < 0.05);
+    const steady = run((t) => [{ x: 2, y: 9 + 0.3 * Math.sin(t) }], 10);
+    assert.equal(steady.at(-1).pos.y, steady[0].pos.y, 'inside the deadband the spectator stands still');
+    // while it pans toward a far subject the head stays within the picture
+    const half = Math.atan(Math.tan(25 * Math.PI / 180) * 1.6);
+    const far = run((t) => [{ x: 2, y: t < 2 ? 3 : 6 }], 12);
+    for (const f of far.slice(3 * 60)) assert.ok(angleTo(f, { x: 2, y: 6, z: 0.6 }) < half, 'subject in view');
+  });
+
+  test('observer under reduced motion pans slower and does not dolly', () => {
+    const log = run((t) => [{ x: 2, y: t < 2 ? 3 : 14 }], 15, { reduced: true });
+    let worst = 0;
+    for (let i = 1; i < log.length; i++) worst = Math.max(worst, Math.abs(log[i].yaw - log[i - 1].yaw) * 60);
+    assert.ok(worst <= OBS.reducedPan + 1e-6);
+    assert.equal(log.at(-1).pos.y, log[0].pos.y);
+    assert.equal(log.at(-1).fovK, 1);
+  });
+
+  test('paused-style zero dt leaves the camera frozen', () => {
+    const f1 = frameObserver([{ x: 2, y: 5 }], { dt: 1 / 60, groundAt: ground }, null);
+    const f2 = frameObserver([{ x: 2, y: 12 }], { dt: 0, groundAt: ground }, f1);
+    assert.deepEqual(f2.pos, f1.pos);
+    assert.equal(f2.yaw, f1.yaw);
+  });
+
+  test('cameraStyle is the single switch: observer in slow mode except on the human turn', () => {
+    assert.equal(cameraStyle({ slow: true }), 'observer');
+    assert.equal(cameraStyle({ slow: true, human: true }), 'game');
+    assert.equal(cameraStyle({ slow: false }), 'game');
+    assert.equal(cameraStyle({ slow: true, override: 'tv' }), 'tv');
+    assert.equal(cameraStyle({ slow: true, override: 'bogus' }), 'observer');
+  });
+}

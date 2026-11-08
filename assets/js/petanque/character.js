@@ -934,6 +934,12 @@ export function createCharacter(THREE, spec = {}) {
   function update(dt) {
     if (!(dt > 0)) dt = 0;
     if (!st.solved) evalPose();
+    if (fadeRun) { // E31: a fade runs on game time, so it freezes with the pause clock
+      fadeRun.t += dt;
+      const k = Math.min(1, fadeRun.t / fadeRun.dur);
+      applyAlpha(fadeRun.from + (fadeRun.to - fadeRun.from) * k);
+      if (k >= 1) fadeRun = null;
+    }
     updateLook(dt);
     step(dt);
     evalPose();
@@ -1027,6 +1033,27 @@ export function createCharacter(THREE, spec = {}) {
     if (st.walk) { const w = st.walk; st.walk = null; switchMode('stance'); w.resolve(); }
     root.position.set(x, y, root.position.z); setYaw(yaw);
   }
+  // E31: opacity of the whole figure (every material keeps its own base opacity; alpha scales it). At 0 the root is
+  // hidden. applyAlpha is the only writer; fadeTo runs a fade over `sec` game seconds (0 snaps), setOpacity snaps.
+  const fadeBase = new Map(); // material -> { o, t } as first seen
+  let alpha = 1, fadeRun = null;
+  function applyAlpha(a) {
+    alpha = Math.max(0, Math.min(1, a));
+    root.visible = alpha > 0;
+    const list = new Set(mats);
+    if (vis) vis.model.traverse((o) => { if (o.isMesh) [].concat(o.material).forEach((m) => m && list.add(m)); });
+    for (const m of list) {
+      if (!fadeBase.has(m)) fadeBase.set(m, { o: m.opacity, t: m.transparent });
+      const base = fadeBase.get(m), t = alpha < 1 || base.t;
+      if (m.transparent !== t) { m.transparent = t; m.needsUpdate = true; }
+      m.opacity = base.o * alpha;
+    }
+  }
+  function fadeTo(to, sec) {
+    if (!(sec > 0)) { fadeRun = null; applyAlpha(to); return; }
+    fadeRun = { from: alpha, to: Math.max(0, Math.min(1, to)), dur: sec, t: 0 };
+  }
+  function setOpacity(a) { fadeRun = null; applyAlpha(a); }
   // Swap the stick figure for a loaded Kenney model (a THREE.Group from GLTFLoader, used once)
   function attachModel(model, name = spec.model) {
     if (vis) return;
@@ -1077,7 +1104,7 @@ export function createCharacter(THREE, spec = {}) {
   applyMeshes();
   return {
     root, update, setStance, walkTo, playThrow, playBend, setCarrying, handWorldPosition, dispose,
-    lookAt, setHolding, setHeldBoules, shiftBoule, setPlacement, attachModel, forceQuirk,
+    lookAt, setHolding, setHeldBoules, shiftBoule, setPlacement, attachModel, forceQuirk, fadeTo, setOpacity,
     hand, // 'right' | 'left': the dominant (throwing, carrying) hand
     get isMesh() { return !!vis; },
     get yaw() { return st.yaw; },
@@ -1085,6 +1112,7 @@ export function createCharacter(THREE, spec = {}) {
     get stance() { return st.stance; },
     get busy() { return st.mode !== 'stance'; },
     get carrying() { return st.carry; },
+    get opacity() { return alpha; },
     get heldBoules() { return held ? { ...held } : null; },
     ballWorldPosition: () => { if (!st.solved) evalPose(); return toWorld(ballLocal(HK)); },
     skeleton: () => (st.solved || evalPose()).joints, // root-space joints (for tests and debugging)

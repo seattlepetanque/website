@@ -555,7 +555,7 @@ From the user's play-testing (2026-11-02). Earlier contracts still apply. Shared
 | E08 | done | sonnet | — | Bug: a jack in a clearly valid spot is treated as invalid and gets placed |
 | E09 | done | sonnet | — | Bug: Pierre suggests both pointing and shooting in one dialog |
 | E10 | done | sonnet | E01 | Each new mène starts from a circle placed around the last jack, playing the other direction |
-| E11 | in-progress | sonnet | E01 | Slow mode: a casual-observer camera |
+| E11 | done | sonnet | E01 | Slow mode: a casual-observer camera |
 | E12 | done | sonnet | — | "Re-aim" becomes an "Adjust view" toggle for free camera angles |
 | E13 | done | haiku | — | Remove "New game" from the in-game controls |
 | E14 | done | haiku | — | Full-screen toggle as a video-player-style icon |
@@ -571,11 +571,11 @@ From the user's play-testing (2026-11-02). Earlier contracts still apply. Shared
 | E24 | done | sonnet | E10 | Bug: valid jack judged invalid, then the AI placed it ~2–3 m from the circle |
 | E25 | done | sonnet | E10 | Bug: the jack-placement view isn't centred on the valid area (both directions) |
 | E26 | done | sonnet | E10 | Bug: after a boule is thrown the camera swings round to face the opposite direction |
-| E27 | todo | sonnet | E26, E11 | Experiment: a dynamic TV-presentation camera for AI turns (test builds) |
+| E27 | in-progress | sonnet | E26, E11 | Experiment: a dynamic TV-presentation camera for AI turns (test builds) |
 | E28 | done | sonnet | E10 | Ring too close to the far end: move it back to ~11 m of space |
 | E30 | done | haiku | — | No automatic fullscreen; fullscreen and pause icons bottom right above the status |
 | E31 | done | haiku | E10 | Quick mode: thrower changeover in the circle (out, empty pause, new player in) |
-| E32 | todo | sonnet | E11 | Close calls at mène end: distances on scoring boules too, millimetres when close, top-down measuring view |
+| E32 | in-progress | sonnet | E11 | Close calls at mène end: distances on scoring boules too, millimetres when close, top-down measuring view |
 | E33 | done | haiku | — | Header and footer bars span the full width again |
 
 ### E01 Quick and slow modes (sonnet)
@@ -752,6 +752,9 @@ Since E30 moved the fullscreen and pause icons, the scoreboard header no longer 
 
 ### E33 notes
 - The E30 icon group took an implicit grid column (~84 px), squeezing the scoreboard and dock; it's now absolutely positioned in row 2 at the bottom right. For E17: in the E33 screenshot the jack chevron was faintly visible during Marcel's turn ("Marcel is aiming…"); confirm it's only the fade-out and that D17's human-aim-only rule holds.
+
+### E11 notes
+- `camera.js` `frameObserver`: a spectator 3.5 m outside the side timber at 1.7 m, eased capped pans (0.3 rad/s, 0.8 near the frame edge), slow zoom drift, walks along the side at 1.3 m/s only when the action is > 4.5 m away; reduced motion: slower, no dolly; dt 0 freezes (pause). `cameraStyle({slow, human, override})` → observer/tv/game read once in main.js (`camStyle`), `?debug&cam=game|tv`. render.js `'observer'` mode (and negative frame time clamped). Slow mode uses it for AI turns, after throws, mène end, chooser, flights, reactions, gathering, fetches and the ring carry; the human's own turn (shoulder), placement and quick mode keep the game cameras; after the human's release a 1.1 s flight follow. Six camera tests. Not visually checked (headless renders too few frames): framing, zoom tightness, whether the mène-end card covers the subject.
 
 ### E15 notes
 - `clinchedOnGround` in rules.js: when exactly one team has boules in hand and holds points on the ground reaching the target, `throwSettled` ends the mène through the normal scoring; a team out of boules that holds the point doesn't end it early. main.js and the AI needed no change (no turn is asked for after the phase ends). Four new tests.

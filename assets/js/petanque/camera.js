@@ -159,3 +159,88 @@ export function cameraFromFrame(f, groundAt) {
   if (groundAt) pos.z = Math.max(pos.z, groundAt(pos.x, pos.y) + CAM.minCamZ);
   return { pos, tgt: f.target };
 }
+
+// ---- E11: the casual-observer camera (slow mode) ----
+// A spectator standing beside the court (OBS.side metres outside the timbers, eye height OBS.eye) who watches the play
+// with slow, eased pans, a slowly drifting zoom, and an occasional walking-pace dolly along the side when the action
+// moves far. No cuts: every move is a spring with a speed cap. Pure: the renderer passes the subject and a groundAt().
+export const OBS = Object.freeze({
+  side: 3.5, // m outside the side timber
+  eye: 1.7, // m above the ground
+  deadband: 4.5, // m of along-court offset before the spectator walks to keep up (and stops within `settle` of it)
+  settle: 1.2,
+  dolly: { time: 2.4, max: 1.3 }, // walking pace, m/s
+  pan: { time: 1.0, max: 0.3, boost: 0.8 }, // rad/s; boost only when the subject nears the edge of the picture
+  zoom: { time: 2.5, max: 0.12 }, // fov multiplier per s
+  fill: 0.5, // the subject's angular size as a fraction of the view
+  minFovK: 0.75, maxFovK: 1.3,
+  edge: 0.6, // fraction of the half-field beyond which the boosted pan cap applies
+  reducedTime: 2.5, reducedPan: 0.12, // reduced motion: slower pans, no dolly, no zoom
+});
+
+// The camera style, read in one place (E27 hooks a TV camera in here): 'observer' | 'tv' | 'game'.
+// `game` is the shoulder/head/flight set of cameras. The human's own turn always uses the shoulder view and quick
+// mode keeps the game cameras. `override` is a debug or settings value.
+export const CAMERA_STYLES = Object.freeze(['observer', 'tv', 'game']);
+export function cameraStyle({ slow, human = false, override = null } = {}) {
+  if (human || !slow) return 'game';
+  return CAMERA_STYLES.includes(override) ? override : 'observer';
+}
+
+const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+
+// subject: [{x, y, z?}] points to keep in view. opts: { dt, reduced, aspect, fov (vertical degrees), groundAt(x, y),
+// width, length (court size) }. prev: the last result (null to snap). Returns { pos, tgt, yaw, pitch, fovK, side, dollyGoal,
+// v } where pos/tgt feed the camera and the rest is state to hand back as `prev`.
+export function frameObserver(subject, opts, prev) {
+  const W = opts.width || C.terrainW, L = opts.length || C.terrainL;
+  const groundAt = opts.groundAt || (() => 0);
+  const dt = clamp(opts.dt || 0, 0, 0.1);
+  const pts = subject && subject.length ? subject : [{ x: W / 2, y: L / 2 }];
+  const bb = bbox(pts.map((p) => ({ x: p.x, y: p.y, z: p.z || 0 })));
+  const r = Math.max(...pts.map((p) => Math.hypot(p.x - bb.x, p.y - bb.y))) + 1.4; // a margin: people and boules around the head
+  const c = { x: bb.x, y: bb.y, z: groundAt(bb.x, bb.y) + 0.6 };
+  const reduced = !!opts.reduced;
+  const k = reduced ? OBS.reducedTime / 1 : 1;
+  const side = prev ? prev.side : (c.x < W / 2 ? -1 : 1);
+  const px = side < 0 ? -OBS.side : W + OBS.side;
+  const midY = clamp(c.y, 1, L - 1);
+  const snap = !prev;
+
+  // dolly: walk along the side only when the subject strays beyond the deadband, and stop once close again
+  let y = prev ? prev.pos.y : midY, dollyGoal = prev ? prev.dollyGoal : null;
+  if (!reduced && !snap) {
+    const off = Math.abs(c.y - y);
+    if (dollyGoal === null && off > OBS.deadband) dollyGoal = midY;
+    if (dollyGoal !== null && Math.abs(dollyGoal - y) < OBS.settle) dollyGoal = null;
+  }
+  const v = prev ? prev.v : { y: 0, yaw: 0, p: 0, z: 0 };
+  let vy = v.y;
+  if (!snap && dt > 0 && dollyGoal !== null) [y, vy] = damp(y, dollyGoal, v.y, OBS.dolly.time, OBS.dolly.max, dt);
+  else vy = 0;
+  const pos = { x: px, y, z: groundAt(px, y) + OBS.eye };
+
+  const dx = c.x - pos.x, dy = c.y - pos.y, dh = Math.max(0.5, Math.hypot(dx, dy));
+  const dist = Math.hypot(dh, c.z - pos.z);
+  const goalYaw = Math.atan2(dx, dy), goalPitch = Math.atan2(c.z - pos.z, dh);
+  // zoom so the subject fills about OBS.fill of the view
+  const baseFov = (opts.fov || 50) * Math.PI / 180;
+  const wantFovK = reduced ? 1 : clamp(2 * Math.atan(r / dist) / (baseFov * OBS.fill), OBS.minFovK, OBS.maxFovK);
+
+  let yaw, pitch, fovK, vyaw = v.yaw, vp = v.p, vz = v.z;
+  if (snap) { yaw = goalYaw; pitch = goalPitch; fovK = 1; vyaw = vp = vz = 0; }
+  else if (dt <= 0) return { ...prev, active: true };
+  else {
+    // pan cap: slow, unless the subject is near the edge of the picture
+    const vt = Math.tan(baseFov * prev.fovK / 2), ht = vt * (opts.aspect || 1.5);
+    const err = Math.abs(wrapAngle(goalYaw - prev.yaw)), halfH = Math.atan(ht);
+    const base = reduced ? OBS.reducedPan : OBS.pan.max;
+    const cap = !reduced && err > OBS.edge * halfH ? OBS.pan.boost : base;
+    [yaw, vyaw] = damp(prev.yaw, prev.yaw + wrapAngle(goalYaw - prev.yaw), v.yaw, OBS.pan.time * k, cap, dt);
+    [pitch, vp] = damp(prev.pitch, goalPitch, v.p, OBS.pan.time * k, cap, dt);
+    [fovK, vz] = damp(prev.fovK, wantFovK, v.z, OBS.zoom.time, OBS.zoom.max, dt);
+  }
+  const cp = Math.cos(pitch), look = Math.max(dist, 3);
+  const tgt = { x: pos.x + Math.sin(yaw) * cp * look, y: pos.y + Math.cos(yaw) * cp * look, z: pos.z + Math.sin(pitch) * look };
+  return { pos, tgt, yaw, pitch, fovK, side, dollyGoal, center: c, v: { y: vy, yaw: vyaw, p: vp, z: vz }, active: true };
+}
