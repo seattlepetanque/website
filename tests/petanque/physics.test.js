@@ -349,7 +349,7 @@ test('going out makes a ghost that keeps moving; dead balls never count', () => 
   let ev = null;
   for (let i = 0; i < 600 && !b.dead; i++) { w.step(); ev = w.events.find((e) => e.type === 'dead'); }
   assert.ok(b.dead && b.ghost && ev && ev.a === b.id);
-  assert.ok(b.outY > C.terrainL && Number.isFinite(b.outX));
+  assert.ok(b.outY < C.terrainL && b.outY > C.terrainL - 0.1 && Number.isFinite(b.outX), 'recorded just inside the line');
   assert.ok(b.state !== 'resting' && b.vy > 1, 'keeps moving');
   assert.ok(!w.settled());
   simulate(w, 10);
@@ -502,4 +502,22 @@ test('a jack dropped on a slope beside a string rolls out of the valid region', 
   assert.ok(jackPlaceValid({ x: 0.03, y }));
   const { j } = dropJack(t, 0.03, y);
   assert.ok(j.dead || !jackPlaceValid({ x: j.x, y: j.y }), `rested at ${j.x.toFixed(2)}`);
+});
+
+test('F10: a dead jack records its last in-bounds spot just inside the line it crossed', () => {
+  const cases = [
+    ['far end', 2.1, 14.7, 0.4, 3, (o) => o.y < C.terrainL && o.y > C.terrainL - 0.1 && Math.abs(o.x - 2.1) < 0.6],
+    ['near end', 2.1, 0.3, -0.4, -3, (o) => o.y > 0 && o.y < 0.1],
+    ['left side', 0.3, 7, -3, 0.3, (o) => o.x > 0 && o.x < 0.1],
+    ['right side', C.terrainW - 0.3, 7, 3, -0.3, (o) => o.x < C.terrainW && o.x > C.terrainW - 0.1],
+  ];
+  for (const [name, x, y, vx, vy, ok] of cases) {
+    const w = createWorld(stub(), rand());
+    const j = w.add(createBody('jack', { x, y }));
+    rolling(j, name.includes('side') ? vx : 0.4 * Math.sign(vx), name.includes('side') ? vy : vy);
+    for (let i = 0; i < 1500 && !j.dead; i++) w.step();
+    assert.ok(j.dead, name + ' went out');
+    assert.ok(ok({ x: j.outX, y: j.outY }), `${name}: out spot ${j.outX.toFixed(3)}, ${j.outY.toFixed(3)}`);
+    assert.ok(j.outX >= 0.02 - 1e-9 && j.outX <= C.terrainW - 0.02 + 1e-9 && j.outY >= 0.02 - 1e-9 && j.outY <= C.terrainL - 0.02 + 1e-9);
+  }
 });

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { C } from '../../assets/js/petanque/constants.js';
 import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { mulberry32 } from '../../assets/js/petanque/rng.js';
 import { createBody, launch, createWorld, simulate, deadRowSlot, deadJackSpot } from '../../assets/js/petanque/physics.js';
@@ -172,5 +173,14 @@ test('chooseJackPlacement and jackValid read the same moved circle and flipped d
       assert.ok(jackValid(probe, geometry));
       assert.equal(jackFault({ x: circle.x, y: circle.y + 3 * dir }, geometry).reason, 'short');
     } finally { resetCourt(); }
+  }
+});
+
+test('F10: the ring after a dead jack is centred near its last in-bounds spot', () => {
+  const W = C.terrainW, L = C.terrainL;
+  for (const [spot, dir] of [[{ x: 2.1, y: L - 0.02 }, 1], [{ x: 2.1, y: 0.02 }, -1], [{ x: 0.02, y: 7 }, 1], [{ x: W - 0.02, y: 8 }, -1]]) {
+    const n = nextCircle(spot, dir);
+    assert.ok(Math.abs(n.placed.x - spot.x) <= 1.5 && Math.abs(n.placed.y - spot.y) <= 1.5, JSON.stringify(n.placed));
+    assert.ok(n.circle.x >= 0 && n.circle.x <= W && Math.abs(n.circle.x - spot.x) <= 1.5);
   }
 });

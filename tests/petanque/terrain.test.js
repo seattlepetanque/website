@@ -113,3 +113,57 @@ test('pebbles barely protrude (a boule rides over them) while rocks stay real ob
   assert.ok(maxPebble < 0.006, `pebble protrusion ${maxPebble}`);
   assert.ok(rocks > 0 && maxRock > 0.012, `rock protrusion ${maxRock}`);
 });
+
+// F05: slope field
+const maxGradDeg = (t) => {
+  let m = 0;
+  for (let x = 0; x <= C.terrainW; x += 0.05) for (let y = 0; y <= C.terrainL; y += 0.05) {
+    const s = t.perceived().sample(x, y);
+    m = Math.max(m, (Math.atan(Math.hypot(s.nx, s.ny) / s.nz) * 180) / Math.PI);
+  }
+  return m;
+};
+
+test('max local gradient matches the configured slope, within 1 to 2 degrees', () => {
+  assert.ok(C.slopeMaxDeg >= C.slopeMinDeg && C.slopeMaxDeg <= C.slopeLimitDeg);
+  for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+    const m = maxGradDeg(createTerrain(seed));
+    assert.ok(m <= C.slopeMaxDeg * 1.08 && m >= C.slopeMaxDeg * 0.7, `seed ${seed}: ${m}`);
+  }
+  for (const d of [1, 2]) assert.ok(maxGradDeg(createTerrain(3, { slopeMaxDeg: d })) <= d * 1.08);
+  assert.ok(maxGradDeg(createTerrain(3, { slopeMaxDeg: 9 })) <= C.slopeLimitDeg * 1.08); // clamped to the limit
+});
+
+test('slope field is smooth: neighbouring gradients differ little', () => {
+  for (const seed of [1, 2, 3]) {
+    const v = createTerrain(seed).perceived();
+    const g = (x, y) => { const s = v.sample(x, y); return [s.nx / s.nz, s.ny / s.nz]; };
+    let worst = 0;
+    for (let x = 0.1; x < 3.9; x += 0.1) for (let y = 0.1; y < 14.9; y += 0.1) {
+      const a = g(x, y), b = g(x + 0.1, y), c = g(x, y + 0.1);
+      worst = Math.max(worst, Math.hypot(a[0] - b[0], a[1] - b[1]), Math.hypot(a[0] - c[0], a[1] - c[1]));
+    }
+    assert.ok(worst < 0.025, `seed ${seed}: ${worst}`); // well under the steepest gradient (0.026) per 10 cm
+  }
+});
+
+test('firm is the complement of loose', () => {
+  const t = createTerrain(4);
+  for (const [x, y] of pts(100)) { const s = t.sample(x, y); assert.ok(Math.abs(s.firm + s.loose - 1) < 1e-9); }
+});
+
+test('Read-the-ground overlay data matches sample()', async () => {
+  const { fieldData, lookup } = await import('../../assets/js/petanque/groundview.js');
+  const t = createTerrain(9), fd = fieldData(t), v = t.perceived();
+  for (const [x, y] of pts(200).map(([a, b]) => [Math.min(3.9, Math.max(0, a)), Math.min(14.9, Math.max(0, b))])) {
+    const s = v.sample(x, y), f = lookup(fd, x, y);
+    assert.ok(Math.abs(f.dx - s.nx / s.nz) < 0.004, 'slope x');
+    assert.ok(Math.abs(f.dy - s.ny / s.nz) < 0.004, 'slope y');
+    assert.ok(Math.abs(f.firm - (1 - s.loose)) < 0.08, 'firmness');
+  }
+  for (let j = 0; j < fd.h; j += 7) for (let i = 0; i < fd.w; i += 5) {
+    const s = v.sample(i * fd.step, j * fd.step), k = j * fd.w + i;
+    assert.ok(Math.abs(fd.firm[k] - (1 - s.loose)) < 1e-6);
+    assert.ok(Math.abs(fd.grad[k] - Math.hypot(s.nx, s.ny) / s.nz) < 1e-6);
+  }
+});

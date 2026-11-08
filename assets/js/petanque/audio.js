@@ -23,6 +23,8 @@
 //             Poisson-ish scheduling on AudioContext time; rate and level follow speed. No noise floor.
 //   stone     one slightly louder pebble tick when the physics reports a stone contact
 
+import { createAmbient } from './ambient.js'; // F12: park ambience (birds, breeze, airplane)
+
 // All tuning numbers live here. Gains are linear (0..1 before the compressor).
 export const SOUND = {
   masterGain: 0.7, // overall level into the limiter
@@ -129,6 +131,9 @@ export function createAudio(opts = {}) {
   let ctx = null;
   let master = null; // gain -> limiter -> destination; sounds connect here
   let white = null; // shared 2 s white noise
+  let amb = null; // F12 ambience (created in setup, after unlock)
+  let ambOn = true; // the Ambience toggle
+  const syncAmb = () => { if (amb) amb.setActive(ambOn && !muted); };
   let voices = 0;
   let tickWin = 0, tickCount = 0; // ticks scheduled in the current 1 s window (cap)
   let frame = 0;
@@ -152,6 +157,8 @@ export function createAudio(opts = {}) {
     lim.attack.value = L.attack; lim.release.value = L.release;
     master.connect(lim).connect(ctx.destination);
     white = makeWhite(ctx);
+    try { amb = createAmbient(ctx, master); } catch (e) { amb = null; }
+    syncAmb();
   }
 
   // D12: the game is paused. Suspend the context (scheduled ticks stop with it); unlock() and events don't wake it.
@@ -177,6 +184,7 @@ export function createAudio(opts = {}) {
     } catch (e) {
       ctx = null;
       master = null;
+      amb = null;
     }
   }
 
@@ -492,7 +500,12 @@ export function createAudio(opts = {}) {
     muted = !!value;
     saveMuted(muted);
     syncButtons();
+    syncAmb();
   }
+
+  // F12: Ambience on/off (main.js remembers it in settings); audition ('bird' | 'breeze' | 'plane') ignores both.
+  function setAmbience(on) { ambOn = !!on; syncAmb(); }
+  function playAmbient(name) { unlock(); if (amb) amb.audition(name); }
 
   function isMuted() {
     return muted;
@@ -512,5 +525,5 @@ export function createAudio(opts = {}) {
     return btn;
   }
 
-  return { unlock, setPaused, handleEvents, update, accent, play, setMuted, isMuted, createMuteButton };
+  return { unlock, setPaused, handleEvents, update, accent, play, setMuted, isMuted, setAmbience, playAmbient, createMuteButton };
 }

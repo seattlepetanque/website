@@ -6,7 +6,7 @@
 import { C } from './constants.js';
 import { court, ahead, farGap, alongOf } from './court.js';
 import { SKILL, scaledSkill, coneFor } from './donnee.js';
-import { meneResult, holdingTeam, boulesInHand } from './rules.js';
+import { meneResult, holdingTeam, boulesInHand, fmtCm, JACK_R } from './rules.js';
 
 const DEG = Math.PI / 180;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -92,7 +92,6 @@ export function jackExposure(x, y) {
 const jackEdge = (x, y) => Math.min(x, C.terrainW - x, farGap(y));
 
 // ---------- The situation model (12.1) ----------
-const gapText = (g) => (g < 1 ? `${Math.max(1, Math.round(g * 100))} cm` : `${g.toFixed(1)} m`);
 
 export function readSituation({ match, bodies, player, difficulty = 'medium', advice = false, profile }) {
   const team = player.team, opp = 1 - team;
@@ -491,7 +490,7 @@ const SPECIFIC = new Set(['bringInBoules', 'removePoints', 'voidMene', 'jackScor
 export function reasonParams(code, sit, win) {
   const info = (win && win.info) || {};
   switch (code) {
-    case 'takePoint': { const t = sit.d.them[0]; return { gap: gapText(t === undefined ? 3 : t) }; }
+    case 'takePoint': { const t = sit.d.them[0]; return { gap: fmtCm(t === undefined ? 3 : t - C.boule.r - JACK_R) }; } // F06: centre distances in sit.d, shown as surface gaps
     case 'holdPoint': return {};
     case 'downOnBoules': return { BA: sit.BA, n: Math.abs(sit.BA), hand: sit.hand.us };
     case 'upOnBoules': return { BA: sit.BA, n: sit.BA };
@@ -528,25 +527,33 @@ export function explain(win, run, sit) {
   return { code, ...reasonParams(code, sit, win) };
 }
 
-// ---------- Who throws (12.2) ----------
-// Per player, the best analytic family score using that player's own cone. Returns { player, scores, only }.
-// `players` are the match players of the team with boules left (default: all of them).
+// ---------- Who throws (12.2, F03) ----------
+// Teams keep roles: the pointeur points and the tireur shoots. Per player, the best analytic score of each action using
+// that player's own cone; a player's own-role action gets a stickiness bonus (profile.roleStick), so the other player
+// throws only when the tactics favour them by more than that margin (or the preferred player is out of boules). Close
+// calls go to the role player for the chosen action, never to "whoever holds more boules", so a team does not alternate.
+// Returns { player, scores, only, action }.
+// analytic shot scores run a little under the simulated verdict (the throw's own plan is the final word), so a close call names the shot
+export const SHOOT_LEAN = 0.3;
+export const ROLE_STICK = { marcel: 0.8, odette: 1.0, pierre: 0.9, advice: 0.8 }; // the human seat uses profiles.advice
 export function whoThrows({ match, bodies, team, difficulty = 'medium', cfg = DEFAULT_CFG, players }) {
   const avail = players || match.players.filter((p) => p.team === team && p.boulesLeft > 0);
   if (avail.length <= 1) return { player: avail[0] || null, scores: {}, only: true };
-  const scores = {};
+  const raw = {};
   for (const p of avail) {
     const sit = readSituation({ match, bodies, player: p, difficulty }); // each with their own profile and cone
     const { cands } = plan(sit, cfg);
-    scores[p.id] = cands.length ? Math.max(...cands.map((c) => c.a)) : -9;
+    const top = (intent) => Math.max(-9, ...cands.filter((c) => c.intent === intent).map((c) => c.a));
+    raw[p.id] = { point: top('point'), shoot: top('shoot') };
   }
+  // the action the team's tactics favour (the best analytic family over both players), then who should do it
+  const bestOf = (k) => Math.max(...avail.map((p) => raw[p.id][k]));
+  const action = bestOf('shoot') > bestOf('point') - SHOOT_LEAN ? 'shoot' : 'point', want = action === 'shoot' ? 'tireur' : 'pointeur';
+  const scores = {};
+  for (const p of avail) scores[p.id] = raw[p.id][action] + (p.role === want ? ROLE_STICK[(profiles[p.id] || profiles.advice).id] ?? 0.6 : 0);
   const order = avail.slice().sort((a, b) => scores[b.id] - scores[a.id]);
   let pick = order[0];
-  const tied = order.filter((p) => scores[order[0].id] - scores[p.id] <= 0.25);
-  if (tied.length > 1) {
-    const most = Math.max(...tied.map((p) => p.boulesLeft));
-    const withMost = tied.filter((p) => p.boulesLeft === most);
-    pick = withMost.find((p) => p.isHuman) || withMost[0];
-  }
-  return { player: pick, scores, only: false };
+  const tied = order.filter((p) => scores[order[0].id] - scores[p.id] <= 0.1);
+  if (tied.length > 1) pick = tied.find((p) => p.role === want) || tied.find((p) => p.isHuman) || tied[0];
+  return { player: pick, scores, only: false, action };
 }

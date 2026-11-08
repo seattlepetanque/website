@@ -805,8 +805,8 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 |---|---|---|---|---|
 | F01 | done | sonnet | — | Sports-broadcast follow camera for the roving view |
 | F02 | done | sonnet | F07 | After a mène, players collect their boules from the head and walk to their spots |
-| F03 | in-progress | sonnet | — | Teams keep roles (pointer and shooter) instead of alternating throwers |
-| F04 | todo | sonnet | F03 | Tactics expansion: pointing vs shooting vs promotion, defensive play, the deliberate short drop (design first, then implement) |
+| F03 | done | sonnet | — | Teams keep roles (pointer and shooter) instead of alternating throwers |
+| F04 | in-progress | sonnet | F03 | Tactics expansion: pointing vs shooting vs promotion, defensive play, the deliberate short drop (design first, then implement) |
 | F05 | done | sonnet | — | Slope and firmness fields tuned, plus an optional "Read the ground" analysis view |
 | F06 | done | haiku | — | Surface-to-surface measuring: circle to the rival boule's near edge, all distances to 0.1 cm |
 | F07 | done | sonnet | — | Last thrower picks up the ring straight away and carries it toward the jack |
@@ -815,7 +815,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F10 | done | sonnet | F07 | Cochonnet out of bounds: next ring goes at its last in-bounds spot |
 | F11 | done | haiku | — | "Who holds the point" overlay before each throw |
 | F12 | done | sonnet | — | Ambient park sounds with stereo movement |
-| F13 | todo | haiku | — | Dead-jack void message gives the wrong reason |
+| F13 | in-progress | haiku | — | Dead-jack void message gives the wrong reason |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -919,3 +919,6 @@ Very low overall level (well under the boule sounds), its own volume control or 
 
 ### F13 Dead-jack void message gives the wrong reason (haiku)
 main.js (~line 2021, the void-mène note in endOfMene) always says "The cochonnet went out of bounds, so it is dead … and neither side has boules left: mène void." whenever the jack is dead. By the rules (rules.js endMene) a dead jack voids the mène when both teams still hold boules, or when neither does; if only one team holds boules, that team scores them (not a void). Make the message state the actual case from the boules in hand at that moment: "The cochonnet went out: both teams still have boules, so the mène is void." / "… neither team has boules left, so the mène is void." Also check the non-void dead-jack case reads right (e.g. "The cochonnet went out with only Marcel & Odette holding boules: they score 2."). Add a small test of the message builder (pure helper) for all three cases.
+
+### F03 notes
+- `whoThrows` decides the favoured action, then gives the role player a stickiness bonus (`ROLE_STICK`: Marcel 0.8, Odette 1.0, Pierre 0.9, human seat 0.8; `SHOOT_LEAN` 0.3); the other player throws only when clearly better or the role player is out of boules; close calls go to the role player (no alternating); returns `action`. Medium, 40 matches: shooter's share of shots 71/70% → 74/76%, pointer's share of points (while holding boules) 61/55% → 80/74%; balance unchanged (AI v AI 70 → 68%, vs pointer 48 → 50%). Shot share caps near 75% because the pointer's own plan sometimes shoots after a team-level "point" call (ai.js, left alone).

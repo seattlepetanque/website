@@ -66,7 +66,10 @@ export function createHud(root, hudEl, cb) {
   const resumeBtn = button('Resume game', 'pt-btn pt-resume', () => cb.onResume && cb.onResume());
   pausedEl.append(el('span', 'pt-paused-text', 'Game paused.'), resumeBtn,
     button('New game', 'pt-btn pt-btn-alt pt-paused-new', () => cb.onNewGame && cb.onNewGame()));
-  hudEl.append(pausedEl, board, dock);
+  // F11: "who holds the point" banner, shown before each aim (main.js drives its 2 s hold on the game clock)
+  const holdEl = el('div', 'pt-holding');
+  holdEl.setAttribute('aria-live', 'polite');
+  hudEl.append(pausedEl, board, holdEl, dock);
 
   let setupState = { target: 13, difficulty: 'medium' };
 
@@ -235,6 +238,14 @@ export function createHud(root, hudEl, cb) {
   }
   function hideHint() { hintEl.hidden = true; }
 
+  // F11: text as composed by main.js, team 0 | 1 for the accent. Fades in and out through the is-on class (CSS).
+  function showHolding(text, team) {
+    holdEl.textContent = text;
+    holdEl.classList.toggle('pt-holding1', team === 1);
+    holdEl.classList.add('is-on');
+  }
+  function hideHolding() { holdEl.classList.remove('is-on'); }
+
   function showPaused(on) {
     pausedEl.hidden = !on;
     if (on) focusSoon(resumeBtn);
@@ -274,5 +285,5 @@ export function createHud(root, hudEl, cb) {
     focusSoon(again);
   }
 
-  return { say, showSetup, hideOverlay, update, showChooser, setSuggestion, hideChooser, showHint, hideHint, showPaused, showMeneEnd, showYellowCard, showGameOver };
+  return { say, showSetup, hideOverlay, update, showChooser, setSuggestion, hideChooser, showHint, hideHint, showHolding, hideHolding, showPaused, showMeneEnd, showYellowCard, showGameOver };
 }

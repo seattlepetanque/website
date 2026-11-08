@@ -181,10 +181,11 @@ export const OBS = Object.freeze({
 // The camera style, read in one place (E27 hooks a TV camera in here): 'observer' | 'tv' | 'game'.
 // `game` is the shoulder/head/flight set of cameras. The human's own turn always uses the shoulder view and quick
 // mode keeps the game cameras. `override` is a debug or settings value.
-export const CAMERA_STYLES = Object.freeze(['observer', 'tv', 'game']);
+export const CAMERA_STYLES = Object.freeze(['observer', 'tv', 'game', 'broadcast']);
 // E27: `tv` is the chosen TV variant ('a' | 'b' | 'c', from ?debug&tvcam or settings.tvcam). Quick mode uses the TV camera
 // when a variant is chosen; slow mode keeps the observer unless `override` says 'tv'.
 export function cameraStyle({ slow, human = false, override = null, tv = null } = {}) {
+  if (override === 'broadcast') return human ? 'game' : 'broadcast'; // F01: the sports-broadcast director, in either mode
   if (human) return 'game';
   if (!slow) return tvVariant(tv) ? 'tv' : 'game';
   return CAMERA_STYLES.includes(override) ? override : 'observer';
@@ -333,5 +334,74 @@ export function frameTV(variant, s, prev) {
     [tgt[a], vt[i]] = damp(prev.tgt[a], goal.tgt[a], prev.v.t[i], tt, TV.tgt.max * sp, dt);
   });
   if (s.groundAt) pos.z = Math.max(pos.z, s.groundAt(pos.x, pos.y) + TV.minZ);
+  return { ...st, pos, tgt, v: { p: vp, t: vt } };
+}
+
+// ---- F01: sports-broadcast shots ----
+// Person shots (prep, throw, reaction) stand in front of the subject, round toward the court (the way they face), and look at
+// the upper body; the flight shot sits beyond the cochonnet (away from the thrower) and looks back at it, panning to bring the
+// boule into view as it comes in. Cuts between shots are the director's; moves inside a shot are damped. Pure.
+export const BC = Object.freeze({
+  prep: { dist: 3.0, to: 2.5, push: 4, az: 0.6, camZ: 1.35, lookZ: 1.0 }, // waist-up to full body, a slow push-in
+  throw: { dist: 4.0, to: 4.0, push: 1, az: 0.9, camZ: 1.1, lookZ: 0.9, lead: 0.3 }, // fuller, more side-on to see the swing
+  reaction: { dist: 2.4, to: 2.4, push: 1, az: 0.35, camZ: 1.45, lookZ: 1.25 },
+  flight: { behind: 3.4, beside: 1.3, camZ: 1.2, lookZ: 0.12, pullIn: 8, near: 3 }, // m: the boule this near the jack takes the aim
+  minZ: 0.35, halfW: 0.7, // camera floor above the ground; half-width of a person to keep in frame
+  person: { pos: { time: 0.6, max: 3 }, tgt: { time: 0.4, max: 4 } },
+  fl: { pos: { time: 0.9, max: 3 }, tgt: { time: 0.5, max: 7 } },
+  reducedTime: 3, reducedSpeed: 0.4, // reduced motion: slow moves, no fast pans, no push-in
+});
+export const BROADCAST_SHOTS = Object.freeze(['prep', 'throw', 'reaction', 'flight']);
+
+// Goal camera for a shot (un-damped). s: { subject:{x,y} (person shots), face (yaw they face), body, jack, dir, groundAt, aspect, fov,
+// reduced }. st: { t, side, anchor }. Returns { pos, tgt }.
+export function broadcastGoal(kind, st, s) {
+  const g = s.groundAt || (() => 0), dir = (s.dir || 1) < 0 ? -1 : 1, W = s.width || C.terrainW;
+  const vTan = Math.tan((s.fov || 50) * Math.PI / 360), hTan = vTan * (s.aspect || 1.5);
+  let pos, tgt;
+  if (kind === 'flight') {
+    const F = BC.flight, a = st.anchor || s.jack || s.body;
+    const inside = a.x < W / 2 ? 1 : -1;
+    const px = a.x + inside * F.beside, py = a.y + dir * F.behind;
+    pos = { x: px, y: py, z: g(px, py) + F.camZ };
+    const jk = s.jack || a, b = s.body && s.body !== s.jack ? s.body : null;
+    const d = b ? Math.hypot(b.x - jk.x, b.y - jk.y) : 99;
+    const w = clamp((F.pullIn - d) / (F.pullIn - F.near), 0, 1), e = w * w * (3 - 2 * w);
+    const bz = b ? Math.max(0, (b.z || 0) - (b.r || 0)) : 0;
+    tgt = { x: jk.x + (b ? (b.x - jk.x) * e : 0), y: jk.y + (b ? (b.y - jk.y) * e : 0), z: g(jk.x, jk.y) + F.lookZ + bz * e * 0.8 };
+  } else {
+    const P = BC[kind] || BC.prep, sub = s.subject || { x: C.terrainW / 2, y: C.terrainL / 2 };
+    const face = s.face !== undefined ? s.face : dir < 0 ? Math.PI : 0;
+    const side = st.side || 1;
+    const k = s.reduced ? 0 : clamp(st.t / P.push, 0, 1), e = k * k * (3 - 2 * k);
+    let dist = s.reduced ? P.to : P.dist + (P.to - P.dist) * e;
+    dist = Math.max(dist, (BC.halfW / hTan) * 1.05, 1.15 * Math.max(P.lookZ, 1.85 - P.lookZ) / vTan); // the whole person fits, narrow screens too
+    const ang = face + side * P.az, gz = g(sub.x, sub.y);
+    const lead = P.lead || 0;
+    tgt = { x: sub.x + Math.sin(face) * lead, y: sub.y + Math.cos(face) * lead, z: gz + P.lookZ };
+    const px = sub.x + Math.sin(ang) * dist, py = sub.y + Math.cos(ang) * dist;
+    pos = { x: px, y: py, z: gz + P.camZ };
+  }
+  pos.z = Math.max(pos.z, g(pos.x, pos.y) + BC.minZ);
+  return { pos, tgt };
+}
+
+// One frame of a broadcast shot. prev: the last result (null starts the shot: a cut). dt 0 holds the frame (pause).
+export function frameBroadcast(kind, s, prev) {
+  const dt = clamp(s.dt || 0, 0, 0.1), W = s.width || C.terrainW;
+  if (prev && dt <= 0) return prev;
+  const ref = kind === 'flight' ? (s.jack || s.body) : s.subject;
+  if (!ref) return prev || null;
+  const st = prev ? { ...prev } : { kind, t: 0, side: ref.x < W / 2 ? 1 : -1, anchor: kind === 'flight' ? { x: ref.x, y: ref.y } : null };
+  st.t += dt;
+  const goal = broadcastGoal(kind, st, s);
+  if (!prev) return { ...st, pos: goal.pos, tgt: goal.tgt, v: { p: [0, 0, 0], t: [0, 0, 0] } };
+  const T = kind === 'flight' ? BC.fl : BC.person, k = s.reduced ? BC.reducedTime : 1, sp = s.reduced ? BC.reducedSpeed : 1;
+  const pos = {}, tgt = {}, vp = [], vt = [];
+  ['x', 'y', 'z'].forEach((a, i) => {
+    [pos[a], vp[i]] = damp(prev.pos[a], goal.pos[a], prev.v.p[i], T.pos.time * k, T.pos.max * sp, dt);
+    [tgt[a], vt[i]] = damp(prev.tgt[a], goal.tgt[a], prev.v.t[i], T.tgt.time * k, T.tgt.max * sp, dt);
+  });
+  if (s.groundAt) pos.z = Math.max(pos.z, s.groundAt(pos.x, pos.y) + BC.minZ);
   return { ...st, pos, tgt, v: { p: vp, t: vt } };
 }

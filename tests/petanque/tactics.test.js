@@ -7,7 +7,7 @@ import { mulberry32 } from '../../assets/js/petanque/rng.js';
 import { apply, createMatch } from '../../assets/js/petanque/rules.js';
 import { AI, chooseThrow } from '../../assets/js/petanque/ai.js';
 import {
-  readSituation, plan, evalEnd, deadJackPayoff, explain, whoThrows, riskLambda, removalGain, profiles, DIFFICULTY, DEFAULT_CFG, adviceProfile,
+  readSituation, plan, evalEnd, deadJackPayoff, explain, whoThrows, ROLE_STICK, riskLambda, removalGain, profiles, DIFFICULTY, DEFAULT_CFG, adviceProfile,
 } from '../../assets/js/petanque/tactics.js';
 import { LINES, createCommentary } from '../../assets/js/petanque/personalities.js';
 import { scenarios, chooserScenarios, build } from './tactics-scenarios.js';
@@ -179,6 +179,31 @@ test('whoThrows: Pierre shoots (14), You point (15), only Pierre (16); the sugge
   // the blend sits between Pierre and neutral
   const adv = adviceProfile('pierre');
   assert.ok(adv.appetite > profiles.advice.appetite && adv.appetite < profiles.pierre.appetite);
+});
+
+test('F03 whoThrows: teams keep roles, switching only when the preferred player is out or tactics strongly favour the other', () => {
+  const who = (spec, difficulty = 'hard') => {
+    const s = build(spec);
+    return whoThrows({ match: s.match, bodies: s.world.bodies, team: s.team, difficulty });
+  };
+  const shooting = { thrower: 'marcel', us: { hand: [2, 1], boules: [[0, 0.9]] }, them: { hand: [0, 1], boules: [[0.1, 0], [0, 0.3]] } };
+  const pointing = { thrower: 'odette', us: { hand: [2, 1] }, them: { hand: [2, 1] } };
+  for (const d of ['easy', 'medium', 'hard']) {
+    assert.equal(who(pointing, d).player.id, 'marcel', 'pointing situation: the pointer throws');
+    // the preferred player holds fewer boules and still throws: no alternating on boule count
+    assert.equal(who({ ...pointing, us: { hand: [1, 3] } }, d).player.id, 'marcel');
+  }
+  // a shooting situation (at Hard the tactics clearly favour the shot; at Medium Odette's cone makes pointing the better action)
+  assert.equal(who(shooting).player.id, 'odette', 'shooting situation, both hold boules: the shooter throws');
+  assert.equal(who({ ...shooting, us: { ...shooting.us, hand: [3, 1] } }).player.id, 'odette', 'even when the pointer holds more boules');
+  assert.equal(who({ ...shooting, us: { ...shooting.us, hand: [2, 0] } }).player.id, 'marcel', 'shooter out of boules: the pointer shoots');
+  assert.equal(who({ ...pointing, us: { hand: [0, 2] } }).player.id, 'odette', 'pointer out of boules: the shooter points');
+  assert.equal(who(shooting).action, 'shoot');
+  assert.equal(who(pointing).action, 'point');
+  // the human team: You point, Pierre shoots; the stickiness weight is per personality
+  assert.equal(who({ ...pointing, thrower: 'you', humanTeam: true }).player.id, 'you');
+  assert.equal(who({ ...shooting, thrower: 'you', humanTeam: true }).player.id, 'pierre');
+  assert.ok(ROLE_STICK.marcel > 0 && ROLE_STICK.odette > 0 && ROLE_STICK.pierre > 0 && ROLE_STICK.advice > 0);
 });
 
 test('every reason code has a line for each character, and the difficulty table has the agreed error rates', () => {

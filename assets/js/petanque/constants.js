@@ -75,7 +75,11 @@ export const C = Object.freeze({
   outsideLandDrag: 0.6, // fraction of tangential speed lost at any landing beyond the timbers
   outsideLandSpin: 0.7, // fraction of spin lost there
 
-  // Terrain: macro heightfield
+  // Terrain: macro heightfield (the slope field). terrain.js rescales it so the steepest local gradient on and
+  // around the court is exactly slopeMaxDeg (F05): gentle undulations, boules drift visibly but never dramatically.
+  slopeMaxDeg: 1.5, // default max local gradient, degrees (valid range slopeMinDeg..slopeLimitDeg)
+  slopeMinDeg: 1,
+  slopeLimitDeg: 2,
   macroAmp: 0.025, // max |h| from noise, m
   macroOctaves: Object.freeze([
     Object.freeze({ freq: 0.25, amp: 0.55 }),
@@ -87,7 +91,7 @@ export const C = Object.freeze({
   jitterAmp: 0.0015,
   jitterFreq: 45,
 
-  // Terrain: looseness
+  // Terrain: firmness map (hard <-> soft; stored as looseness 0 = hard pack .. 1 = soft, absorbent gravel)
   looseFreq: 0.45,
   looseThreshold: 0.1, // noise above this starts to be loose
   looseSoftness: 0.5, // transition width

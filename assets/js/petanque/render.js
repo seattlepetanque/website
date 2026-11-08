@@ -5,7 +5,7 @@ import { court } from './court.js';
 import { JACK_END_MARGIN } from './rules.js';
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
-import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV } from './camera.js';
+import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast } from './camera.js';
 import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeSkyPanorama, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 
 const TRANSITION = 0.6; // seconds for camera moves
@@ -169,10 +169,15 @@ export function createRenderer(canvas, terrain) {
   const sun = new THREE.DirectionalLight('#ffe2b8', 3.0);
   const sunOffset = new THREE.Vector3(-5, -7, 6);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(1024, 1024);
+  // The shadow box follows the look target. It is wide enough to take in the trees (within ~15 m of the court) and
+  // their shadows, which fall away from the sun: desktop gets a 2048 map over +-14 m (texels ~1.4 cm), phones keep
+  // a 1024 map over +-10 m. The depth range is 60 m, so the bias is scaled to match the old 25 m setting.
+  const phoneShadows = isPhone(), shadowHalf = phoneShadows ? 10 : 14;
+  sun.shadow.mapSize.set(phoneShadows ? 1024 : 2048, phoneShadows ? 1024 : 2048);
   const sc = sun.shadow.camera;
-  sc.left = -5; sc.right = 5; sc.top = 5; sc.bottom = -5; sc.near = 1; sc.far = 25;
-  sun.shadow.bias = -0.0004;
+  sc.left = -shadowHalf; sc.right = shadowHalf; sc.top = shadowHalf; sc.bottom = -shadowHalf; sc.near = 1; sc.far = 60;
+  sc.updateProjectionMatrix();
+  sun.shadow.bias = -0.00017;
   sun.shadow.normalBias = 0.01;
   scene.add(sun, sun.target);
 
@@ -403,13 +408,13 @@ export function createRenderer(canvas, terrain) {
     }
   }
 
-  // Jack finder: at 6-10 m the jack is a few pixels, so a bobbing chevron (constant screen size) floats over it,
-  // and a soft ground halo shows in the head view. ?debug&jackvis=a|b|c|ab|ac|bc|abc|none compares the options.
+  // Jack finder: at 6-10 m the jack is a few pixels, so a bobbing chevron (constant screen size) floats over it.
+  // ?debug&jackvis=a|c|ac|none compares the options (a = chevron, c = bright orange jack).
   const jackVisParam = (() => {
     try { const q = new URLSearchParams(location.search); return q.has('debug') ? q.get('jackvis') : null; } catch (e) { return null; }
   })();
-  const jv = jackVisParam === null ? { a: true, b: false, c: true, headRing: true }
-    : { a: jackVisParam.includes('a'), b: jackVisParam.includes('b'), c: jackVisParam.includes('c'), headRing: false };
+  const jv = jackVisParam === null ? { a: true, c: true }
+    : { a: jackVisParam.includes('a'), c: jackVisParam.includes('c') };
   const jackBright = new THREE.MeshStandardMaterial({ color: '#ff8a1e', metalness: 0, roughness: 0.4, emissive: '#ff6a00', emissiveIntensity: 0.6 });
   const jackChevron = (() => {
     const cv = makeCanvas(64, 96), g = cv.getContext('2d');
@@ -423,18 +428,6 @@ export function createRenderer(canvas, terrain) {
     scene.add(spr);
     return spr;
   })();
-  const jackHalo = (() => {
-    const cv = makeCanvas(128, 128), g = cv.getContext('2d');
-    const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-    gr.addColorStop(0, 'rgba(255,241,194,0)'); gr.addColorStop(0.5, 'rgba(255,241,194,0)');
-    gr.addColorStop(0.68, 'rgba(255,241,194,0.95)'); gr.addColorStop(0.82, 'rgba(255,241,194,0.35)'); gr.addColorStop(1, 'rgba(255,241,194,0)');
-    g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
-    const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, fog: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
-    m.renderOrder = 10; m.visible = false;
-    scene.add(m);
-    return m;
-  })();
   let jackLive = null, jackT = 0;
   // The chevron is only wanted while the human aims a boule (D17): main.js switches it on and off, and it fades over ~0.4 s
   let arrowWant = false, arrowK = 0;
@@ -443,7 +436,7 @@ export function createRenderer(canvas, terrain) {
     jackT += dt;
     arrowK = reduce() ? (arrowWant ? 1 : 0) : Math.max(0, Math.min(1, arrowK + (arrowWant ? dt : -dt) / 0.25));
     const e = jackLive, on = e && !e.body.dead && mode !== 'inspect' && !measure.children.length && !scoring.children.length && !placeMarker.visible;
-    if (!on) { jackChevron.visible = false; jackHalo.visible = false; return; }
+    if (!on) { jackChevron.visible = false; return; }
     const p = e.mesh.position, dist = camera.position.distanceTo(p);
     const k = Math.max(0, Math.min(1, (dist - 1.5) / 1.5)); // fade out inside ~1.5 m, fully on by 3 m
     const ndcH = dist * Math.tan(camera.fov * Math.PI / 360); // metres per unit of NDC height at the jack
@@ -453,14 +446,6 @@ export function createRenderer(canvas, terrain) {
       jackChevron.material.opacity = k * arrowK;
       jackChevron.visible = true;
     } else jackChevron.visible = false;
-    const kh = Math.max(0, Math.min(1, (dist - 0.9) / 0.8)); // the halo is a ground mark, so it can stay closer in
-    if ((jv.b || (jv.headRing && mode === 'head')) && kh > 0) {
-      const gz = terrain.sample(p.x, p.y).h + 0.012;
-      jackHalo.position.set(p.x, p.y, gz);
-      jackHalo.scale.setScalar(Math.max(0.2, ndcH * 0.07));
-      jackHalo.material.opacity = kh * 0.9;
-      jackHalo.visible = true;
-    } else jackHalo.visible = false;
   }
 
   // Divot decals: a pool of soft dark discs just above the ground, reused in a ring
@@ -682,7 +667,7 @@ export function createRenderer(canvas, terrain) {
     clearMeasure();
     scoring.add(groundRing(jack.x, jack.y, 0, o.radius, o.fill, 0.3, 0.014, 2));
     const hw = Math.min(0.009, Math.max(0.0035, o.radius * 0.05)); // E17: a tiny circle gets a thin line, never an inflated one
-    scoring.add(groundRing(jack.x, jack.y, o.radius - hw, o.radius + hw, o.edge, 0.95, 0.018, 3)); // centred on the radius (the rival's centre)
+    scoring.add(groundRing(jack.x, jack.y, o.radius - hw, o.radius + hw, o.edge, 0.95, 0.018, 3)); // centred on the radius (F06: the rival's near surface)
     // E17: each badge sits beside its boule (away from the jack, turned aside if that is taken) so the boule stays visible
     const BR = 0.075, badges = [];
     const taken = [{ x: jack.x, y: jack.y, r: (jack.r || 0.015) + 0.02 }];
@@ -1195,14 +1180,16 @@ export function createRenderer(canvas, terrain) {
   let flightFrame = null; // camera.js spring state while the flight camera follows moving bodies
   let obsFrame = null; // E11: camera.js state of the casual-observer camera (kept while it stays in that mode)
 
+  let bcFrame = null; // F01: camera.js state of the current broadcast shot (a new shot is a cut)
   let tvFrame = null, tvPending = null; // E27: the TV shot's state, and a camera request held until the shot has played out
   function setCamera(m, o = {}, flush = false) {
     if (mode === 'tv' && m !== 'tv' && m !== 'flight' && !flush && !o.now) { // let the boule settle on screen before the next cut
       if (tvFrame && tvFrame.restT < (TV.hold[tvFrame.variant] || 0) && !reduce()) { tvPending = [m, o]; return; }
     }
     tvPending = null;
-    const cutIn = m === 'tv' || mode === 'tv'; // TV style cuts: no glide into or out of the shot
+    const cutIn = m === 'tv' || mode === 'tv' || m === 'broadcast' || !!o.cut; // TV style cuts: no glide into or out of the shot
     if (m === 'tv') tvFrame = null;
+    if (m === 'broadcast') bcFrame = null;
     if (m === 'inspect' && (mode !== 'inspect' || o.reset)) { // o.reset: a scripted cut replaces the user's orbit
       orbit.dist = o.dist || 2.5;
       orbit.az = o.az !== undefined ? o.az : 0;
@@ -1237,6 +1224,16 @@ export function createRenderer(canvas, terrain) {
       obsFrame = f;
       goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
       goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
+    } else if (mode === 'broadcast') { // F01: a director's shot (opts.shot: prep | throw | reaction | flight)
+      const jk = opts.bodies && opts.bodies.find((b) => b.kind === 'jack' && !b.dead);
+      const sub = opts.subject;
+      const face = opts.face !== undefined ? opts.face : opts.faceTo && sub ? Math.atan2(opts.faceTo.x - sub.x, opts.faceTo.y - sub.y) : undefined;
+      const f = frameBroadcast(opts.shot, { subject: sub, face, body: opts.body, jack: jk, dir: court.dir, dt, reduced: reduce(), groundAt: (x, y) => terrain.sample(x, y).h, aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50 }, bcFrame);
+      if (f) {
+        bcFrame = f;
+        goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
+        goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
+      }
     } else if (mode === 'tv') { // E27: a TV-style shot of an AI throw
       const jk = opts.bodies && opts.bodies.find((b) => b.kind === 'jack' && !b.dead);
       const f = frameTV(tvVariant(opts.variant) || 'a', { body: opts.body, jack: jk, dir: court.dir, dt, reduced: reduce(), groundAt: (x, y) => terrain.sample(x, y).h, aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50 }, tvFrame);

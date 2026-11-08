@@ -53,6 +53,13 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 // y = 0), ready for E10's flipping direction. One rule for a thrown and a placed jack.
 export const JACK_R = 0.015;
 export const JACK_END_MARGIN = 0.5;
+// F06: every displayed distance is surface to surface. gapM: metres from a's edge to b's edge (negative = touching or overlapping).
+// fmtCm: one decimal, "18.3 cm" (metres from 1 m up, "1.8 m").
+export const gapM = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) - (a.r ?? 0) - (b.r ?? 0);
+export function fmtCm(m) {
+  const v = Math.max(0, m);
+  return v < 1 ? `${(v * 100).toFixed(1)} cm` : `${v.toFixed(1)} m`;
+}
 const endGap = (jack, g) => ((g.dir ?? 1) < 0 ? jack.y : g.length - jack.y); // distance in front of the end string
 export function jackValid(jack, geometry = DEFAULT_GEOMETRY) {
   const g = { ...DEFAULT_GEOMETRY, ...geometry };
@@ -174,6 +181,7 @@ export function apply(match, event) {
     case 'jackThrown': {
       if (match.phase !== 'jack') return match;
       const jack = { x: event.jack.x, y: event.jack.y, dead: !!event.jack.dead };
+      if (jack.dead && event.jack.spot) jack.spot = { x: event.jack.spot.x, y: event.jack.spot.y }; // F10: last in-bounds spot
       if (!jackValid(jack, match.geometry)) {
         // Invalid: the other team places the jack by hand; the thrower's team still plays first.
         return { ...match, phase: 'jackPlace', jackTeam: event.team, placingTeam: 1 - event.team, jack: null };
@@ -211,7 +219,7 @@ export function apply(match, event) {
       if (match.phase !== 'meneEnd') return match;
       const r = match.result;
       const g = match.geometry; // E10: the next mène starts from a circle around the last jack, played the other way
-      const nc = nextCircle(match.jack, g.dir ?? 1, { width: g.width, length: g.length });
+      const nc = nextCircle(match.jack && match.jack.dead && match.jack.spot ? match.jack.spot : match.jack, g.dir ?? 1, { width: g.width, length: g.length });
       return {
         ...match,
         geometry: { ...g, circle: { x: nc.circle.x, y: nc.circle.y }, dir: nc.dir },

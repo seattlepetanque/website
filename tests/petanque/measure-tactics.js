@@ -20,6 +20,17 @@ if (process.env.DSCALE) process.env.DSCALE.split(',').forEach((v, i) => { diffic
 if (process.env.EPS) process.env.EPS.split(',').forEach((v, i) => { DIFFICULTY[['easy', 'medium', 'hard'][i]].eps = +v; });
 if (AIM.AI && !process.env.TIME_GUARD) AIM.AI.timeGuard = false; // the 40 ms wall-clock guard makes results load-dependent; TIME_GUARD=1 keeps it
 
+// WHO_OLD=1: the pre-F03 pick (best analytic score per player; within 0.25 the one with most boules), for the before/after comparison
+function oldWhoThrows({ match, bodies, team, difficulty, players }) {
+  const scores = {};
+  for (const p of players) { const { cands } = plan(readSituation({ match, bodies, player: p, difficulty }), DEFAULT_CFG); scores[p.id] = cands.length ? Math.max(...cands.map((c) => c.a)) : -9; }
+  const order = players.slice().sort((a, b) => scores[b.id] - scores[a.id]);
+  const tied = order.filter((p) => scores[order[0].id] - scores[p.id] <= 0.25);
+  if (tied.length === 1) return order[0];
+  const most = Math.max(...tied.map((p) => p.boulesLeft)), w = tied.filter((p) => p.boulesLeft === most);
+  return w.find((p) => p.isHuman) || w[0];
+}
+
 const DEG = Math.PI / 180;
 const d2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
@@ -88,6 +99,7 @@ export function playMatch(seed, { diffs = ['medium', 'medium'], bot = null, targ
       // who throws: the bot's team lets You go first; the AI uses whoThrows when the module has it, else most boules first
       let player;
       if (botTeam) player = avail.find((p) => p.id === 'you') || avail[0];
+      else if (avail.length > 1 && process.env.WHO_OLD) player = oldWhoThrows({ match, bodies: world.bodies, team, difficulty: diffs[team], players: avail });
       else if (avail.length > 1 && whoThrows) player = whoThrows({ match, bodies: world.bodies, team, difficulty: diffs[team], players: avail }).player;
       else player = avail.slice().sort((a, b) => b.boulesLeft - a.boulesLeft)[0];
       const jk = world.bodies.find((b) => b.kind === 'jack');
@@ -118,7 +130,7 @@ export function playMatch(seed, { diffs = ['medium', 'medium'], bot = null, targ
       simulate(world, 20);
       out.throws++;
       const r = {
-        player: player.id, team, difficulty, opp, ptsSigned, dTheirs, table: choice.info && choice.info.table, estHit: choice.info && choice.info.hitRate, bucket: bucket(sitInfo), intent: choice.intent, family: choice.family || choice.intent, why: choice.why ? choice.why.code : 'none',
+        avail: avail.map((p) => p.id), player: player.id, team, difficulty, opp, ptsSigned, dTheirs, table: choice.info && choice.info.table, estHit: choice.info && choice.info.hitRate, bucket: bucket(sitInfo), intent: choice.intent, family: choice.family || choice.intent, why: choice.why ? choice.why.code : 'none',
         shootBoule: choice.intent === 'shoot' && choice.info.tag === 'boule', shootJack: choice.intent === 'shoot' && choice.info.tag === 'jack',
         hit: false, carreau: false, ownMoved: 0, jackMoved: d2(jk, { x: jx, y: jy }) > 0.15 || jk.dead, jackDead: !!jk.dead,
       };
@@ -153,6 +165,7 @@ const ROWS = {
 const rowOpts = (row, d) => {
   if (row === 'hardvhard') return { diffs: ['hard', 'hard'] };
   if (row === 'hardveasy') return { diffs: ['hard', 'easy'] };
+  if (row === 'aivai') return { diffs: [d, d] };
   const o = ROWS[row](d);
   o.diffs = [d, d];
   return o;
@@ -168,6 +181,7 @@ function runJob({ row, d, from, to }) {
   return { row, d, recs, res };
 }
 
+const recsHaveBot = (recs) => recs.some((r) => String(r.family).startsWith('bot'));
 const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : NaN);
 const pct = (n, dd) => (dd ? (100 * n / dd).toFixed(0) + '%' : '-');
 const q = (a, p) => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : NaN; };
@@ -203,6 +217,15 @@ function report(label, parts, { detail = false } = {}) {
     const a = ai.filter((r) => r.player === id), sh = a.filter((r) => r.shootBoule);
     if (!a.length) continue;
     console.log(`    ${id.padEnd(8)} ${pct(sh.length, a.length).padStart(5)} ${pct(sh.filter((r) => r.hit).length, sh.length).padStart(5)} ${pct(sh.filter((r) => r.carreau).length, sh.length).padStart(7)} ${mean(sh.map((r) => r.ownMoved)).toFixed(2).padStart(10)} ${pct(sh.filter((r) => r.jackMoved).length, sh.length).padStart(11)}`);
+  }
+  // F03 role allocation, only where both seats are AI (aivai/hardvhard rows): the tireur's share of a team's shots, the pointeur's share of its points
+  for (const [team, tir, poi] of [[0, 'pierre', 'you'], [1, 'odette', 'marcel']]) {
+    const t = ai.filter((r) => r.team === team);
+    if (recsHaveBot(recs) || !t.some((r) => r.player === poi) || !t.some((r) => r.player === tir)) continue;
+    const shots = t.filter((r) => r.intent === 'shoot'), pts = t.filter((r) => r.intent === 'point');
+    const shotsIn = shots.filter((r) => r.avail.includes(tir)), ptsIn = pts.filter((r) => r.avail.includes(poi));
+    console.log(`  roles team ${team} while the role player holds boules: ${tir} takes ${pct(shotsIn.filter((r) => r.player === tir).length, shotsIn.length)} of ${shotsIn.length} shots; ${poi} takes ${pct(ptsIn.filter((r) => r.player === poi).length, ptsIn.length)} of ${ptsIn.length} points`);
+    console.log(`  roles team ${team}: ${tir} takes ${pct(shots.filter((r) => r.player === tir).length, shots.length)} of ${shots.length} shots; ${poi} takes ${pct(pts.filter((r) => r.player === poi).length, pts.length)} of ${pts.length} points`);
   }
   const mist = ai.filter((r) => r.why === 'mistake').length;
   console.log(`  tactical errors: ${pct(mist, ai.length)} of AI throws`);

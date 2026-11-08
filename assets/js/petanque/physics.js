@@ -380,11 +380,20 @@ function inLumber(b) {
   return false;
 }
 
+// F10: the last in-bounds spot of a ball judged dead: where its centre last was inside the string lines (tracked each
+// step as lx/ly, so it is the crossing point to within one step), held OUT_INSET inside every line
+export const OUT_INSET = 0.02;
+export function lastInBounds(b) {
+  const x = Number.isFinite(b.lx) ? b.lx : b.x, y = Number.isFinite(b.ly) ? b.ly : b.y;
+  const cl = (v, hi) => Math.max(OUT_INSET, Math.min(hi - OUT_INSET, v));
+  return { x: cl(x, C.terrainW), y: cl(y, C.terrainL) };
+}
+
 function checkDead(w, b) {
   const m = b.r + C.deadMargin;
   if (b.x < -m || b.x > C.terrainW + m || b.y > C.terrainL + m || b.y < -m) {
     b.dead = true; b.ghost = true; b.ghostT = 0;
-    b.outX = b.x; b.outY = b.y; // where it crossed the line (AI sims aim by this)
+    const o = lastInBounds(b); b.outX = o.x; b.outY = o.y; // F10: where it crossed the line, just inside it (AI sims aim by this; the jack's next ring goes here)
     w.events.push({ type: 'dead', t: w.t, a: b.id, x: b.x, y: b.y, speed: Math.hypot(b.vx, b.vy, b.vz) });
     if (w.isClone) { // AI sims only need to know it went out: a new ghost is stopped on the spot (saves sim time)
       b.state = 'resting'; b.restT = 0;
@@ -437,7 +446,12 @@ export function createWorld(terrain, rand = Math.random) {
           collide(w, a, b);
         }
       }
-      for (let i = 0; i < n; i++) if (!bs[i].ghost && !bs[i].dead) checkDead(w, bs[i]);
+      for (let i = 0; i < n; i++) {
+        const q = bs[i];
+        if (q.ghost || q.dead) continue;
+        if (q.x >= 0 && q.x <= C.terrainW && q.y >= 0 && q.y <= C.terrainL) { q.lx = q.x; q.ly = q.y; } // F10
+        checkDead(w, q);
+      }
       w.t += dt;
     },
     settled() {

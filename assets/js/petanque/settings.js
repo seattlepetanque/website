@@ -23,6 +23,15 @@ export const settings = {
   // E27 (hidden): the TV camera variant for AI turns in quick mode: '' (off) | 'a' | 'b' | 'c'. Set it from the console:
   // localStorage.setItem('petanque-tvcam', 'b'). ?debug&tvcam=a|b|c overrides it.
   get tvcam() { try { const v = localStorage.getItem('petanque-tvcam'); return ['a', 'b', 'c'].includes(v) ? v : ''; } catch (e) { return ''; } },
+  // F05: the "Read the ground" view can be switched off entirely (slow devices): localStorage.setItem('petanque-groundview', 'off')
+  get groundView() { try { return localStorage.getItem('petanque-groundview') !== 'off'; } catch (e) { return true; } },
+  set groundView(v) { try { localStorage.setItem('petanque-groundview', v ? 'on' : 'off'); } catch (e) { /* storage blocked */ } },
+  // F01 (hidden): the camera style, '' (default: observer in slow mode, game cameras in quick) | 'observer' | 'tv' | 'game' | 'broadcast'.
+  // localStorage.setItem('petanque-camstyle', 'broadcast'). ?debug&cam=... overrides it.
+  get camStyle() { try { const v = localStorage.getItem('petanque-camstyle'); return ['observer', 'tv', 'game', 'broadcast'].includes(v) ? v : ''; } catch (e) { return ''; } },
+  // F12: ambient park sounds on/off (default on); the Ambience button in the controls bar sets it
+  get ambience() { try { return localStorage.getItem('petanque-ambience') !== 'off'; } catch (e) { return true; } },
+  set ambience(v) { try { localStorage.setItem('petanque-ambience', v ? 'on' : 'off'); } catch (e) { /* storage blocked */ } },
   onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
 };
 export const MODE_INFO = {
