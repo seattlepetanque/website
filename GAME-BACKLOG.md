@@ -816,6 +816,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F11 | done | haiku | — | "Who holds the point" overlay before each throw |
 | F12 | done | sonnet | — | Ambient park sounds with stereo movement |
 | F13 | in-progress | haiku | — | Dead-jack void message gives the wrong reason |
+| F14 | todo | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -922,3 +923,10 @@ main.js (~line 2021, the void-mène note in endOfMene) always says "The cochonne
 
 ### F03 notes
 - `whoThrows` decides the favoured action, then gives the role player a stickiness bonus (`ROLE_STICK`: Marcel 0.8, Odette 1.0, Pierre 0.9, human seat 0.8; `SHOOT_LEAN` 0.3); the other player throws only when clearly better or the role player is out of boules; close calls go to the role player (no alternating); returns `action`. Medium, 40 matches: shooter's share of shots 71/70% → 74/76%, pointer's share of points (while holding boules) 61/55% → 80/74%; balance unchanged (AI v AI 70 → 68%, vs pointer 48 → 50%). Shot share caps near 75% because the pointer's own plan sometimes shoots after a team-level "point" call (ai.js, left alone).
+
+### F14 Simultaneous boule gathering (sonnet)
+Replaces F02's staggered turns. After the mène-end result, all players (except while busy with the ring F07 or the dead jack F10, who join when free) start at once: each walks to their own boules (nearest first), bends and picks each up, then walks to their goal spot for the next mène (the next jack thrower to the new circle, others to waiting slots).
+- **Collision avoidance:** simple local steering, e.g. each step, separation from other players within ~0.8 m (a repulsive push sideways), slowing when someone is directly ahead, and waiting briefly if a target boule is being picked up by someone else. Keep it cheap (4 agents) and deterministic enough for tests.
+- **Deadlock fallback:** if the whole process hasn't finished after 20 s of game time, any boules still on the ground go straight into their owners' hands (`setHeldBoules`), and everyone walks (or, if blocked, fades) to their goal spot.
+- **Skip and modes:** click/key still skips to the end state; quick mode unchanged (fades); pause clock; instant/autotest instant.
+- **Tests:** a pure steering step keeps agents ≥ ~0.5 m apart in a crowded scenario; the fallback fires and completes at 20 s; nobody walks across a boule being picked up.
