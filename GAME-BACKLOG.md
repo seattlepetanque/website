@@ -561,7 +561,7 @@ From the user's play-testing (2026-11-02). Earlier contracts still apply. Shared
 | E14 | done | haiku | — | Full-screen toggle as a video-player-style icon |
 | E15 | done | sonnet | — | Game ends at 13 on the ground; leftover boules aren't played |
 | E16 | done | sonnet | E01, E06 | Holding the boules: slow-mode pick-up and hand positions; quick-mode underarm palm-down toss |
-| E17 | in-progress | sonnet | E01–E33 | Round 4 review |
+| E17 | done | sonnet | E01–E33 | Round 4 review |
 | E18 | done | haiku | — | Choppy yellow placement-zone fill: clip it properly instead of clamping cells |
 | E19 | done | sonnet | — | Bug: AI throws to the middle when the jack is near a string |
 | E20 | done | sonnet | — | Current cochonnet boundary rule: in if any part is inside the side strings; > 0.5 m from the end string |
@@ -769,6 +769,32 @@ Since E30 moved the fullscreen and pause icons, the scoreboard header no longer 
 ### E17 Round 4 review (sonnet)
 Tests, build, integration across modes (quick vs slow on every flow), screenshots, bug review, and a "Round 4 remaining issues" list.
 
+## Round 4 remaining issues
+
+E17 review (2026-11-08). Fixed in the review:
+- Pierre's stance is picked once per throw (the slow-mode walk-to-circle step passes it on to the turn's own `enterCircle`).
+- The jack chevron is switched off at once at the start of every AI turn and on a new game, and fades out in 0.25 s on release; it shows only during the human's boule aim.
+- The default head camera is wider (min half-width 0.9 m, distance 2.4 m); the who-throws card view lifts the subject above the card. The mène-end close-up keeps its own tight framing.
+- Close calls: the scoring circle radius is now computed after the debug close-call shift (a stale radius made it about 1 m across; real mènes were consistent), a tiny circle gets a thin edge line (never inflated), and number badges sit beside their boules (turned aside from the jack, other boules and each other) so every scoring boule stays visible.
+- The mène-end camera cuts at once (`now`) instead of queuing behind a TV shot's hold (up to 2.2 s).
+- Missing imports in main.js (`whoKind`, `composeSuggestion`) made Pierre's suggestion throw "not defined" at the who-throws card; fixed (the card now shows his line).
+- `?debug&autotest` stalled in a mène when the AI placed a jack (the placed jack's drop was never simulated in instant mode); it now settles synchronously. `&mene2&jackplace` shows the placement toward y = 0. The placement zone fill is a little stronger.
+- New `court-match.test.js` (E24): seeded full AI matches (4 seeds, 42 mènes, both directions) check every thrown or placed jack is valid and 6 to 10 m from the current circle and ahead of it, and that the rules, AI and court agree on circle and direction. E25 (placement view frames the whole 6-10 m zone string to string, also toward y = 0) and E26 (flight, TV and observer cameras behind the play at dir -1, covered by camera tests) were checked in screenshots and tests. The fullscreen and pause icons sit bottom right and overlapped nothing in normal play at 1200x800 and 500x900.
+
+Not done or not verified:
+- Headless Chrome renders few frames, so no walking, carrying, fading or camera motion was seen in motion: walk to the circle, the ring carry and its E28 correction, the held-boule pick-up, the quick-mode changeover fades, the observer and TV cameras, and pause freezing mid-walk are verified by code reading, tests and stills only. New game / Play again reset the court to (2, 1), +y, clear held boules, opacities and the chevron (code), but not in a running browser.
+- The mène-end card still covers the lowest scoring boule in tall boards; the debug `&closecall` forces a rival that contradicts the scoring set, so its circle is only a layout check.
+- The debug fetch scene still shows the old teammate hand-over; the head view of a tight mène end on a phone was not checked in landscape.
+- `aimView()` at a jack-out mène end is not forced to cut ahead of a TV hold.
+
+A human should play-test:
+- Slow against Quick: pace, whether walking to the circle and fetching feel too slow, and what a reasonable walking speed is.
+- The observer camera in Slow mode (framing, pan and dolly speed, whether it ever loses the action) and the TV variants a, b and c in Quick mode (which is best, smoothness, the hand-off to your turn).
+- Holding the boules (pick-up, hands, the palm-up quick toss) and the team colour of the held boules.
+- The ring carry, the E28 move back, and the quick-mode ring fade at a mène's start.
+- The close-call view: top-down framing, mm labels, badge placement, and whether the card hides anything on a phone.
+- The head camera at the who-throws card and between throws; the placement view on a phone; pause and resume in the middle of a walk; New game after a long game.
+
 ---
 
 # Round 5 backlog
@@ -781,6 +807,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F02 | todo | sonnet | E17 | After a mène, players collect their boules from the head and walk to their spots |
 | F03 | todo | sonnet | E17 | Teams keep roles (pointer and shooter) instead of alternating throwers |
 | F04 | todo | sonnet | F03 | Tactics expansion: pointing vs shooting vs promotion, defensive play, the deliberate short drop (design first, then implement) |
+| F05 | todo | sonnet | E17 | Slope and firmness fields tuned, plus an optional "Read the ground" analysis view |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 The user likes the roving (observer/TV) camera and wants it to cut like a sports broadcast when action happens:
@@ -806,3 +833,15 @@ Step 1, design (extend GAME-PLAN §12, shown to the user before implementing), a
 - **The deliberate short drop:** in rare end-of-mène cases, throwing a boule intentionally very short (essentially dropping it) is right, to avoid any risk of giving away the point (e.g. you hold the point, it's your last boule, any real throw risks disturbing the head, and the opponent has no boules left).
 
 Each with a scenario test (fixed court, expected decision and why). Step 2: implement in tactics.js and ai.js (new candidate families: `promote`, `block`/`cover`, `drop`), with reason codes and commentary lines, keeping decision time within budget and the D22 balance. Depends on F03 (roles).
+
+### F05 Slope and firmness fields, plus a "Read the ground" view (sonnet)
+What exists: terrain.js already generates, per game seed, a smooth macro height field (±4.5 cm over metres, which drives rolling drift) and a looseness map (0..1) that sets landing restitution (0.15–0.3), landing dig and rolling resistance (μr 0.14–0.28). Physics terms: the bounce is the coefficient of restitution; softness is compliance (its inverse, firmness). Call the combined map **firmness** in the UI.
+- **Tune the slopes:** make the slope field explicit and controllable. A few gentle undulations with local gradients up to about 1–2° (≈ 1.7–3.5 cm per metre), generated at the start of each game, so boules visibly tend to drift left, right or up and down the tiny hills. Expose the amplitude in constants.js. Re-run the measure scripts and keep the AI's perceived terrain consistent (it already reads the large-scale height).
+- **Firmness field:** keep the looseness map but name it firmness (hard ↔ soft). Make it vary meaningfully across the court (patches of hard pack and soft, loose gravel), affecting restitution, landing dig and rolling resistance as now.
+- **"Read the ground" view:** a toggle for the human player only, available during their turn. It overlays an animated visualisation on the court:
+  - slope gradients: flowing particles or animated arrows moving downhill, with speed showing steepness;
+  - firmness: a colour wash (e.g. warm = soft and absorbent, cool = hard and lively), with a small legend.
+  
+  It simulates a player walking up to study the terrain.
+- **Performance:** the view is off by default and costs nothing when off. Particles are instanced and capped (fewer on phones). The overlay texture is computed once per game (plus divots if cheap). Add a setting to disable it entirely on slow devices.
+- Tests for the slope field (max gradient within the configured range, smoothness) and screenshots of the view.
