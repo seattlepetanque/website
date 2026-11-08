@@ -438,10 +438,10 @@ export function createRenderer(canvas, terrain) {
   let jackLive = null, jackT = 0;
   // The chevron is only wanted while the human aims a boule (D17): main.js switches it on and off, and it fades over ~0.4 s
   let arrowWant = false, arrowK = 0;
-  function setJackArrow(on) { arrowWant = !!on; if (reduce()) arrowK = arrowWant ? 1 : 0; }
+  function setJackArrow(on, now) { arrowWant = !!on; if (now || reduce()) arrowK = arrowWant ? 1 : 0; }
   function updateJackMark(dt) {
     jackT += dt;
-    arrowK = reduce() ? (arrowWant ? 1 : 0) : Math.max(0, Math.min(1, arrowK + (arrowWant ? dt : -dt) / 0.4));
+    arrowK = reduce() ? (arrowWant ? 1 : 0) : Math.max(0, Math.min(1, arrowK + (arrowWant ? dt : -dt) / 0.25));
     const e = jackLive, on = e && !e.body.dead && mode !== 'inspect' && !measure.children.length && !scoring.children.length && !placeMarker.visible;
     if (!on) { jackChevron.visible = false; jackHalo.visible = false; return; }
     const p = e.mesh.position, dist = camera.position.distanceTo(p);
@@ -549,7 +549,7 @@ export function createRenderer(canvas, terrain) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setIndex(idx);
-    const m = new THREE.Mesh(geo, zoneMat(0.16));
+    const m = new THREE.Mesh(geo, zoneMat(0.22));
     m.renderOrder = order; m.frustumCulled = false;
     return m;
   }
@@ -681,14 +681,27 @@ export function createRenderer(canvas, terrain) {
   function showScoring(jack, o) {
     clearMeasure();
     scoring.add(groundRing(jack.x, jack.y, 0, o.radius, o.fill, 0.3, 0.014, 2));
-    scoring.add(groundRing(jack.x, jack.y, o.radius - 0.009, o.radius + 0.009, o.edge, 0.95, 0.018, 3)); // centred on the radius (the rival's centre)
-    const placed = [];
+    const hw = Math.min(0.009, Math.max(0.0035, o.radius * 0.05)); // E17: a tiny circle gets a thin line, never an inflated one
+    scoring.add(groundRing(jack.x, jack.y, o.radius - hw, o.radius + hw, o.edge, 0.95, 0.018, 3)); // centred on the radius (the rival's centre)
+    // E17: each badge sits beside its boule (away from the jack, turned aside if that is taken) so the boule stays visible
+    const BR = 0.075, badges = [];
+    const taken = [{ x: jack.x, y: jack.y, r: (jack.r || 0.015) + 0.02 }];
+    for (const q of o.others || []) taken.push({ x: q.x, y: q.y, r: (q.r || 0.037) + 0.01 });
     for (const it of o.items) {
-      let lift = 0.11;
-      for (const q of placed) if (Math.hypot(q.x - it.x, q.y - it.y) < 0.16) lift = Math.max(lift, q.lift + 0.16);
-      placed.push({ x: it.x, y: it.y, lift });
+      const away = Math.atan2(it.y - jack.y, it.x - jack.x), d = (it.r || 0.037) + BR + 0.012;
+      let best = null, bm = -Infinity;
+      for (let k = 0; k < 12; k++) {
+        const ang = away + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * Math.PI / 6, x = it.x + Math.cos(ang) * d, y = it.y + Math.sin(ang) * d;
+        let m = Infinity;
+        for (const q of taken) if (!(Math.abs(q.x - it.x) < 1e-6 && Math.abs(q.y - it.y) < 1e-6)) m = Math.min(m, Math.hypot(x - q.x, y - q.y) - q.r - BR);
+        for (const q of badges) m = Math.min(m, Math.hypot(x - q.x, y - q.y) - 2 * BR);
+        m -= k * 0.004; // prefer straight away
+        if (m > bm) { bm = m; best = { x, y }; }
+        if (m >= 0 && k === 0) break;
+      }
+      badges.push(best);
       const spr = badgeSprite(String(it.n), o.edge, '#fff');
-      spr.position.set(it.x, it.y, terrain.sample(it.x, it.y).h + 0.073 + lift);
+      spr.position.set(best.x, best.y, terrain.sample(best.x, best.y).h + 0.09);
       scoring.add(spr);
     }
     // E32: a distance label for every scoring boule and the rival, as screen-aligned boxes kept off each other,
@@ -696,7 +709,7 @@ export function createRenderer(canvas, terrain) {
     const LW = 0.25, LH = 0.085, jr = jack.r || 0.015;
     const hits = [{ x: jack.x, y: jack.y, r: jr + 0.01 }];
     for (const q of o.others || []) hits.push({ x: q.x, y: q.y, r: (q.r || 0.037) + 0.005 });
-    for (const it of o.items) hits.push({ x: it.x, y: it.y, r: 0.075 }); // badge
+    for (const q of badges) hits.push({ x: q.x, y: q.y, r: BR }); // badge
     const boxes = []; // placed label boxes, centres
     const clashBox = (cx, cy) => {
       for (const q of hits) { // box against circle
@@ -1184,7 +1197,7 @@ export function createRenderer(canvas, terrain) {
 
   let tvFrame = null, tvPending = null; // E27: the TV shot's state, and a camera request held until the shot has played out
   function setCamera(m, o = {}, flush = false) {
-    if (mode === 'tv' && m !== 'tv' && m !== 'flight' && !flush) { // let the boule settle on screen before the next cut
+    if (mode === 'tv' && m !== 'tv' && m !== 'flight' && !flush && !o.now) { // let the boule settle on screen before the next cut
       if (tvFrame && tvFrame.restT < (TV.hold[tvFrame.variant] || 0) && !reduce()) { tvPending = [m, o]; return; }
     }
     tvPending = null;
@@ -1254,12 +1267,12 @@ export function createRenderer(canvas, terrain) {
       for (const p of opts.points || []) {
         x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
       }
-      const margin = opts.margin || 0.3, el = opts.el || 0.95; // rad of elevation (E32: near top-down at mène end)
-      const minHalf = opts.minHalf || 0.45;
+      const margin = opts.margin || 0.5, el = opts.el || 0.95; // rad of elevation (E32: near top-down at mène end)
+      const minHalf = opts.minHalf || 0.9; // E17: wider default, the chooser view sat right on the gravel
       const hx = Math.max(minHalf, (x1 - x0) / 2 + margin), hy = Math.max(minHalf, (y1 - y0) / 2 + margin);
       const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
       const vf = camera.fov * Math.PI / 180, hf = 2 * Math.atan(Math.tan(vf / 2) * camera.aspect);
-      const dist = Math.max(opts.dist || 1.4, hx / Math.tan(hf / 2), (hy * Math.sin(el) + 0.1) / Math.tan(vf / 2) + hy * Math.cos(el)) * 1.05;
+      const dist = Math.max(opts.dist || 2.4, hx / Math.tan(hf / 2), (hy * Math.sin(el) + 0.1) / Math.tan(vf / 2) + hy * Math.cos(el)) * 1.05;
       const ly = cy - court.dir * (opts.lift || 0) * dist; // look nearer so the subject sits higher on screen (E10: the circle side)
       goal.tgt.set(cx, ly, groundZ({ x: cx, y: cy }));
       goal.pos.set(cx, ly - court.dir * Math.cos(el) * dist, goal.tgt.z + Math.sin(el) * dist);

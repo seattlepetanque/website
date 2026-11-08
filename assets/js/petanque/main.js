@@ -23,7 +23,7 @@ import { createCharacter, releaseOffset, bendReach } from './character.js';
 import { planRoute, standPoint, pathLength } from './fetch.js';
 import { pickWaitingSlot } from './waiting.js';
 import { attachModels } from './models.js';
-import { PERSONALITIES, CAST_IDS, specFor, pickStance, createCommentary } from './personalities.js';
+import { PERSONALITIES, CAST_IDS, specFor, pickStance, createCommentary, whoKind, composeSuggestion } from './personalities.js';
 
 const TEAM_NAMES = ['You & Pierre', 'Marcel & Odette'];
 const AIM_MAX = 0.6; // rad of aim either side of straight ahead
@@ -523,7 +523,7 @@ function boot() {
   }
   // Everyone to their waiting spot at once (new mène, new game)
   function resetCast() {
-    inCircle = null;
+    inCircle = null; stanceKept = null;
     for (const id of cast.keys()) {
       const ch = cast.get(id);
       ch.setHolding(false); ch.setHeldBoules(null); ch.setCarrying(false); ch.setStance('watch'); shadow(id, false);
@@ -556,6 +556,7 @@ function boot() {
       return sleep(FADE_S * 1000);
     }).then(() => { if (live()) ch.setOpacity(1); });
   }
+  let stanceKept = null; // id whose stance was picked by the walk-to-circle step; the turn's own enterCircle keeps it
   let circleWalk = null; // { id, yaw, tok, start } while a thrower walks to the circle
   // The thrower walks into the circle (the previous one walks out); returns a promise for the arrival
   function enterCircle(id, yaw, snap, kind = 'boule') { // kind: 'jack' for the cochonnet throw (E23), else a boule
@@ -570,7 +571,8 @@ function boot() {
     claims.delete(id);
     shadow(id, true);
     for (const [oid, och] of cast) if (oid !== id && oid !== inCircle && !och.busy) och.setStance('watch');
-    throwStance[id] = pickStance(SPECS[id], stanceRand); // once per throw: the same stance for the plan, the pose and the launch
+    if (stanceKept === id) stanceKept = null; // E17: beginTurn's walk to the circle already picked this throw's stance
+    else throwStance[id] = pickStance(SPECS[id], stanceRand); // once per throw: the same stance for the plan, the pose and the launch
     ch.setStance(stanceOf(id));
     if (jack) ch.setHeldBoules(null); // E23: a jack throw shows no boules in the hands
     ch.setHolding(jack ? 'jack' : 'boule', jack ? undefined : teamColor(id));
@@ -701,12 +703,13 @@ function boot() {
   }
 
   // Head camera framing the jack and live boules within 2 m of it
+  let camNow = false; // E17: the mène-end camera cuts at once, never queued behind a TV shot's hold
   function headView(jack, extra, lift, tight, game) { // game: the user's own View button, never the observer
     const pts = world.bodies
       .filter((b) => b.kind === 'boule' && !b.dead && Math.hypot(b.x - jack.x, b.y - jack.y) < 2)
       .map((b) => ({ x: b.x, y: b.y }));
     if (!game && observing()) { observerView([{ x: jack.x, y: jack.y }].concat(tight ? [] : pts, extra || [])); return; }
-    renderer.setCamera('head', { target: { x: jack.x, y: jack.y }, points: (tight ? [] : pts).concat(extra || []), lift, ...(tight ? { margin: 0.25, minHalf: 0.55, dist: 1.3 } : {}) });
+    renderer.setCamera('head', { now: camNow, target: { x: jack.x, y: jack.y }, points: (tight ? [] : pts).concat(extra || []), lift, ...(tight ? { margin: 0.25, minHalf: 0.55, dist: 1.3 } : {}) });
   }
   // D07 between throws: ribbons from the cochonnet to the closest live boule of each team (a team with none is dropped)
   const TEAM_INK = [{ line: '#2f5fb8', dark: 'rgba(22,49,95,0.95)' }, { line: '#f0a040', dark: 'rgba(100,54,8,0.95)' }];
@@ -751,7 +754,7 @@ function boot() {
     scoringShown = false;
     renderer.showJackZone(false);
     renderer.setPlaceMarker(null);
-    renderer.setJackArrow(false);
+    renderer.setJackArrow(false, true);
     throwEvents = [];
     flying = null;
     renderer.sync(world);
@@ -834,7 +837,7 @@ function boot() {
     const thrower = (debug && match.players.find((p) => p.id === params.get('thrower') && p.team === team)) ||
       match.players.find((p) => p.team === team && (p.isHuman || team === 1)) ||
       match.players.find((p) => p.team === team);
-    if (debug && first && params.has('jackplace')) { forceInvalidJack(team); return; }
+    if (debug && (first || params.has('mene2')) && params.has('jackplace')) { forceInvalidJack(team); return; } // &mene2&jackplace: placement toward y = 0 (E17)
     const lead = first ? `${TEAM_NAMES[team]} won the toss. ` : '';
     refreshHud({ team, playerId: thrower.id, text: `${thrower.isHuman ? 'You' : thrower.name} throw${thrower.isHuman ? '' : 's'} the jack` });
     aimView();
@@ -996,6 +999,7 @@ function boot() {
   async function aiJack(player, lead) {
     refreshHud({ team: player.team, playerId: player.id, text: `${player.name} throws the jack` });
     say2(`${lead}${player.name} is aiming…`);
+    renderer.setJackArrow(false, true); // E17
     const t = token;
     await sleep(AI_MIN_THINK + 100);
     if (t !== token) return;
@@ -1067,6 +1071,7 @@ function boot() {
 
   async function aiBoule(player) {
     say2(`${player.name} is aiming…`);
+    renderer.setJackArrow(false, true); // E17: never a chevron on an AI turn
     renderer.clearMeasure(); // aiming starts: the between-throws lines go (D07)
     const t = token;
     const jk = jackBody();
@@ -1500,7 +1505,7 @@ function boot() {
     if (avail.length > 1 && avail.some((p) => p.isHuman)) {
       refreshHud({ team, playerId: null, text: 'Your team throws next' });
       say2('Your team to play. Who throws?');
-      headView(match.jack);
+      headView(match.jack, undefined, 0.3); // E17: the card covers the middle, so the subject sits high
       hud.showChooser(avail, 'Pierre is sizing up the court…');
       const pierre = avail.find((p) => !p.isHuman);
       if (pierre) suggest(pierre);
@@ -1525,9 +1530,11 @@ function boot() {
       const t = token;
       say2(`${player.isHuman ? 'You walk' : player.name + ' walks'} to the circle…`);
       enterCircle(playerId, baseYaw()).then(() => { if (t === token && match && match.phase === 'play') start(); });
+      stanceKept = playerId;
     } else if (quickSwapFrom(playerId)) { // E31: the changeover (fades, the beat) finishes before the turn starts
       const t = token;
       enterCircle(playerId, baseYaw()).then(() => { if (t === token && match && match.phase === 'play') start(); });
+      stanceKept = playerId;
     } else start();
   }
 
@@ -1685,8 +1692,8 @@ function boot() {
   // E04: set the jack down at `spot` (placer's hand, or at once in quick mode) and simulate it for real, with a
   // small drop, on the natural ground. Play starts only once it has come to rest on a valid spot (placeDone).
   function placeJack(spot) {
-    if (!match || match.phase !== 'jackPlace' || flying) return;
-    if (!jackPlaceValid(spot, match.geometry)) return;
+    if (!match || match.phase !== 'jackPlace' || flying) { if (debug) console.info('[placeJack] refused', match && match.phase, !!flying); return; }
+    if (!jackPlaceValid(spot, match.geometry)) { if (debug) console.info('[placeJack] invalid spot', JSON.stringify(spot), JSON.stringify(match.geometry.circle), match.geometry.dir); return; }
     removeJack();
     renderer.setPlaceMarker(null);
     renderer.showJackZone(false);
@@ -1698,6 +1705,13 @@ function boot() {
     throwEvents = [];
     renderer.sync(world);
     headView(body);
+    if (instant) { // E17: autotest has no frames to run the drop: settle it here, as launchBody does
+      let guard = 0;
+      while (!world.settled() && guard++ < 240 * C.hardCapSeconds) world.step();
+      if (!world.settled()) world.forceRest();
+      onSettled();
+      world.events.length = 0;
+    }
   }
   // The placed jack has come to rest: valid starts play, otherwise a yellow card and the same team places again
   function placeDone() {
@@ -1814,8 +1828,6 @@ function boot() {
           // E22: the circle reaches the losing team's best live boule. Its centre sits on the line, and its cm label is
           // the gap from the jack's edge to its edge, so radius = gap + both radii = centre distance. Every scoring boule
           // stays inside (the max keeps them in if one ever touches the rival). No live rival: enclose them plus a margin.
-          const reach = Math.max(...scoringE.map((e) => e.m.dist + e.b.r));
-          const radius = rivalE ? Math.max(rivalE.m.dist, reach) : reach + 0.07;
           const ink = r.team === 0 ? { fill: '#2f5fb8', edge: '#16315f' } : { fill: '#d9893a', edge: '#8a4a0c' };
           // E32: a debug-only forced close call: the rival sits 7 mm behind the winner along its own line
           if (debug && params.has('closecall') && rivalE) {
@@ -1824,6 +1836,8 @@ function boot() {
             rivalE.b.x = j.x + (rivalE.b.x - j.x) / d * want; rivalE.b.y = j.y + (rivalE.b.y - j.y) / d * want;
             rivalE.m.dist = want;
           }
+          const reach = Math.max(...scoringE.map((e) => e.m.dist + e.b.r)); // after the debug shift, so the rival stays on the line (E17)
+          const radius = rivalE ? Math.max(rivalE.m.dist, reach) : reach + 0.07;
           // E32: gaps within 2 cm of each other are shown in mm so the order is unambiguous
           const gapOf = (b) => Math.hypot(b.x - j.x, b.y - j.y) - b.r - j.r;
           const bestWin = Math.min(...scoringE.map((e) => gapOf(e.b)));
@@ -1841,8 +1855,8 @@ function boot() {
         } else renderer.clearMeasure();
       } else renderer.clearMeasure();
       // E32: near top-down over the circle in both modes (the observer may cut to it), so perspective can't mislead
-      if (scoringShown) renderer.setCamera('head', { target: { x: j.x, y: j.y }, points: pts, lift: innerWidth / innerHeight < 1 ? 0.2 : 0.1, margin: innerWidth / innerHeight < 1 ? 0.12 : 0.22, minHalf: 0.3, el: 1.38 });
-      else headView(j, pts, 0.4, false);
+      if (scoringShown) renderer.setCamera('head', { now: true, target: { x: j.x, y: j.y }, points: pts, lift: innerWidth / innerHeight < 1 ? 0.2 : 0.1, margin: innerWidth / innerHeight < 1 ? 0.12 : 0.22, minHalf: 0.3, dist: 1.4, el: 1.38 });
+      else { camNow = true; headView(j, pts, 0.4, false); camNow = false; }
     } else aimView();
     if (r.void) {
       // say why: a dead jack (even one that rolled back onto the court), tied boules, or no live boules
@@ -1997,7 +2011,7 @@ function boot() {
   if (debug && params.has('autotest')) {
     // AI-only quick match, every throw simulated to rest instantly
     startGame({ target: +params.get('target') || 7, difficulty: 'medium', allAI: true, instant: !params.has('animate') }); // &animate: real time
-  } else if (debug && params.has('jackplace')) {
+  } else if (debug && params.has('jackplace') && !params.has('mene2')) {
     // ?debug&jackplace: Marcel's jack fails and you place it; ?debug&jackplace=ai: your jack fails and the AI places it
     startGame({ target: 7, difficulty: 'medium', firstJackTeam: params.get('jackplace') === 'ai' ? 0 : 1 });
   } else if (debug && params.has('aispot')) {
