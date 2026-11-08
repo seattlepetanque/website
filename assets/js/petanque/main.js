@@ -1,7 +1,7 @@
 // Game loop: terrain, world, renderer, rules, AI, toss input (donnée throw), audio and HUD wired together.
 import { C } from './constants.js';
 import { court, setCourt, resetCourt, baseYaw, ahead, nextCircle } from './court.js';
-import { cameraStyle } from './camera.js';
+import { cameraStyle, tvVariant } from './camera.js';
 import { mulberry32 } from './rng.js';
 import { createTerrain } from './terrain.js';
 import { createWorld, createBody, launch, placeDeadBall, deadRowSlot, deadJackSpot } from './physics.js';
@@ -110,7 +110,9 @@ function boot() {
   const shoulderView = () => renderer.setCamera('shoulder', shoulderCam);
   // E11 / E27: the camera style is read here and nowhere else. Slow mode watches from the side like a spectator
   // ('observer'); the human's own turn (shoulder view) and quick mode keep the game cameras. ?debug&cam=tv|game overrides.
-  const camStyle = (human = false) => cameraStyle({ slow: slow(), human, override: debug ? params.get('cam') : null });
+  // E27: the TV variant (?debug&tvcam=a|b|c, else the hidden setting); a debug tvcam also turns TV on in slow mode
+  const tvVar = () => tvVariant((debug && params.get('tvcam')) || settings.tvcam);
+  const camStyle = (human = false) => cameraStyle({ slow: slow(), human, override: debug ? params.get('cam') || (params.has('tvcam') ? 'tv' : null) : null, tv: tvVar() });
   const observing = () => camStyle() === 'observer';
   const observerView = (points, extra) => renderer.setCamera('observer', { points, ...extra });
   const watchCircle = () => observerView([{ x: court.circle.x, y: court.circle.y }, ahead(5)]); // somebody about to throw
@@ -776,7 +778,8 @@ function boot() {
         renderer.setCamera('flight', { body, bodies: world.bodies });
         later(() => { if (flying === body) renderer.setCamera('observer', { body, bodies: world.bodies }); }, 1100);
       } else renderer.setCamera('observer', { body, bodies: world.bodies });
-    } else renderer.setCamera('flight', { body, bodies: world.bodies });
+    } else if (camStyle(humanOwner) === 'tv') renderer.setCamera('tv', { variant: tvVar() || 'a', body, bodies: world.bodies }); // E27
+    else renderer.setCamera('flight', { body, bodies: world.bodies });
     enableControls(false);
     if (instant) {
       let guard = 0;
@@ -1793,10 +1796,10 @@ function boot() {
 
   // lift the framing so the circle sits above the card (a bottom card on tall/narrow screens, less on wide ones)
   const SCORING_LIFT = () => (innerWidth / innerHeight < 1 ? 0.2 : 0.15);
-  let scoringShown = false;
+  let scoringShown = false, closeCall = false;
   function endOfMene(note) {
     const r = match.result;
-    scoringShown = false;
+    scoringShown = false; closeCall = false;
     const j = jackBody();
     const jackOut = !j || j.dead;
     if (!jackOut) {
@@ -1814,17 +1817,32 @@ function boot() {
           const reach = Math.max(...scoringE.map((e) => e.m.dist + e.b.r));
           const radius = rivalE ? Math.max(rivalE.m.dist, reach) : reach + 0.07;
           const ink = r.team === 0 ? { fill: '#2f5fb8', edge: '#16315f' } : { fill: '#d9893a', edge: '#8a4a0c' };
+          // E32: a debug-only forced close call: the rival sits 7 mm behind the winner along its own line
+          if (debug && params.has('closecall') && rivalE) {
+            const w = scoringE[0].b, want = Math.hypot(w.x - j.x, w.y - j.y) - w.r + rivalE.b.r + 0.007;
+            const d = Math.hypot(rivalE.b.x - j.x, rivalE.b.y - j.y) || 1;
+            rivalE.b.x = j.x + (rivalE.b.x - j.x) / d * want; rivalE.b.y = j.y + (rivalE.b.y - j.y) / d * want;
+            rivalE.m.dist = want;
+          }
+          // E32: gaps within 2 cm of each other are shown in mm so the order is unambiguous
+          const gapOf = (b) => Math.hypot(b.x - j.x, b.y - j.y) - b.r - j.r;
+          const bestWin = Math.min(...scoringE.map((e) => gapOf(e.b)));
+          closeCall = !!rivalE && Math.abs(gapOf(rivalE.b) - bestWin) < 0.02;
+          const lab = (b) => (closeCall ? `${(Math.max(0, gapOf(b)) * 100).toFixed(1)} cm` : edgeCm(b, j));
           renderer.showScoring(j, {
-            radius, fill: ink.fill, edge: ink.edge,
-            items: scoringE.map((e, n) => ({ x: e.b.x, y: e.b.y, n: n + 1 })),
-            rival: rivalE ? { x: rivalE.b.x, y: rivalE.b.y, r: rivalE.b.r, label: edgeCm(rivalE.b, j) } : null,
+            radius, fill: ink.fill, edge: ink.edge, color: TEAM_INK[r.team].line, dark: TEAM_INK[r.team].dark,
+            items: scoringE.map((e, n) => ({ x: e.b.x, y: e.b.y, r: e.b.r, n: n + 1, label: lab(e.b) })),
+            others: world.bodies.filter((b) => b.kind === 'boule' && !b.dead).map((b) => ({ x: b.x, y: b.y, r: b.r })),
+            rival: rivalE ? { x: rivalE.b.x, y: rivalE.b.y, r: rivalE.b.r, label: lab(rivalE.b) } : null,
           });
           scoringShown = true;
           pts.push({ x: j.x - radius, y: j.y - radius }, { x: j.x + radius, y: j.y + radius });
           if (rivalE) pts.push({ x: rivalE.b.x, y: rivalE.b.y });
         } else renderer.clearMeasure();
       } else renderer.clearMeasure();
-      headView(j, pts, scoringShown ? SCORING_LIFT() : 0.4, scoringShown); // subject high in the view, clear of the result card
+      // E32: near top-down over the circle in both modes (the observer may cut to it), so perspective can't mislead
+      if (scoringShown) renderer.setCamera('head', { target: { x: j.x, y: j.y }, points: pts, lift: innerWidth / innerHeight < 1 ? 0.2 : 0.1, margin: innerWidth / innerHeight < 1 ? 0.12 : 0.22, minHalf: 0.3, el: 1.38 });
+      else headView(j, pts, 0.4, false);
     } else aimView();
     if (r.void) {
       // say why: a dead jack (even one that rolled back onto the court), tied boules, or no live boules
@@ -1843,7 +1861,7 @@ function boot() {
       // report the winning boule's gap, the figure on its measuring label
       const win = world.bodies.find((b) => b.id === r.measured[0].id);
       const special = /^(Carreau|Biberon)/.test(note) ? note + ' ' : '';
-      if (win) note = `${special}Closest: ${ownerName(win)} boule, ${gapText(win, j)} from the jack.`;
+      if (win) note = `${closeCall ? 'Close call! ' : ''}${special}Closest: ${ownerName(win)} boule, ${closeCall ? `${(Math.max(0, Math.hypot(win.x - j.x, win.y - j.y) - win.r - j.r) * 100).toFixed(1)} cm` : gapText(win, j)} from the jack.`;
     }
     refreshHud(null);
     gather(r.void ? null : r.team);
@@ -2080,7 +2098,8 @@ function boot() {
     placePlayers('you');
     headView(jackBody());
     showBetween();
-  } else if (debug && params.has('jackshot')) {
+  } else if (debug && (params.has('jackshot') || params.has('tvshot'))) { // ?debug&tvshot[&tvcam=a|b|c&jspeed=&freezeat=]: Pierre's boule toward the jack in quick mode (E27 camera checks)
+    if (params.has('tvshot')) settings.mode = 'quick';
     // --- ?debug&jackshot[&jspeed=&jloft=&jyaw=&freezeat=0.6]: a boule shot hard into the jack, with the flight camera following ---
     clearWorld();
     hud.hideHint();
@@ -2090,7 +2109,7 @@ function boot() {
     put('boule', 1, 2.6, 7.7);
     renderer.sync(world);
     placePlayers('you');
-    launchBody('boule', 0, 'you', { yaw: +params.get('jyaw') || 0.0143, loft: +params.get('jloft') || 0.14, speed: +params.get('jspeed') || 9, backspin: 0, sidespin: 0 });
+    launchBody('boule', 0, params.has('tvshot') ? 'pierre' : 'you', { yaw: +params.get('jyaw') || 0.0143, loft: +params.get('jloft') || 0.14, speed: +params.get('jspeed') || 9, backspin: 0, sidespin: 0 });
     if (freezeAt) { // step to the freeze time up front (headless frames are too slow to get there), moving the camera as it would
       for (let k = 1; world.t < freezeAt; k++) { world.step(); if (k % 24 === 0) { renderer.sync(world); renderer.render(0.1); } }
       renderer.sync(world);

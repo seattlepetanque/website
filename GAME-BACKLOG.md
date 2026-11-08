@@ -561,7 +561,7 @@ From the user's play-testing (2026-11-02). Earlier contracts still apply. Shared
 | E14 | done | haiku | — | Full-screen toggle as a video-player-style icon |
 | E15 | done | sonnet | — | Game ends at 13 on the ground; leftover boules aren't played |
 | E16 | done | sonnet | E01, E06 | Holding the boules: slow-mode pick-up and hand positions; quick-mode underarm palm-down toss |
-| E17 | todo | sonnet | E01–E33 | Round 4 review |
+| E17 | in-progress | sonnet | E01–E33 | Round 4 review |
 | E18 | done | haiku | — | Choppy yellow placement-zone fill: clip it properly instead of clamping cells |
 | E19 | done | sonnet | — | Bug: AI throws to the middle when the jack is near a string |
 | E20 | done | sonnet | — | Current cochonnet boundary rule: in if any part is inside the side strings; > 0.5 m from the end string |
@@ -571,11 +571,11 @@ From the user's play-testing (2026-11-02). Earlier contracts still apply. Shared
 | E24 | done | sonnet | E10 | Bug: valid jack judged invalid, then the AI placed it ~2–3 m from the circle |
 | E25 | done | sonnet | E10 | Bug: the jack-placement view isn't centred on the valid area (both directions) |
 | E26 | done | sonnet | E10 | Bug: after a boule is thrown the camera swings round to face the opposite direction |
-| E27 | in-progress | sonnet | E26, E11 | Experiment: a dynamic TV-presentation camera for AI turns (test builds) |
+| E27 | done | sonnet | E26, E11 | Experiment: a dynamic TV-presentation camera for AI turns (test builds) |
 | E28 | done | sonnet | E10 | Ring too close to the far end: move it back to ~11 m of space |
 | E30 | done | haiku | — | No automatic fullscreen; fullscreen and pause icons bottom right above the status |
 | E31 | done | haiku | E10 | Quick mode: thrower changeover in the circle (out, empty pause, new player in) |
-| E32 | in-progress | sonnet | E11 | Close calls at mène end: distances on scoring boules too, millimetres when close, top-down measuring view |
+| E32 | done | sonnet | E11 | Close calls at mène end: distances on scoring boules too, millimetres when close, top-down measuring view |
 | E33 | done | haiku | — | Header and footer bars span the full width again |
 
 ### E01 Quick and slow modes (sonnet)
@@ -755,6 +755,13 @@ Since E30 moved the fullscreen and pause icons, the scoreboard header no longer 
 
 ### E11 notes
 - `camera.js` `frameObserver`: a spectator 3.5 m outside the side timber at 1.7 m, eased capped pans (0.3 rad/s, 0.8 near the frame edge), slow zoom drift, walks along the side at 1.3 m/s only when the action is > 4.5 m away; reduced motion: slower, no dolly; dt 0 freezes (pause). `cameraStyle({slow, human, override})` → observer/tv/game read once in main.js (`camStyle`), `?debug&cam=game|tv`. render.js `'observer'` mode (and negative frame time clamped). Slow mode uses it for AI turns, after throws, mène end, chooser, flights, reactions, gathering, fetches and the ring carry; the human's own turn (shoulder), placement and quick mode keep the game cameras; after the human's release a 1.1 s flight follow. Six camera tests. Not visually checked (headless renders too few frames): framing, zoom tightness, whether the mène-end card covers the subject.
+
+### E32 notes
+- Every scoring boule labelled (team-coloured), mm precision and "Close call!" when gaps differ < 2 cm, near top-down mène-end view (head camera `el` 1.38 rad) in both modes, box-based label placement; `&closecall` debug. Quick-mode mène end not screenshotted.
+- For E17: in the close-call screenshot (gaps 2.8 vs 3.5 cm) the circle was drawn ~1 m across instead of passing through the rival boule (a minimum display radius overriding E22?), and the "1" badge sat on top of the scoring boule, hiding it. Committed with E27.
+
+### E27 notes
+- Three TV variants for AI boule throws (`camera.js` `frameTV`/`tvGoal`/`tvVariant`, render.js `'tv'` mode): (a) low side tracking shot then cut to the head; (b) reverse angle from 2.4 m behind and 1 m beside the jack, holding 1.4 s after rest; (c) crane rising 0.12 → 1.0 rad over 5 s, holding 2.2 s. Jack throws fall back to (a). `?debug&tvcam=a|b|c` or `localStorage petanque-tvcam`; quick mode uses TV when set, slow mode keeps the observer unless overridden. During a hold the next camera request (including the mène-end view) is queued, delaying it up to 2.2 s. Agent recommends (b) as the default, (c) as the cinematic option. Smoothness, real-turn handoff and phone framing not checked (headless stills only). `?debug&play&tvshot&tvcam=…&freezeat=`.
 
 ### E15 notes
 - `clinchedOnGround` in rules.js: when exactly one team has boules in hand and holds points on the ground reaching the target, `throwSettled` ends the mène through the normal scoring; a team out of boules that holds the point doesn't end it early. main.js and the AI needed no change (no turn is asked for after the phase ends). Four new tests.

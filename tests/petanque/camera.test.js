@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { frameMoving, cameraFromFrame, CAM, frameObserver, OBS, cameraStyle } from '../../assets/js/petanque/camera.js';
+import { frameMoving, cameraFromFrame, CAM, frameObserver, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS } from '../../assets/js/petanque/camera.js';
 import { createBody } from '../../assets/js/petanque/physics.js';
 
 const OPTS = { aspect: 1.6, fov: 50, dt: 1 / 60 };
@@ -229,3 +229,62 @@ test('E10: toward y = 0 the camera stays behind the play (never flips to face th
     assert.equal(cameraStyle({ slow: true, override: 'bogus' }), 'observer');
   });
 }
+
+// ---- E27: TV cameras ----
+const inFrame = (pos, tgt, p, fovDeg, aspect) => {
+  const f = [tgt.x - pos.x, tgt.y - pos.y, tgt.z - pos.z], n = Math.hypot(...f);
+  const fw = f.map((v) => v / n);
+  const r = [fw[1], -fw[0], 0], rn = Math.hypot(r[0], r[1]) || 1; // right (horizontal)
+  const right = [r[0] / rn, r[1] / rn, 0];
+  const d = [p.x - pos.x, p.y - pos.y, p.z - pos.z];
+  const z = d[0] * fw[0] + d[1] * fw[1] + d[2] * fw[2];
+  const x = d[0] * right[0] + d[1] * right[1];
+  // up = right x forward
+  const u = [right[1] * fw[2] - 0, 0 - right[0] * fw[2], right[0] * fw[1] - right[1] * fw[0]];
+  const y = d[0] * u[0] + d[1] * u[1] + d[2] * u[2];
+  const vt = Math.tan(fovDeg * Math.PI / 360);
+  return z > 0.1 && Math.abs(x / z) <= vt * aspect && Math.abs(y / z) <= vt;
+};
+
+test('cameraStyle: quick mode uses the TV camera only when a variant is chosen', () => {
+  assert.equal(cameraStyle({ slow: false, tv: 'b' }), 'tv');
+  assert.equal(cameraStyle({ slow: false, tv: '' }), 'game');
+  assert.equal(cameraStyle({ slow: false, tv: 'b', human: true }), 'game');
+  assert.equal(cameraStyle({ slow: true, tv: 'b' }), 'observer');
+});
+
+for (const dir of [1, -1]) {
+  for (const variant of TV_VARIANTS) {
+    test(`TV ${variant} dir ${dir}: above ground, boule and head in frame, smooth`, () => {
+      const throwY = dir > 0 ? 3 : 14, jy = dir > 0 ? 11 : 6;
+      const jack = body('jack', 1.8, jy, 0, 0, { state: 'resting' });
+      const ground = (x, y) => 0.05 * Math.sin(x + y);
+      const b = body('boule', 2.1, throwY, 0, 8 * dir, { z: 1.5, state: 'airborne' });
+      let prev = null;
+      for (let i = 0; i < 400; i++) {
+        const settled = i > 300;
+        if (!settled) { b.y += dir * 0.035; b.z = Math.max(b.r, 1.5 - 0.004 * i); if (Math.abs(b.y - jy) < 0.4) b.y = jy - dir * 0.4; }
+        else b.state = 'resting';
+        const s = { body: b, jack, dir, dt: 1 / 60, groundAt: ground, aspect: 1.6, fov: 50 };
+        prev = frameTV(variant, s, prev);
+        assert.ok(prev.pos.z >= ground(prev.pos.x, prev.pos.y) + TV.minZ - 1e-9, 'camera above the ground');
+        // the un-damped goal keeps the boule (a: only the boule; b, c: boule and jack) in view
+        const g = tvGoal(prev, s), tops = variant === 'a' ? [b] : [b, jack];
+        for (const p of tops) assert.ok(inFrame(g.pos, g.tgt, { x: p.x, y: p.y, z: p.z }, 50, 1.6), `${variant} ${i}`);
+      }
+      assert.ok(prev.restT > 0.5);
+    });
+  }
+}
+
+test('TV: dt 0 freezes the shot; reduced motion keeps the crane static', () => {
+  const jack = body('jack', 2, 11, 0, 0, { state: 'resting' });
+  const b = body('boule', 2, 4, 0, 8, { z: 1, state: 'airborne' });
+  const s = { body: b, jack, dir: 1, groundAt: () => 0, aspect: 1.6, fov: 50, dt: 1 / 60 };
+  let f = frameTV('c', s, null);
+  const g = frameTV('c', { ...s, dt: 0 }, f);
+  assert.equal(g, f);
+  const z0 = tvGoal({ ...f, t: 0 }, { ...s, reduced: true }).pos.z, z1 = tvGoal({ ...f, t: 5 }, { ...s, reduced: true }).pos.z;
+  assert.equal(z0, z1);
+  assert.ok(tvGoal({ ...f, t: 5 }, s).pos.z > tvGoal({ ...f, t: 0 }, s).pos.z + 1, 'the crane rises');
+});

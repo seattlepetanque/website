@@ -5,7 +5,7 @@ import { court } from './court.js';
 import { JACK_END_MARGIN } from './rules.js';
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
-import { frameMoving, cameraFromFrame, frameObserver, gatherMoving } from './camera.js';
+import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV } from './camera.js';
 import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeSkyPanorama, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 
 const TRANSITION = 0.6; // seconds for camera moves
@@ -691,24 +691,59 @@ export function createRenderer(canvas, terrain) {
       spr.position.set(it.x, it.y, terrain.sample(it.x, it.y).h + 0.073 + lift);
       scoring.add(spr);
     }
+    // E32: a distance label for every scoring boule and the rival, as screen-aligned boxes kept off each other,
+    // the badges, the jack and every boule (D07's avoidance, in box form so it holds from a top-down view)
+    const LW = 0.25, LH = 0.085, jr = jack.r || 0.015;
+    const hits = [{ x: jack.x, y: jack.y, r: jr + 0.01 }];
+    for (const q of o.others || []) hits.push({ x: q.x, y: q.y, r: (q.r || 0.037) + 0.005 });
+    for (const it of o.items) hits.push({ x: it.x, y: it.y, r: 0.075 }); // badge
+    const boxes = []; // placed label boxes, centres
+    const clashBox = (cx, cy) => {
+      for (const q of hits) { // box against circle
+        const dx = Math.max(Math.abs(cx - q.x) - LW / 2, 0), dy = Math.max(Math.abs(cy - q.y) - LH / 2, 0);
+        if (dx * dx + dy * dy < q.r * q.r) return true;
+      }
+      return boxes.some((b) => Math.abs(b.x - cx) < LW + 0.01 && Math.abs(b.y - cy) < LH + 0.01);
+    };
+    const placeLabel = (b, text, bg, border) => {
+      const r = b.r || 0.037, away = Math.atan2(b.y - jack.y, b.x - jack.x), cands = [];
+      for (let k = 0; k < 16; k++) { // fan out from straight away from the jack, alternating sides
+        const a = away + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * Math.PI / 8;
+        const ux = Math.cos(a), uy = Math.sin(a), t = r + 0.03 + Math.abs(ux) * LW / 2 + Math.abs(uy) * LH / 2;
+        cands.push({ x: b.x + ux * t, y: b.y + uy * t });
+      }
+      let pick = cands.find((c) => !clashBox(c.x, c.y));
+      if (!pick) { // nothing clear: take the candidate furthest from everything
+        let bm = -Infinity;
+        for (const c of cands) {
+          let m = Infinity;
+          for (const q of hits) m = Math.min(m, Math.hypot(c.x - q.x, c.y - q.y) - q.r);
+          for (const q of boxes) m = Math.min(m, Math.hypot(c.x - q.x, c.y - q.y) - 0.1);
+          if (m > bm) { bm = m; pick = c; }
+        }
+      }
+      boxes.push({ x: pick.x, y: pick.y });
+      const spr = labelSprite(text, '#fff', bg, border);
+      spr.position.set(pick.x, pick.y, terrain.sample(pick.x, pick.y).h + 0.1);
+      scoring.add(spr);
+    };
+    for (const it of o.items) if (it.label) placeLabel(it, it.label, o.dark, o.color);
     if (o.rival) {
       const rv = o.rival, r = rv.r || 0.037;
       scoring.add(groundRing(rv.x, rv.y, r + 0.004, r + 0.02, '#e8e8e8', 0.95, 0.018, 3));
       scoring.add(groundRing(rv.x, rv.y, 0, r + 0.004, '#777777', 0.28, 0.016, 2));
-      if (rv.label) {
-        const spr = labelSprite(rv.label, '#fff', 'rgba(110,110,110,0.88)');
-        spr.center.set(0.5, 1); // just below the rival, on screen
-        spr.position.set(rv.x, rv.y - r - 0.03, terrain.sample(rv.x, rv.y).h + 0.04);
-        scoring.add(spr);
-      }
+      if (rv.label) placeLabel(rv, rv.label, 'rgba(110,110,110,0.88)', '#e8e8e8');
     }
   }
-  function labelSprite(text, color, bg) {
+  function labelSprite(text, color, bg, border) {
     const cv = makeCanvas(160, 64), g = cv.getContext('2d');
-    g.font = '700 38px system-ui, sans-serif';
+    let px = 38;
+    g.font = `700 ${px}px system-ui, sans-serif`;
+    while (px > 24 && g.measureText(text).width > 132) { px -= 2; g.font = `700 ${px}px system-ui, sans-serif`; } // E32: "21.6 cm" must fit
     g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillStyle = bg || 'rgba(20,40,75,0.82)';
     g.beginPath(); g.roundRect(6, 8, 148, 48, 12); g.fill();
+    if (border) { g.lineWidth = 4; g.strokeStyle = border; g.stroke(); }
     g.fillStyle = color;
     g.fillText(text, 80, 33);
     const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthTest: false, transparent: true, fog: false }));
@@ -1147,7 +1182,14 @@ export function createRenderer(canvas, terrain) {
   let flightFrame = null; // camera.js spring state while the flight camera follows moving bodies
   let obsFrame = null; // E11: camera.js state of the casual-observer camera (kept while it stays in that mode)
 
-  function setCamera(m, o = {}) {
+  let tvFrame = null, tvPending = null; // E27: the TV shot's state, and a camera request held until the shot has played out
+  function setCamera(m, o = {}, flush = false) {
+    if (mode === 'tv' && m !== 'tv' && m !== 'flight' && !flush) { // let the boule settle on screen before the next cut
+      if (tvFrame && tvFrame.restT < (TV.hold[tvFrame.variant] || 0) && !reduce()) { tvPending = [m, o]; return; }
+    }
+    tvPending = null;
+    const cutIn = m === 'tv' || mode === 'tv'; // TV style cuts: no glide into or out of the shot
+    if (m === 'tv') tvFrame = null;
     if (m === 'inspect' && (mode !== 'inspect' || o.reset)) { // o.reset: a scripted cut replaces the user's orbit
       orbit.dist = o.dist || 2.5;
       orbit.az = o.az !== undefined ? o.az : 0;
@@ -1158,7 +1200,7 @@ export function createRenderer(canvas, terrain) {
     mode = m; opts = o;
     if (m === 'flight') flightFrame = null;
     from.pos.copy(cur.pos); from.tgt.copy(cur.tgt);
-    trans = reduce() ? 1 : 0;
+    trans = reduce() || cutIn ? 1 : 0;
     if (trans === 1) computeGoal(0, true);
   }
 
@@ -1182,6 +1224,14 @@ export function createRenderer(canvas, terrain) {
       obsFrame = f;
       goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
       goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
+    } else if (mode === 'tv') { // E27: a TV-style shot of an AI throw
+      const jk = opts.bodies && opts.bodies.find((b) => b.kind === 'jack' && !b.dead);
+      const f = frameTV(tvVariant(opts.variant) || 'a', { body: opts.body, jack: jk, dir: court.dir, dt, reduced: reduce(), groundAt: (x, y) => terrain.sample(x, y).h, aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50 }, tvFrame);
+      if (f) {
+        tvFrame = f;
+        goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
+        goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
+      }
     } else if (mode === 'flight' && opts.bodies) { // D09: frame every moving body (camera.js), cochonnet first when it flies
       const jack = opts.bodies.find((b) => b.kind === 'jack');
       const f = frameMoving(opts.bodies, jack, { aspect: camera.aspect, fov: camera.fov, dt, reduced: reduce(), thrown: opts.body, dir: court.dir }, flightFrame);
@@ -1204,7 +1254,7 @@ export function createRenderer(canvas, terrain) {
       for (const p of opts.points || []) {
         x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
       }
-      const margin = opts.margin || 0.3, el = 0.95; // rad of elevation
+      const margin = opts.margin || 0.3, el = opts.el || 0.95; // rad of elevation (E32: near top-down at mène end)
       const minHalf = opts.minHalf || 0.45;
       const hx = Math.max(minHalf, (x1 - x0) / 2 + margin), hy = Math.max(minHalf, (y1 - y0) / 2 + margin);
       const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
@@ -1342,6 +1392,7 @@ export function createRenderer(canvas, terrain) {
     const wantFocus = mode === 'shoulder' && preview && preview.donnee ? 1 : 0;
     focusK = reduce() ? wantFocus : focusK + (wantFocus - focusK) * (1 - Math.exp(-dt * 6));
     if (Math.abs(focusK - wantFocus) < 0.002) focusK = wantFocus;
+    if (tvPending && (!tvFrame || reduce() || tvFrame.restT >= (TV.hold[tvFrame.variant] || 0))) { const [pm, po] = tvPending; setCamera(pm, po, true); }
     computeGoal(dt);
     const baseFov = camera.aspect < 1 ? 62 : 50;
     let fov = baseFov;

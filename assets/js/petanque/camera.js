@@ -182,8 +182,11 @@ export const OBS = Object.freeze({
 // `game` is the shoulder/head/flight set of cameras. The human's own turn always uses the shoulder view and quick
 // mode keeps the game cameras. `override` is a debug or settings value.
 export const CAMERA_STYLES = Object.freeze(['observer', 'tv', 'game']);
-export function cameraStyle({ slow, human = false, override = null } = {}) {
-  if (human || !slow) return 'game';
+// E27: `tv` is the chosen TV variant ('a' | 'b' | 'c', from ?debug&tvcam or settings.tvcam). Quick mode uses the TV camera
+// when a variant is chosen; slow mode keeps the observer unless `override` says 'tv'.
+export function cameraStyle({ slow, human = false, override = null, tv = null } = {}) {
+  if (human) return 'game';
+  if (!slow) return tvVariant(tv) ? 'tv' : 'game';
   return CAMERA_STYLES.includes(override) ? override : 'observer';
 }
 
@@ -243,4 +246,92 @@ export function frameObserver(subject, opts, prev) {
   const cp = Math.cos(pitch), look = Math.max(dist, 3);
   const tgt = { x: pos.x + Math.sin(yaw) * cp * look, y: pos.y + Math.cos(yaw) * cp * look, z: pos.z + Math.sin(pitch) * look };
   return { pos, tgt, yaw, pitch, fovK, side, dollyGoal, center: c, v: { y: vy, yaw: vyaw, p: vp, z: vz }, active: true };
+}
+
+// ---- E27: TV-presentation cameras for AI turns ----
+// (a) a low side shot that tracks the boule in flight (main then cuts to the head view);
+// (b) a reverse angle from just behind and beside the jack, watching the boule arrive;
+// (c) a slow crane that rises over the head as the boule settles.
+// Cuts are fine (the renderer cuts in and out), moves inside a shot are damped. Reduced motion: no tracking spring speed,
+// no crane (a fixed medium elevation). `hold` is how long after the boule rests the renderer keeps the shot before the
+// next camera request is honoured.
+export const TV_VARIANTS = Object.freeze(['a', 'b', 'c']);
+export const TV = Object.freeze({
+  minZ: 0.35, // m above the ground
+  sideOff: 1.3, // (a) m outside the side timber
+  lowZ: 0.5, // (a) camera height above the ground
+  behind: 2.4, beside: 1.0, eyeZ: 0.7, // (b) behind the jack (away from the throw), beside it, eye height
+  azimuth: 0.55, // (c) rad round from straight sideways toward the thrower
+  craneTime: 5, craneFrom: 0.12, craneTo: 1.0, // (c) elevation rad, and the seconds to rise
+  craneReduced: 0.5,
+  hold: { a: 0, b: 1.4, c: 2.2 },
+  pos: { time: 0.5, fast: 0.25, max: 14 }, tgt: { time: 0.35, fast: 0.12, max: 20 }, // damping; `fast` while tracking in (a)
+  reducedTime: 1.6, reducedSpeed: 0.4,
+});
+export const tvVariant = (v) => { const k = String(v == null ? '' : v).toLowerCase(); return TV_VARIANTS.includes(k) ? k : null; };
+
+// Goal camera for a shot. s: { body (thrown), jack, dir, groundAt, aspect, fov, width, reduced }. st: { variant, side, anchor, t, restT }.
+// Returns { pos, tgt }. Pure and un-damped (tested directly).
+export function tvGoal(st, s) {
+  const W = s.width || C.terrainW, dir = (s.dir || 1) < 0 ? -1 : 1, g = s.groundAt || (() => 0);
+  const body = s.body, jack = s.jack && s.jack !== body ? s.jack : null;
+  const bp = { x: body.x, y: body.y, z: Math.max(0, (body.z || 0) - (body.r || 0)) };
+  const hp = jack ? { x: jack.x, y: jack.y, z: 0.05 } : bp;
+  let variant = st.variant;
+  if (!jack) variant = 'a'; // a jack throw has no head to watch yet
+  let pos, tgt;
+  if (variant === 'a') {
+    const sx = st.side > 0 ? W + TV.sideOff : -TV.sideOff;
+    pos = { x: sx, y: bp.y + dir * 0.6, z: g(sx, bp.y) + TV.lowZ };
+    tgt = { x: bp.x, y: bp.y + dir * 1.0, z: Math.max(0.1, bp.z * 0.6) };
+  } else if (variant === 'b') {
+    const a = st.anchor || hp, inside = a.x < W / 2 ? 1 : -1;
+    const px = a.x + inside * TV.beside, py = a.y + dir * TV.behind;
+    pos = { x: px, y: py, z: g(px, py) + TV.eyeZ };
+    tgt = { x: (bp.x + hp.x) / 2, y: (bp.y + hp.y) / 2, z: Math.max(0.1, bp.z * 0.3) };
+  } else { // 'c'
+    const vTan = Math.tan((s.fov || 50) * Math.PI / 360), hTan = vTan * (s.aspect || 1.5);
+    const pts = [bp, hp];
+    const c = bbox(pts);
+    const k = s.reduced ? 0 : clamp(st.t / TV.craneTime, 0, 1), e = k * k * (3 - 2 * k);
+    const el = s.reduced ? TV.craneReduced : TV.craneFrom + (TV.craneTo - TV.craneFrom) * e;
+    const ux = st.side * Math.cos(TV.azimuth), uy = -dir * Math.sin(TV.azimuth); // horizontal, from the target to the camera
+    const yaw = Math.atan2(-ux, -uy);
+    tgt = { x: c.x, y: c.y, z: 0.15 };
+    const dist = clamp(fitDistance(pts, tgt, yaw, el, hTan, vTan), CAM.minDist, CAM.maxDist);
+    pos = { x: tgt.x + ux * Math.cos(el) * dist, y: tgt.y + uy * Math.cos(el) * dist, z: g(tgt.x, tgt.y) + tgt.z + Math.sin(el) * dist };
+    pos.z = Math.max(pos.z, g(pos.x, pos.y) + TV.minZ);
+    return { pos, tgt };
+  }
+  pos.z = Math.max(pos.z, g(pos.x, pos.y) + TV.minZ);
+  return { pos, tgt };
+}
+
+// One frame of a TV shot. prev: the last result (null starts a new shot: a cut). dt 0 holds the frame (pause).
+// Returns { pos, tgt, variant, side, anchor, t, restT, v } to hand back as `prev`.
+export function frameTV(variant, s, prev) {
+  const dt = clamp(s.dt || 0, 0, 0.1);
+  const W = s.width || C.terrainW;
+  const body = s.body;
+  if (!body) return prev || null;
+  const jack = s.jack && s.jack !== body ? s.jack : null;
+  const v0 = tvVariant(variant) || 'a';
+  if (prev && dt <= 0) return prev;
+  const st = prev ? { ...prev } : {
+    variant: v0, side: body.x < W / 2 ? 1 : -1, anchor: jack ? { x: jack.x, y: jack.y } : null, t: 0, restT: 0,
+  };
+  st.t += dt;
+  if (body.state === 'resting') st.restT += dt;
+  const goal = tvGoal(st, s);
+  if (!prev) return { ...st, pos: goal.pos, tgt: goal.tgt, v: { p: [0, 0, 0], t: [0, 0, 0] } };
+  const tracking = st.variant === 'a' || !jack;
+  const k = s.reduced ? TV.reducedTime : 1, sp = s.reduced ? TV.reducedSpeed : 1;
+  const pt = (tracking ? TV.pos.fast : TV.pos.time) * k, tt = (tracking ? TV.tgt.fast : TV.tgt.time) * k;
+  const ax = ['x', 'y', 'z'], pos = {}, tgt = {}, vp = [], vt = [];
+  ax.forEach((a, i) => {
+    [pos[a], vp[i]] = damp(prev.pos[a], goal.pos[a], prev.v.p[i], pt, TV.pos.max * sp, dt);
+    [tgt[a], vt[i]] = damp(prev.tgt[a], goal.tgt[a], prev.v.t[i], tt, TV.tgt.max * sp, dt);
+  });
+  if (s.groundAt) pos.z = Math.max(pos.z, s.groundAt(pos.x, pos.y) + TV.minZ);
+  return { ...st, pos, tgt, v: { p: vp, t: vt } };
 }
