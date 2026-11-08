@@ -803,16 +803,17 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 
 | ID | Status | Model | Deps | Title |
 |---|---|---|---|---|
-| F01 | todo | sonnet | E17 | Sports-broadcast follow camera for the roving view |
-| F02 | todo | sonnet | E17 | After a mène, players collect their boules from the head and walk to their spots |
-| F03 | todo | sonnet | E17 | Teams keep roles (pointer and shooter) instead of alternating throwers |
+| F01 | in-progress | sonnet | — | Sports-broadcast follow camera for the roving view |
+| F02 | todo | sonnet | F07 | After a mène, players collect their boules from the head and walk to their spots |
+| F03 | in-progress | sonnet | — | Teams keep roles (pointer and shooter) instead of alternating throwers |
 | F04 | todo | sonnet | F03 | Tactics expansion: pointing vs shooting vs promotion, defensive play, the deliberate short drop (design first, then implement) |
-| F05 | todo | sonnet | E17 | Slope and firmness fields tuned, plus an optional "Read the ground" analysis view |
-| F06 | todo | haiku | — | Surface-to-surface measuring: circle to the rival boule's near edge, all distances to 0.1 cm |
-| F07 | todo | sonnet | — | Last thrower picks up the ring straight away and carries it toward the jack |
-| F08 | todo | haiku | — | Tree shadows cut off at the edge of the inner grass |
-| F09 | todo | haiku | — | Remove the white halo around the cochonnet |
+| F05 | in-progress | sonnet | — | Slope and firmness fields tuned, plus an optional "Read the ground" analysis view |
+| F06 | done | haiku | — | Surface-to-surface measuring: circle to the rival boule's near edge, all distances to 0.1 cm |
+| F07 | in-progress | sonnet | — | Last thrower picks up the ring straight away and carries it toward the jack |
+| F08 | done | haiku | — | Tree shadows cut off at the edge of the inner grass |
+| F09 | done | haiku | — | Remove the white halo around the cochonnet |
 | F10 | todo | sonnet | F07 | Cochonnet out of bounds: next ring goes at its last in-bounds spot |
+| F11 | todo | haiku | — | "Who holds the point" overlay before each throw |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -873,3 +874,13 @@ Remove D04's ground halo (the cream/white ring around the jack shown in the head
 ### F10 Cochonnet out of bounds: ring at its last in-bounds spot (sonnet)
 When the cochonnet goes out of bounds during a mène (dead jack), the next mène's ring goes at the jack's last position in bounds, i.e. where it crossed the string (physics already records `outX`/`outY`; make sure that's the last in-bounds point, clamped just inside the lines), not where the ghost jack came to rest. Then apply E10's legal-circle clamp and E28's room correction as usual.
 In slow mode: after the mène is scored, the idle player closest to the dead jack walks to it (around the outside of the timbers if it's out there, E02 routing), picks it up and sets it down at that last in-bounds spot, so the player carrying the ring (F07) brings the ring there and places it around it. Quick mode: the jack and ring simply appear at the spot. Tests: the next circle is centred near the crossing point for jacks that went out over each side and the end string.
+
+### F06 notes
+- `gapM`/`fmtCm` in rules.js (surface gap; one decimal, "1.8 m" above 1 m) used for every displayed distance (labels, card, status, tactics suggestion text); the scoring circle radius = rival centre distance − boule radius, so its line touches the rival's near surface; no rival → furthest scoring far edge + 0.07 m; "Close call!" kept for < 2 cm. A scoring boule can straddle the line (its near surface is inside). Committed with the next combined commit.
+
+### F08 / F09 notes
+- F09: halo mesh, material, update/fade and the `b`/headRing jackvis options removed (`jackvis` now a|c).
+- F08: the sun shadow box was a fixed ±5 m around the look target and its bounds were never applied (no `updateProjectionMatrix()`); now desktop 2048 map over ±14 m, phones 1024 over ±10 m, 60 m depth range with rescaled bias. The outer plane already received shadows. The box still follows the look target, so very wide views can lose far shadows; the outer-field result wasn't clearly confirmed in screenshots: check by eye. Committed with the next combined commit.
+
+### F11 "Who holds the point" overlay (haiku)
+Before each throw (human or AI, once the previous throw has settled and before the next aim starts), if a team holds the point, show a short overlay near the top of the screen, below the scoreboard: e.g. "Marcel & Odette are holding 2" / "You & Pierre are holding 1", with the team's colour accent. The number is how many of that team's live boules are closer to the jack than the other team's best (`meneResult`/`holdingTeam` on the current ground). If no team holds (no boules yet, tie, dead jack), show nothing. It fades in, stays ~2 s (or until aiming starts), and fades out; instant under reduced motion; frozen while paused; aria-live polite text for screen readers. It must not cover the scoreboard or the court centre. hud.js plus a small hook in main.js; check with a screenshot.
