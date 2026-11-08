@@ -808,6 +808,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F03 | todo | sonnet | E17 | Teams keep roles (pointer and shooter) instead of alternating throwers |
 | F04 | todo | sonnet | F03 | Tactics expansion: pointing vs shooting vs promotion, defensive play, the deliberate short drop (design first, then implement) |
 | F05 | todo | sonnet | E17 | Slope and firmness fields tuned, plus an optional "Read the ground" analysis view |
+| F06 | todo | haiku | — | Surface-to-surface measuring: circle to the rival boule's near edge, all distances to 0.1 cm |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -846,3 +847,12 @@ What exists: terrain.js already generates, per game seed, a smooth macro height 
   It simulates a player walking up to study the terrain.
 - **Performance:** the view is off by default and costs nothing when off. Particles are instanced and capped (fewer on phones). The overlay texture is computed once per game (plus divots if cheap). Add a setting to disable it entirely on slow devices.
 - Tests for the slope field (max gradient within the configured range, smoothness) and screenshots of the view.
+
+### F06 Surface-to-surface measuring (haiku)
+Measurements are about surfaces, not centres:
+- **Distances:** every displayed distance (between-throw lines, mène-end labels, card text, status lines) is the edge-to-edge gap between the cochonnet's surface and the boule's surface (centre distance − jack radius − boule radius), always shown to one decimal: "18.3 cm".
+- **Scoring circle:** centred on the cochonnet's centre, with radius reaching the near edge of the losing team's best boule (centre distance − boule radius), so the circle line touches that boule's near surface rather than passing through its centre. Scoring boules lie inside.
+- **Measuring lines:** the D07 lines run from the jack's surface to the boule's near surface.
+- **Scoring:** the ranking itself is unchanged (all boules share one radius, so centre and edge order agree), but compute and display the gap with the same helper everywhere.
+
+Update `edgeCm`/`gapText`, `showScoring` and `showBetween` in main.js and render.js, and remove E32's "mm only on close calls" rule in favour of always one decimal. Check with a mène-end screenshot.
