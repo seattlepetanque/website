@@ -803,17 +803,18 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 
 | ID | Status | Model | Deps | Title |
 |---|---|---|---|---|
-| F01 | in-progress | sonnet | — | Sports-broadcast follow camera for the roving view |
-| F02 | todo | sonnet | F07 | After a mène, players collect their boules from the head and walk to their spots |
+| F01 | done | sonnet | — | Sports-broadcast follow camera for the roving view |
+| F02 | in-progress | sonnet | F07 | After a mène, players collect their boules from the head and walk to their spots |
 | F03 | in-progress | sonnet | — | Teams keep roles (pointer and shooter) instead of alternating throwers |
 | F04 | todo | sonnet | F03 | Tactics expansion: pointing vs shooting vs promotion, defensive play, the deliberate short drop (design first, then implement) |
-| F05 | in-progress | sonnet | — | Slope and firmness fields tuned, plus an optional "Read the ground" analysis view |
+| F05 | done | sonnet | — | Slope and firmness fields tuned, plus an optional "Read the ground" analysis view |
 | F06 | done | haiku | — | Surface-to-surface measuring: circle to the rival boule's near edge, all distances to 0.1 cm |
-| F07 | in-progress | sonnet | — | Last thrower picks up the ring straight away and carries it toward the jack |
+| F07 | done | sonnet | — | Last thrower picks up the ring straight away and carries it toward the jack |
 | F08 | done | haiku | — | Tree shadows cut off at the edge of the inner grass |
 | F09 | done | haiku | — | Remove the white halo around the cochonnet |
-| F10 | todo | sonnet | F07 | Cochonnet out of bounds: next ring goes at its last in-bounds spot |
-| F11 | todo | haiku | — | "Who holds the point" overlay before each throw |
+| F10 | in-progress | sonnet | F07 | Cochonnet out of bounds: next ring goes at its last in-bounds spot |
+| F11 | in-progress | haiku | — | "Who holds the point" overlay before each throw |
+| F12 | todo | sonnet | — | Ambient park sounds with stereo movement |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -884,3 +885,21 @@ In slow mode: after the mène is scored, the idle player closest to the dead jac
 
 ### F11 "Who holds the point" overlay (haiku)
 Before each throw (human or AI, once the previous throw has settled and before the next aim starts), if a team holds the point, show a short overlay near the top of the screen, below the scoreboard: e.g. "Marcel & Odette are holding 2" / "You & Pierre are holding 1", with the team's colour accent. The number is how many of that team's live boules are closer to the jack than the other team's best (`meneResult`/`holdingTeam` on the current ground). If no team holds (no boules yet, tie, dead jack), show nothing. It fades in, stays ~2 s (or until aiming starts), and fades out; instant under reduced motion; frozen while paused; aria-live polite text for screen readers. It must not cover the scoreboard or the court centre. hud.js plus a small hook in main.js; check with a screenshot.
+
+### F05 notes
+- `slopeMaxDeg` 1.5 (clamped 1–2, `slopeLimitDeg` 2): terrain.js rescales the macro field per seed so the steepest local gradient near the court equals it (seeds measured 1.32–1.50°, previously 1.6–2.1°); `sample()` also returns `firm = 1 − loose`; physics unchanged; AI planning unchanged (measure-throws mean short 0.39/0.28/0.05 m). `groundview.js`: firmness wash (orange soft ↔ grey/blue hard) on a court overlay, up to 220 instanced downhill arrows (90 on phones, static lattice under reduced motion, frozen when paused), legend; built on first use; "Read the ground" button on the human's turn only; `localStorage petanque-groundview=off` disables it; `&groundview` forces it. Terrain tests added. Committed with the next combined commit.
+
+### F01 notes
+- New selectable `'broadcast'` style (default and observer/tv/game unchanged): `director.js` schedules prep (full body from the front, slow push-in), throw (side-on, AI only), flight (from beyond the jack looking back, panning to the incoming boule; jack throws use TV 'a'), head hover 1–2 s, outcome-based reaction cut. Reduced motion: no throw/reaction cuts, slower pans. Game-clock scheduling (pause freezes). Next turn waits ~2.5–3.5 s in this style. `?debug&cam=broadcast` or `localStorage petanque-camstyle=broadcast`; `?bshot=prep|throw|reaction|head`. Not seen in a live match. Committed with the next combined commit.
+
+### F07 notes
+- Slow mode: `startRingPickup()` at mène end (not on game over): the last thrower waits ~0.9 s, picks up the ring, walks to 1 m from the jack on the circle's side and holds it; `gather()` skips them. `nextMene` waits for that, sets the ring down at `nc.placed`, re-carries for E28. Old walk-back path removed. Hooks: `ringJackSpot()` (F10), `ringTask` (F02). Debug `?debug&mene2&ringcarry&slow&f07` (`&f07=held` still). Not seen animated. Committed with the next combined commit.
+
+### F12 Ambient park sounds (sonnet)
+A quiet, synthesized (no audio files) park soundscape under the game sounds, in audio.js or a new ambient.js:
+- **Birds:** occasional chirps and short phrases from a few synthesized species (different pitch contours and rhythms), each at a random stereo position (StereoPannerNode, −0.9…0.9) and distance (level and a touch of low-pass), with irregular gaps; sometimes a call and an answer from the other side.
+- **Breeze:** soft filtered noise swells that slowly rise and fall, panning gently across the field; occasional leaf-rustle bursts.
+- **Distant airplane:** every few minutes, a low, muffled broadband rumble that fades in, pans slowly from one side to the other over ~20–30 s (with a slight Doppler pitch drift), and fades out.
+- **Optional:** faint distant city hum or a far-off dog bark, very rarely.
+
+Very low overall level (well under the boule sounds), its own volume control or toggle ("Ambience" on/off, remembered in localStorage), off when muted, paused with the game (pause clock / suspend), started only after a user gesture. Keep CPU low: schedule events ahead on the audio clock, reuse noise buffers, cap voices. Add audition buttons to the `?debug&sounds` drawer (bird, breeze, plane).
