@@ -809,6 +809,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F04 | todo | sonnet | F03 | Tactics expansion: pointing vs shooting vs promotion, defensive play, the deliberate short drop (design first, then implement) |
 | F05 | todo | sonnet | E17 | Slope and firmness fields tuned, plus an optional "Read the ground" analysis view |
 | F06 | todo | haiku | — | Surface-to-surface measuring: circle to the rival boule's near edge, all distances to 0.1 cm |
+| F07 | todo | sonnet | — | Last thrower picks up the ring straight away and carries it toward the jack |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -856,3 +857,6 @@ Measurements are about surfaces, not centres:
 - **Scoring:** the ranking itself is unchanged (all boules share one radius, so centre and edge order agree), but compute and display the gap with the same helper everywhere.
 
 Update `edgeCm`/`gapText`, `showScoring` and `showBetween` in main.js and render.js, and remove E32's "mm only on close calls" rule in favour of always one decimal. Check with a mène-end screenshot.
+
+### F07 Last thrower brings the ring (sonnet)
+Slow mode. Today, after the mène ends, the last thrower walks back to the old circle later to pick up the ring (E10). Instead: after the last boule of the mène is thrown, the thrower stays in the circle until it stops; then picks up the ring right there (they're standing in it) and walks with it to about 1 m from the cochonnet (on the circle's side of the jack), where they wait holding it while the mène is scored. When the next mène starts, they set the ring down around the jack's position (with the E28 correction if needed: pick up again and walk it back). Fits with F02 (others collecting boules meanwhile). Quick mode unchanged. Uses the pause clock; skippable.
