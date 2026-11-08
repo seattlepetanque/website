@@ -768,3 +768,41 @@ Since E30 moved the fullscreen and pause icons, the scoreboard header no longer 
 
 ### E17 Round 4 review (sonnet)
 Tests, build, integration across modes (quick vs slow on every flow), screenshots, bug review, and a "Round 4 remaining issues" list.
+
+---
+
+# Round 5 backlog
+
+From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rules still apply.
+
+| ID | Status | Model | Deps | Title |
+|---|---|---|---|---|
+| F01 | todo | sonnet | E17 | Sports-broadcast follow camera for the roving view |
+| F02 | todo | sonnet | E17 | After a mène, players collect their boules from the head and walk to their spots |
+| F03 | todo | sonnet | E17 | Teams keep roles (pointer and shooter) instead of alternating throwers |
+| F04 | todo | sonnet | F03 | Tactics expansion: pointing vs shooting vs promotion, defensive play, the deliberate short drop (design first, then implement) |
+
+### F01 Sports-broadcast follow camera (sonnet)
+The user likes the roving (observer/TV) camera and wants it to cut like a sports broadcast when action happens:
+1. **Before the throw:** cut or pan to a full-body (at least waist-up) shot of the player getting ready, in the circle, holding the boule.
+2. **The throw:** hold on the player through the swing and release.
+3. **The flight:** cut to a camera that shows the cochonnet, then pan to bring the incoming boule into view as it lands and rolls.
+4. **After it stops:** hover there for 1–2 s on the head (boule and jack).
+5. **Reaction:** cut to a player reaction: the thrower, their partner, or an opponent, chosen by outcome (good point → thrower or partner celebrating; a point taken from the other side → an opponent's dismay; a miss → the thrower).
+
+Build it as a shot sequencer on top of the E11/E27 camera styles (pure framing helpers in camera.js plus a small director that schedules shots on the game clock), used for AI turns in both modes and for the post-throw part of the human's turn (the human's aim stays in the shoulder view). Cuts may be instant; moves within a shot are smooth. Works in both directions, respects reduced motion (fewer cuts, no fast pans) and pause. Screenshots or freeze-frames of each shot.
+
+### F02 After a mène: collect boules and walk to spots (sonnet)
+In slow mode, after the mène-end result, players take turns walking to the head to pick up their own boules (each player's three, from wherever they lie on the court; a dead boule from the row past the far string), then walk to their spots for the next mène: the next jack thrower to the new circle (after the ring is placed, E10/E28), and the others to their waiting spots (E02) or the circle in turn. They hold their boules (E16) as they walk. Turns should be quick and natural: two or three players can be moving at once, but not bumping. Quick mode: boules and players fade to their places. Skippable with a click or key. Uses the pause clock.
+
+### F03 Teams keep roles (sonnet)
+Teams shouldn't simply alternate who throws. Each team has a pointer and a shooter (Marcel pointer and Odette shooter; on your team the human and Pierre per the chooser). The AI team picks the pointer for pointing situations and the shooter for shooting situations, switching only when needed: when the preferred player is out of boules, or tactics strongly favour the other (the shooter can point when needed and the pointer can shoot when needed, but they tend to stick to their role). Tie this into tactics.js `whoThrows` and the role skills (D16/D22), and into Pierre's suggestion for the human team. Measure that throw allocation follows roles in AI-vs-AI matches (e.g. Odette takes most shots, Marcel most points) without hurting balance.
+
+### F04 Tactics expansion (sonnet)
+Step 1, design (extend GAME-PLAN §12, shown to the user before implementing), adding scenarios and decision rules for:
+- **Pointing vs shooting:** refine when each pays, by distance, boules in hand and score.
+- **Promotion:** deliberately striking your own boule to push it closer to the cochonnet (or onto it), when a gentle hit improves your position more than a new point would.
+- **Defensive play:** when the other team has more boules to throw, limit their chances to score more, e.g. block the approach line, place a boule just behind the jack to cover a shot jack, keep boules spread, and avoid leaving easy targets.
+- **The deliberate short drop:** in rare end-of-mène cases, throwing a boule intentionally very short (essentially dropping it) is right, to avoid any risk of giving away the point (e.g. you hold the point, it's your last boule, any real throw risks disturbing the head, and the opponent has no boules left).
+
+Each with a scenario test (fixed court, expected decision and why). Step 2: implement in tactics.js and ai.js (new candidate families: `promote`, `block`/`cover`, `drop`), with reason codes and commentary lines, keeping decision time within budget and the D22 balance. Depends on F03 (roles).
