@@ -812,6 +812,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F07 | todo | sonnet | — | Last thrower picks up the ring straight away and carries it toward the jack |
 | F08 | todo | haiku | — | Tree shadows cut off at the edge of the inner grass |
 | F09 | todo | haiku | — | Remove the white halo around the cochonnet |
+| F10 | todo | sonnet | F07 | Cochonnet out of bounds: next ring goes at its last in-bounds spot |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -868,3 +869,7 @@ Tree shadows show on the inner grass near the court but stop at its edge and don
 
 ### F09 Remove the cochonnet halo (haiku)
 Remove D04's ground halo (the cream/white ring around the jack shown in the head view) entirely: the mesh, its material, its update and fade logic, and the `b` option of `?debug&jackvis`. Keep the orange jack and the D17 arrow behaviour unchanged.
+
+### F10 Cochonnet out of bounds: ring at its last in-bounds spot (sonnet)
+When the cochonnet goes out of bounds during a mène (dead jack), the next mène's ring goes at the jack's last position in bounds, i.e. where it crossed the string (physics already records `outX`/`outY`; make sure that's the last in-bounds point, clamped just inside the lines), not where the ghost jack came to rest. Then apply E10's legal-circle clamp and E28's room correction as usual.
+In slow mode: after the mène is scored, the idle player closest to the dead jack walks to it (around the outside of the timbers if it's out there, E02 routing), picks it up and sets it down at that last in-bounds spot, so the player carrying the ring (F07) brings the ring there and places it around it. Quick mode: the jack and ring simply appear at the spot. Tests: the next circle is centred near the crossing point for jacks that went out over each side and the end string.
