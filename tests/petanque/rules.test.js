@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createMatch, apply, nextTeam, meneResult, holdingTeam, jackValid, jackFault, jackPlaceValid, jackPlaceFault, playersWithBoules,
+  createMatch, apply, nextTeam, meneResult, holdingTeam, jackValid, jackFault, jackPlaceValid, jackPlaceFault, playersWithBoules, deadJackText,
 } from '../../assets/js/petanque/rules.js';
 
 const jackAt = { x: 2, y: 8 };
@@ -175,6 +175,40 @@ test('dead jack: void if both have boules, else holder scores its boules', () =>
   const dead2 = apply(m2, { type: 'throwSettled', jack: { x: 9, y: 9, dead: true }, boules: [] });
   assert.deepEqual(dead2.scores, [5, 0]); // 6 minus the one just thrown... in hand: 5
   assert.equal(dead2.result.team, 0);
+});
+
+test('deadJackText names the case from the boules in hand when the jack went dead', () => {
+  const names = ['You & Pierre', 'Marcel & Odette'];
+  assert.equal(deadJackText([5, 6], names), 'The cochonnet went out: both teams still have boules, so the mène is void.');
+  assert.equal(deadJackText([0, 0], names), 'The cochonnet went out and neither team has boules left, so the mène is void.');
+  assert.equal(deadJackText([0, 2], names), 'The cochonnet went out with only Marcel & Odette holding boules: they score 2.');
+  assert.equal(deadJackText([3, 0], names), 'The cochonnet went out with only You & Pierre holding boules: they score 3.');
+});
+
+test('dead jack records the boules in hand at the moment it died', () => {
+  // only team 0 has boules: the holder scores its 5 in hand, and the result keeps that count
+  let m = started({});
+  m = apply(m, { type: 'bouleThrown', playerId: 'you' });
+  m = { ...m, players: m.players.map((p) => (p.team === 1 ? { ...p, boulesLeft: 0 } : p)) };
+  const dead = apply(m, { type: 'throwSettled', jack: { x: 9, y: 9, dead: true }, boules: [] });
+  assert.deepEqual(dead.result.inHand, [5, 0]);
+  assert.equal(dead.result.points, 5);
+  assert.equal(deadJackText(dead.result.inHand, ['You & Pierre', 'Marcel & Odette']),
+    'The cochonnet went out with only You & Pierre holding boules: they score 5.');
+
+  // both teams hold boules: void, counts kept
+  let both = apply(started({}), { type: 'bouleThrown', playerId: 'you' });
+  both = apply(both, { type: 'throwSettled', jack: { x: 9, y: 9, dead: true }, boules: [] });
+  assert.ok(both.result.void);
+  assert.deepEqual(both.result.inHand, [5, 6]);
+
+  // the last boule in play went dead: neither team has boules, void, counts kept as zero
+  let last = started({});
+  last = { ...last, players: last.players.map((p) => ({ ...p, boulesLeft: p.id === 'you' ? 1 : 0 })) };
+  last = apply(last, { type: 'bouleThrown', playerId: 'you' });
+  last = apply(last, { type: 'throwSettled', jack: { x: 9, y: 9, dead: true }, boules: [] });
+  assert.ok(last.result.void);
+  assert.deepEqual(last.result.inHand, [0, 0]);
 });
 
 test('match ends at target', () => {

@@ -8,7 +8,7 @@ import { createTerrain } from './terrain.js';
 import { createWorld, createBody, launch, placeDeadBall, deadRowSlot, deadJackSpot } from './physics.js';
 import { createRenderer } from './render.js';
 import {
-  createMatch, defaultPlayers, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm,
+  createMatch, defaultPlayers, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm, deadJackText,
 } from './rules.js';
 import { createHud } from './hud.js';
 import { settings } from './settings.js';
@@ -2018,7 +2018,7 @@ function boot() {
       const live = world.bodies.filter((b) => b.kind === 'boule' && !b.dead);
       const near = [0, 1].map((t) => live.filter((b) => b.team === t)
         .reduce((m, b) => Math.min(m, Math.hypot(b.x - j.x, b.y - j.y)), Infinity));
-      if (jackOut) note = 'The cochonnet went out of bounds, so it is dead (even if it rolled back in) and neither side has boules left: mène void.';
+      if (jackOut && r.inHand) note = deadJackText(r.inHand, TEAM_NAMES); // F13: from the boules in hand when it went dead
       else if (!live.length) note = 'No live boules on the court: mène void.';
       else if (Math.abs(near[0] - near[1]) <= 0.002) note = 'The closest boules of each team are the same distance from the cochonnet: mène void.';
       else { note = 'Mène void.'; console.warn('[void mène] no reason found: please report this with the details below'); }
@@ -2026,6 +2026,7 @@ function boot() {
         liveBoules: live.length, closest: near.map((d) => (Number.isFinite(d) ? +d.toFixed(4) : null)),
         matchJack: match.jack, inHand: match.players.map((p) => `${p.id}:${p.boulesLeft}`).join(' ') });
     }
+    else if (jackOut && r.inHand) note = deadJackText(r.inHand, TEAM_NAMES); // F13: dead jack, one team holds boules
     else if (!jackOut && !r.void && r.measured && r.measured.length) {
       // report the winning boule's gap, the figure on its measuring label
       const win = world.bodies.find((b) => b.id === r.measured[0].id);

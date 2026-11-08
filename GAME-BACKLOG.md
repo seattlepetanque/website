@@ -815,8 +815,8 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F10 | done | sonnet | F07 | Cochonnet out of bounds: next ring goes at its last in-bounds spot |
 | F11 | done | haiku | — | "Who holds the point" overlay before each throw |
 | F12 | done | sonnet | — | Ambient park sounds with stereo movement |
-| F13 | in-progress | haiku | — | Dead-jack void message gives the wrong reason |
-| F14 | todo | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
+| F13 | done | haiku | — | Dead-jack void message gives the wrong reason |
+| F14 | in-progress | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -930,3 +930,6 @@ Replaces F02's staggered turns. After the mène-end result, all players (except 
 - **Deadlock fallback:** if the whole process hasn't finished after 20 s of game time, any boules still on the ground go straight into their owners' hands (`setHeldBoules`), and everyone walks (or, if blocked, fades) to their goal spot.
 - **Skip and modes:** click/key still skips to the end state; quick mode unchanged (fades); pause clock; instant/autotest instant.
 - **Tests:** a pure steering step keeps agents ≥ ~0.5 m apart in a crowded scenario; the fallback fires and completes at 20 s; nobody walks across a boule being picked up.
+
+### F13 notes
+- `endMene` stores `inHand` at the jack's death; `deadJackText(inHand, teamNames)` gives the void-both, void-neither or one-team-scores sentence; used in endOfMene. Three tests.

@@ -145,16 +145,28 @@ export function nextTeam(match) {
   return 1 - hold;
 }
 
+// The sentence for a dead cochonnet, from the boules in hand [team0, team1] when it went dead.
+// Both teams holding boules or neither: void. Only one team: that team scores them.
+export function deadJackText(inHand, teamNames = ['You & Pierre', 'Marcel & Odette']) {
+  const [h0, h1] = inHand;
+  if (h0 > 0 && h1 > 0) return 'The cochonnet went out: both teams still have boules, so the mène is void.';
+  if (h0 === 0 && h1 === 0) return 'The cochonnet went out and neither team has boules left, so the mène is void.';
+  const team = h0 > 0 ? 0 : 1;
+  return `The cochonnet went out with only ${teamNames[team]} holding boules: they score ${inHand[team]}.`;
+}
+
 function endMene(match, jack, boules) {
   let result;
   if (jack.dead) {
     // Dead jack: void if both teams still hold boules, else the team with boules scores them.
+    // inHand is the count at the moment the jack died (kept on the result for the message, deadJackText).
     const h0 = boulesInHand(match, 0);
     const h1 = boulesInHand(match, 1);
-    if (h0 > 0 && h1 > 0) result = { void: true };
-    else if (h0 > 0) result = { team: 0, points: h0, measured: [] };
-    else if (h1 > 0) result = { team: 1, points: h1, measured: [] };
-    else result = { void: true };
+    const inHand = [h0, h1];
+    if (h0 > 0 && h1 > 0) result = { void: true, inHand };
+    else if (h0 > 0) result = { team: 0, points: h0, measured: [], inHand };
+    else if (h1 > 0) result = { team: 1, points: h1, measured: [], inHand };
+    else result = { void: true, inHand };
   } else {
     result = meneResult(jack, boules);
   }
