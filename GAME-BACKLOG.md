@@ -803,6 +803,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 
 | ID | Status | Model | Deps | Title |
 |---|---|---|---|---|
+| F29 | done (temporary) | haiku | F19 | Temporary button to trigger a floatplane landing (remove later) |
 | F01 | done | sonnet | — | Sports-broadcast follow camera for the roving view |
 | F02 | done | sonnet | F07 | After a mène, players collect their boules from the head and walk to their spots |
 | F03 | done | sonnet | — | Teams keep roles (pointer and shooter) instead of alternating throwers |
@@ -1041,3 +1042,6 @@ When Pierre suggests a move in the chooser ("I'd shoot Marcel's boule", "A block
 F14/F15's simultaneous gathering still gets players stuck around the head. Model what real players do: each player locates their boules and nudges/kicks them out toward a free area nobody is standing in (a spot to the side of the head on their own side, chosen to avoid others' areas and paths), then walks there and picks them up together; dead boules beyond the strings are still fetched round the timbers.
 Step 1, design (short write-up in GAME-PLAN §10, shown to the user before step 2): how collection zones are assigned (e.g. each player gets a sector around the head, left/right/near/far by team and next-mène role), how a kick works (a short foot swing that launches the boule with a small simulated roll toward the zone, through physics with live-ball collisions off or limited, or a scripted slide), order and timing so players rarely cross paths, and the fallback (after ~12–15 s, remaining boules go to hands).
 Step 2, implement: a kick animation in character.js, the kick roll (physics or scripted), zone assignment and pathing in crowd.js/main.js replacing the current walk-to-each-boule loop, then the pick-up at the zone and the walk to next-mène spots (F15). Tests: zone assignment never overlaps, kicked boules end within the zone, a crowded head finishes without deadlock in simulation. Screenshots at a few times.
+
+### F29 Temporary floatplane landing button (haiku)
+Top priority, temporary. Add a small in-game button (controls bar, e.g. "✈ Landing") that triggers the F19 floatplane landing immediately (same as `?debug&floatplane=landing`, including framing the camera on it, then returning to the normal camera when it's done). Mark it clearly in code as temporary (`// TEMP F29: remove after review`) so it's easy to delete later.
