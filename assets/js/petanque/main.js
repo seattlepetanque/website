@@ -22,7 +22,7 @@ import { createClock } from './clock.js';
 import * as THREE from '../vendor/three.module.js';
 import { createCharacter, releaseOffset, bendReach } from './character.js';
 import { planRoute, standPoint, pathLength } from './fetch.js';
-import { ringBlockers, ringGate, meneEndReady, steer, planGoals, BLOCK_FADE_S, KICK_TIMEOUT, KICK_STAGGER, ZONE_R, assignZones, collectOrder, kickMove, SLOT_NEAR, chooseKicker, collectPlan, sidleStop, tapReach, KICKER_HURRY } from './crowd.js';
+import { ringBlockers, ringGate, meneEndReady, steer, planGoals, BLOCK_FADE_S, KICK_TIMEOUT, KICK_STAGGER, ZONE_R, assignZones, collectOrder, kickMove, SLOT_NEAR, chooseKicker, collectPlan, sidleStop, tapReach, KICKER_HURRY, sidelineSpots } from './crowd.js';
 import { pickWaitingSlot, waitingSlots } from './waiting.js';
 import { attachModels } from './models.js';
 import { createGroundView } from './groundview.js';
@@ -2269,7 +2269,7 @@ function boot() {
   }
   function startCollect(delay = 2600) {
     if (!slow() || collect || !match || match.phase !== 'meneEnd') return;
-    const st = { tok: token, ids: match.players.map((p) => p.id), skipped: false, finished: false, held: new Map(), picked: false, walkers: new Set(), goal: new Map(), blocked: new Map(), fb: new Set(), goalStarted: new Set(), plan: planNext(), slides: [], zones: null, marks: [] };
+    const st = { tok: token, ids: match.players.map((p) => p.id), skipped: false, finished: false, held: new Map(), picked: false, walkers: new Set(), goal: new Map(), blocked: new Map(), fb: new Set(), goalStarted: new Set(), plan: planNext(), slides: [], zones: null, marks: [], holder: ringHolder };
     collect = st;
     st.done = runCollect(st, delay).catch((err) => console.error(err)).then(() => { st.finished = true; clearZoneMarks(st); });
   }
@@ -2414,10 +2414,15 @@ function boot() {
     // F55: ONE kicker (the player nearest the head, not busy with the ring or the jack) sidles along the boules and taps each toward its
     // slot in its owner's triangle; the others walk to their own stand points and take their three at once when the triangle is complete.
     const people = st.ids.map((id) => { const q = cast.get(id).root.position; return { id, x: q.x, y: q.y }; });
-    const kid = chooseKicker(people, st.head, { holder: ringHolder, busy: [fetchJob && fetchJob.id, jackFetcher].filter(Boolean) });
+    const kid = chooseKicker(people, st.head, { holder: ringHolder || st.holder, busy: [fetchJob && fetchJob.id, jackFetcher].filter(Boolean) });
     const kp = people.find((q) => q.id === kid);
     const cp = collectPlan(world.bodies.filter((b) => b.kind === 'boule' && !b.dead && inField(b) && !(carry && carry.body === b)), st.zones, inField, kp, (b) => !!ringSpot && !ringPlaced && !ringBlockers(ringSpot, [{ id: b.id, x: b.x, y: b.y, r: b.r }]).clear);
     st.kicker = kid; st.landed = new Set(); st.slotted = cp.slotted;
+    // F58: everybody but the kicker waits at a spot along the sideline (outside the strings, 0.8 m from each other and from the zones and
+    // their stand points) with the idle animation only, and walks in for his three boules only once they are all kicked
+    st.waits = sidelineSpots(people, st.head, { dims: { terrainW: C.terrainW, terrainL: C.terrainL }, zones: st.zones, avoid: world.bodies.filter((b) => b.kind === 'boule' && !inField(b) && !b.dead).map((b) => ({ x: b.x, y: b.y })) });
+    st.tourDone = !cp.tour.length;
+    const kicked = (b) => !world.bodies.includes(b) || st.landed.has(b.id) || st.slides.some((q) => q.b === b);
     for (const k of cp.quick) startSlide(st, k.owner, k.boule, k.target); // already at the slot: slid there, no tap
     const run = async (id) => {
       const ch = cast.get(id), job = { id, tok: t, cancelled: false, scripted: false };
@@ -2433,8 +2438,8 @@ function boot() {
       const slotted = st.slotted[id] || [];
       // 1. the kicker's tour: sidle to within reach of each boule, a leg out, tap it toward its slot (no facing, no standing behind it)
       if (id === kid) {
-        for (const k of cp.tour) {
-          if (!alive(id)) return;
+        tour: for (const k of cp.tour) {
+          if (!alive(id)) break tour;
           const b = k.boule;
           if (!world.bodies.includes(b)) continue;
                     job.obstacles = () => obstaclesExcept(null);
@@ -2444,18 +2449,32 @@ function boot() {
             if (!stop.move) break;
             await walkVia(job, id, { x: stop.x, y: stop.y, free: true }, false, KICKER_HURRY);
           }
-          if (!alive(id)) return;
+          if (!alive(id)) break tour;
           if (!world.bodies.includes(b)) continue;
           let p = ch.root.position, r = tapReach({ x: p.x, y: p.y }, ch.yaw, b, { r: b.r });
           if (!r.ok) { // still not in reach (steered off): a quick turn on the spot as a last resort, then the tap
-            await walkVia(job, id, { x: p.x, y: p.y, yaw: Math.atan2(b.x - p.x, b.y - p.y) }); if (!alive(id)) return;
+            await walkVia(job, id, { x: p.x, y: p.y, yaw: Math.atan2(b.x - p.x, b.y - p.y) }); if (!alive(id)) break tour;
             p = ch.root.position; r = tapReach({ x: p.x, y: p.y }, ch.yaw, b, { r: b.r });
           }
           if (!world.bodies.includes(b)) continue;
           ch.setHolding(false);
           await ch.playTap({ leg: r.leg, x: r.x, y: r.y, onContact: () => { if (alive(id) && world.bodies.includes(b)) startSlide(st, k.owner, b, k.target); } });
         }
+        st.tourDone = true;
+        if (!alive(id)) return;
+      } else {
+        // F58: not the kicker: to a sideline spot (no zone walk, no goal walk), then stand there until all his boules are kicked
+        const sp = st.waits && st.waits[id];
+        if (sp && Math.hypot(sp.x - ch.root.position.x, sp.y - ch.root.position.y) > 0.3) {
+          job.obstacles = () => obstaclesExcept(null);
+          await walkVia(job, id, sp);
+          if (!alive(id)) return;
+        }
+        shadow(id, true); ch.setHolding(false); ch.setStance('watch');
+        for (let w = 0; w < 300 && alive(id) && !(slotted.length ? slotted.every(kicked) : st.tourDone); w++) await sleep(100);
+        if (!alive(id)) return;
       }
+
       // 2. to the zone's stand point (south of the triangle), wait for the last slide, and one bend takes all of them
       if (slotted.length && alive(id)) {
         const sp = standPoint({ x: zone.x, y: zone.y }, { x: zone.x, y: zone.y - 1 }, reachOf(ch)); // south of the triangle: every stand point is a zone spacing from the next

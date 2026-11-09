@@ -279,11 +279,11 @@ test('F28 collectOrder: the scoring team first, nearer the head first within a t
 
 test('F55 simulation: ten seeded layouts, one kicker taps every boule to its slot, three-at-once pick-ups, clearly faster than walking to each boule', () => {
   const med = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
-  const tc = [], tg = [];
+  const tc = [], tg = [], th = [];
   let kicksSeen = 0;
   for (let s = 1; s <= 10; s++) {
     const L = layout(s, { tight: s > 5, real: true });
-    const c = createCollect(L.pl, L.boules, { head: L.head, plan: L.plan, dims: DIMS, terrain: flat });
+    const c = createCollect(L.pl, L.boules, { head: L.head, plan: L.plan, dims: DIMS, terrain: flat, holder: s % 2 ? 'odette' : null });
     let low = Infinity, bends = 0;
     const wasPick = new Map(), kickers = new Set();
     for (let i = 0; i < 60 * 60 && !c.finished; i++) {
@@ -304,9 +304,10 @@ test('F55 simulation: ten seeded layouts, one kicker taps every boule to its slo
     for (const a of c.agents) if (a.stands) assert.ok(Math.hypot(a.stands.x - zoneStand(a.zone).x, a.stands.y - zoneStand(a.zone).y) < 0.06, 'picked up from the stand point');
     const g = createGather(L.pl.map((a) => ({ ...a, boules: L.boules.filter((b) => b.owner === a.id) })));
     for (let i = 0; i < 60 * 60 && !g.finished; i++) g.step(1 / 60);
-    tg.push(g.t); tc.push(c.t);
+    tg.push(g.t); tc.push(c.t); th.push(c.tAllTaken);
   }
   assert.ok(kicksSeen > 0, 'the runs do tap');
+  console.log(`F58 all boules in hand: median ${med(th).toFixed(1)} s (${th.map((x) => x.toFixed(1)).join(' ')})`);
   console.log(`F55 median ${med(tc).toFixed(1)} s (${tc.map((x) => x.toFixed(1)).join(' ')}) vs walking to every boule ${med(tg).toFixed(1)} s (${tg.map((x) => x.toFixed(1)).join(' ')})`);
   assert.ok(med(tc) < KICK_TIMEOUT, `median ${med(tc).toFixed(1)} s is inside the fallback`);
   // NOT MET (F55 asked for well under 10 s): twelve serial taps (0.34 s each before the kicker may step on) plus 3 to 7 m of sidling put the end of the tour
@@ -558,4 +559,102 @@ test('F57 simulation: the kicker turns little (no circling) over a whole collect
     totals.push(tot);
   }
   assert.ok(med(totals) < 4 * Math.PI, `total kicker turning while tapping ${totals.map((t) => t.toFixed(1))}`);
+});
+
+// ---- F58: waiting at the sidelines ----
+import { sidelineSpots, SIDE_GAP, SIDE_OUT } from '../../assets/js/petanque/crowd.js';
+
+function randomZones(r, head) { // four zones the way assignZones would give them (so the spots are tested against real stand points)
+  const pl = IDS.map((id, i) => ({ id, team: i % 2, x: head.x + (r() - 0.5) * 2, y: head.y + (r() - 0.5) * 2 }));
+  const bs = Array.from({ length: 12 }, (_, i) => ({ id: 'b' + i, owner: IDS[i % 4], x: head.x + (r() - 0.5) * 3, y: head.y + (r() - 0.5) * 3 }));
+  return { pl, zones: assignZones(pl, bs, head, { to: { x: head.x, y: head.y }, dir: -1, thrower: 'marcel' }, { dims: DIMS }) };
+}
+
+test('F58 sidelineSpots: 300 random layouts, outside the strings, 0.8 m from each other and from every zone centre and stand point, near the head, both sides used', () => {
+  const r = mulberry32(58);
+  let left = 0, right = 0;
+  for (let i = 0; i < 300; i++) {
+    const head = { x: 0.8 + r() * 2.4, y: 1.5 + r() * 12 };
+    const { pl, zones } = randomZones(r, head);
+    const avoid = i % 3 === 0 ? [{ x: -1, y: head.y + 0.2 }] : [];
+    const spots = sidelineSpots(pl, head, { dims: DIMS, zones, avoid });
+    const list = IDS.map((id) => spots[id]);
+    assert.ok(list.every(Boolean), 'everybody gets a spot');
+    for (const q of list) {
+      assert.ok(q.x <= -SIDE_OUT + 1e-9 || q.x >= DIMS.terrainW + SIDE_OUT - 1e-9, 'outside the strings, clear of the timbers');
+      assert.ok(q.y >= -0.5 && q.y <= DIMS.terrainL + 0.5, 'not past the end of the court area');
+      assert.ok(Math.abs(q.y - head.y) <= 2.5 || q.y < 0.5 || q.y > DIMS.terrainL - 0.5, `near the cochonnet (seed ${i}: ${Math.abs(q.y - head.y).toFixed(1)} m)`);
+      assert.ok(Math.abs(q.yaw - Math.atan2(head.x - q.x, head.y - q.y)) < 1e-9, 'faces the head');
+      (q.x < 0 ? left++ : right++);
+      for (const z of Object.values(zones)) {
+        assert.ok(Math.hypot(q.x - z.x, q.y - z.y) >= SIDE_GAP - 1e-9, 'from the zone centre');
+        const st = zoneStand(z);
+        assert.ok(Math.hypot(q.x - st.x, q.y - st.y) >= SIDE_GAP - 1e-9, 'from the stand point');
+      }
+      for (const a of avoid) assert.ok(Math.hypot(q.x - a.x, q.y - a.y) >= SIDE_GAP - 1e-9, 'from the kicker\'s work area');
+    }
+    for (let a = 0; a < 4; a++) for (let b = a + 1; b < 4; b++) assert.ok(Math.hypot(list[a].x - list[b].x, list[a].y - list[b].y) >= SIDE_GAP - 1e-9, `waiters apart (seed ${i})`);
+  }
+  assert.ok(left > 100 && right > 100, `both court sides are used (${left} left, ${right} right)`);
+});
+
+test('F58 sidelineSpots: deterministic, a player picks the nearer side, a head at an end line still gets four spots 0.8 m apart', () => {
+  const head = { x: 3.5, y: 0.6 };
+  const pl = [{ id: 'a', x: 0.5, y: 1 }, { id: 'b', x: 3.6, y: 1 }, { id: 'c', x: 0.4, y: 0.4 }, { id: 'd', x: 3.8, y: 0.8 }];
+  const a = sidelineSpots(pl, head, { dims: DIMS, zones: {} }), b = sidelineSpots([...pl].reverse(), head, { dims: DIMS, zones: {} });
+  assert.deepEqual(a, b);
+  assert.ok(a.a.x < 0 && a.c.x < 0 && a.b.x > DIMS.terrainW && a.d.x > DIMS.terrainW);
+  const v = Object.values(a);
+  for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) assert.ok(Math.hypot(v[i].x - v[j].x, v[i].y - v[j].y) >= SIDE_GAP - 1e-9);
+  const end = sidelineSpots(pl, { x: 2, y: 14.9 }, { dims: DIMS, zones: {} });
+  assert.ok(Object.values(end).every((q) => q.y <= DIMS.terrainL + 0.5));
+});
+
+test('F58 simulation: nobody but the kicker walks while the kicker taps; the ring holder goes straight to the final circle and then to a sideline spot; each waiter walks in only after his own boules are kicked', () => {
+  const med = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+  const hand = [], all = [];
+  for (let s = 1; s <= 10; s++) {
+    const L = layout(s, { tight: s > 5, real: true });
+    const holder = IDS.filter((id) => id !== 'marcel')[s % 3];
+    const c = createCollect(L.pl, L.boules, { head: L.head, plan: L.plan, dims: DIMS, terrain: flat, holder });
+    const k = c.agents.find((a) => a.id === c.kicker);
+    assert.notEqual(c.kicker, holder, 'the ring holder is never the kicker');
+    let sawRingDrop = false;
+    for (let i = 0; i < 60 * 60 && !c.finished; i++) {
+      const before = c.agents.map((a) => ({ x: a.x, y: a.y }));
+      c.step(1 / 60);
+      c.agents.forEach((a, n) => {
+        const moved = Math.hypot(a.x - before[n].x, a.y - before[n].y);
+        if (a.id === holder && a.phase === 'ring') sawRingDrop = true;
+        if (a.id === c.kicker || c.fallback) return;
+        if (['idle', 'pick', 'locate', 'ringpick'].includes(a.phase)) assert.ok(moved < 1e-9, `${a.id} stands still while ${a.phase} (seed ${s})`);
+        if ((k.phase === 'tap' || k.phase === 'sidle') && ['seek', 'goal', 'seekpick'].includes(a.phase)) assert.ok(a.held > 0, `${a.id} wanders (${a.phase}) before his pick-up (seed ${s})`);
+        if (a.phase === 'zone') assert.ok(a.slotted.every((b) => b.at || b.taken || b.slide), 'walks in only after all his boules are kicked');
+        if (a.phase === 'idle') { const sp = c.waits[a.id]; assert.ok(Math.hypot(a.x - sp.x, a.y - sp.y) < 0.06, 'waits on his own sideline spot'); assert.ok(a.x < 0 || a.x > DIMS.terrainW, 'outside the strings'); }
+      });
+    }
+    assert.ok(c.finished, `layout ${s} finishes`);
+    assert.ok(sawRingDrop, 'the holder carried the ring');
+    const h = c.agents.find((a) => a.id === holder);
+    assert.ok(h.ringDown !== undefined, 'the ring was dropped at the final circle');
+    assert.ok(c.boules.every((b) => b.taken));
+    hand.push(c.tAllTaken); all.push(c.t);
+    assert.ok(c.fallbackBoules <= 7, `seed ${s}: fallback gave ${c.fallbackBoules} boules`);
+  }
+  console.log(`F58 simulation: all boules in hand median ${med(hand).toFixed(1)} s (${hand.map((x) => x.toFixed(1)).join(' ')}), everybody at the goal median ${med(all).toFixed(1)} s (${all.map((x) => x.toFixed(1)).join(' ')})`);
+  assert.ok(med(hand) < KICK_TIMEOUT, 'median boules-in-hand time is inside the fallback');
+});
+
+test('F58 simulation: the ring holder moves in one carry: the ring path is the straight line from where he picks it up to the final circle', () => {
+  const L = layout(4, { real: true }), holder = 'odette';
+  const c = createCollect(L.pl, L.boules, { head: L.head, plan: L.plan, dims: DIMS, terrain: flat, holder });
+  const h = c.agents.find((a) => a.id === holder);
+  let start = null, len = 0, prev = null;
+  for (let i = 0; i < 60 * 30 && h.phase !== 'side' && !c.fallback; i++) {
+    c.step(1 / 60);
+    if (h.phase === 'ring') { if (!start) start = { x: h.x, y: h.y }; if (prev) len += Math.hypot(h.x - prev.x, h.y - prev.y); prev = { x: h.x, y: h.y }; }
+  }
+  assert.ok(start && Math.abs(h.x - L.plan.to.x) < 0.06 && Math.abs(h.y - L.plan.to.y) < 0.06, 'dropped at the final circle');
+  const direct = Math.hypot(L.plan.to.x - start.x, L.plan.to.y - start.y);
+  assert.ok(len < direct * 1.35 + 0.3, `carry path ${len.toFixed(2)} m vs direct ${direct.toFixed(2)} m (steering round others only)`);
 });
