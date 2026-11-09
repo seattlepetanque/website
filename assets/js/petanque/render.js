@@ -299,31 +299,60 @@ export function createRenderer(canvas, terrain) {
   }
   // Boundary strings and throwing circle
   const strings = new THREE.Group();
-  const stringMat = new THREE.MeshBasicMaterial({ color: '#ffffff', fog: true });
+  // F34: each string is a thin strip (1.6 cm) draped on the terrain: both edges sampled every ~10 cm and lifted a few mm,
+  // so slopes of up to ±0.2 m never bury it. The offset keeps it clear of the ground at grazing angles.
+  const stringMat = new THREE.MeshBasicMaterial({
+    color: '#ffffff', fog: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+  });
+  const STRING_W = 0.016, STRING_LIFT = 0.004;
   const W = C.terrainW, L = C.terrainL;
   const addString = (x0, y0, x1, y1) => {
-    const len = Math.hypot(x1 - x0, y1 - y0);
-    const m = new THREE.Mesh(new THREE.BoxGeometry(len, 0.012, 0.004), stringMat);
-    m.position.set((x0 + x1) / 2, (y0 + y1) / 2, 0.012);
-    m.rotation.z = Math.atan2(y1 - y0, x1 - x0);
+    const len = Math.hypot(x1 - x0, y1 - y0), dx = (x1 - x0) / len, dy = (y1 - y0) / len;
+    const nx = -dy * STRING_W / 2, ny = dx * STRING_W / 2, ext = STRING_W / 2; // each strip runs half a width past its ends: square corners
+    const n = Math.max(2, Math.ceil((len + 2 * ext) / 0.1)), pos = [], idx = [];
+    for (let i = 0; i <= n; i++) {
+      const t = -ext + (len + 2 * ext) * i / n, x = x0 + dx * t, y = y0 + dy * t;
+      for (const s of [-1, 1]) {
+        const px = x + s * nx, py = y + s * ny;
+        pos.push(px, py, terrain.sample(px, py).h + STRING_LIFT);
+      }
+      if (i < n) idx.push(2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 1, 2 * i + 3, 2 * i + 2);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    const m = new THREE.Mesh(geo, stringMat);
+    m.frustumCulled = false;
     strings.add(m);
   };
   addString(0, 0, W, 0); addString(W, 0, W, L); addString(W, L, 0, L); addString(0, L, 0, 0);
   scene.add(strings);
   // E10: the circle is a real object (a ring) that can be picked up and carried: syncCourt puts it at the current
   // circle (with a short fade for a quick-mode move), setRingPose holds it elsewhere (in somebody's hand)
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(C.circle.r - 0.012, C.circle.r + 0.012, 64),
-    new THREE.MeshBasicMaterial({ color: '#c0262f', transparent: true }),
-  );
-  const ringHome = () => ring.position.set(court.circle.x, court.circle.y, terrain.sample(court.circle.x, court.circle.y).h + 0.006);
+  const ringGeo = new THREE.RingGeometry(C.circle.r - 0.012, C.circle.r + 0.012, 64);
+  const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: '#c0262f', transparent: true }));
+  // F34: on the court the ring is laid on the terrain (each vertex takes the ground height under it, 6 mm up), so none of
+  // it sinks into a slope; held in somebody's hand it is flat about its own origin
+  let ringDraped = false;
+  const ringHome = () => {
+    const c = court.circle, p = ringGeo.attributes.position;
+    for (let i = 0; i < p.count; i++) p.setZ(i, terrain.sample(c.x + p.getX(i), c.y + p.getY(i)).h + 0.006);
+    p.needsUpdate = true; ringDraped = true;
+    ring.position.set(c.x, c.y, 0); ring.rotation.set(0, 0, 0);
+  };
+  const ringFlat = () => {
+    if (!ringDraped) return;
+    const p = ringGeo.attributes.position;
+    for (let i = 0; i < p.count; i++) p.setZ(i, 0);
+    p.needsUpdate = true; ringDraped = false;
+  };
   ringHome();
   scene.add(ring);
   let ringFade = null; // { t, dur, moved }: fade out, move, fade in
   let ringHeld = false;
   function setRingPose(p) {
     ringHeld = !!p;
-    if (p) { ring.position.set(p.x, p.y, p.z); ring.rotation.set(0, 0, 0); } else ringHome();
+    if (p) { ringFlat(); ring.position.set(p.x, p.y, p.z); ring.rotation.set(0, 0, 0); } else ringHome();
   }
   function tickRing(dt) {
     if (!ringFade) return;
@@ -468,9 +497,12 @@ export function createRenderer(canvas, terrain) {
   let divotNext = 0;
   function addDivot(x, y, r = 0.06) {
     const m = divotMeshes[divotNext++ % DIVOTS];
-    m.position.set(x, y, terrain.sample(x, y).h + 0.004);
+    // F34: lay the disc on the slope (tangent to the ground there) so its whole span stays above it
+    const s = terrain.sample(x, y), up = new THREE.Vector3(0, 0, 1), n = new THREE.Vector3(s.nx || 0, s.ny || 0, s.nz || 1).normalize();
+    m.position.set(x, y, s.h + 0.004);
+    m.quaternion.setFromUnitVectors(up, n);
+    m.rotateZ((x * 977 + y * 331) % 6.283);
     m.scale.setScalar(Math.max(0.03, r * 1.6));
-    m.rotation.z = (x * 977 + y * 331) % 6.283;
     m.visible = true;
   }
   function clearDivots() { for (const m of divotMeshes) m.visible = false; divotNext = 0; }

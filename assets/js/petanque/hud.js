@@ -63,9 +63,11 @@ export function createHud(root, hudEl, cb) {
   pausedEl.hidden = true;
   pausedEl.setAttribute('role', 'group');
   pausedEl.setAttribute('aria-label', 'Game paused');
-  const resumeBtn = button('Resume game', 'pt-btn pt-resume', () => cb.onResume && cb.onResume());
+  // F32: three actions only: Resume, New game (back to setup) and End game (leave the full-window view for the page)
+  const resumeBtn = button('Resume', 'pt-btn pt-resume', () => cb.onResume && cb.onResume());
   pausedEl.append(el('span', 'pt-paused-text', 'Game paused.'), resumeBtn,
-    button('New game', 'pt-btn pt-btn-alt pt-paused-new', () => cb.onNewGame && cb.onNewGame()));
+    button('New game', 'pt-btn pt-btn-alt pt-paused-new', () => cb.onNewGame && cb.onNewGame()),
+    button('End game', 'pt-btn pt-btn-alt pt-paused-end', () => cb.onEndGame && cb.onEndGame()));
   // F11: "who holds the point" banner, shown before each aim (main.js drives its 2 s hold on the game clock)
   const holdEl = el('div', 'pt-holding');
   holdEl.setAttribute('aria-live', 'polite');

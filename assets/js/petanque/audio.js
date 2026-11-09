@@ -21,6 +21,7 @@
 //   roll      per rolling body: very faint, sparse, dry pebble ticks (1-3 ms band-passed noise bursts,
 //             random centre 1.5-4 kHz, 2-6 ms decay, some duller gravel ticks, rare 2-3 tick clatter).
 //             Poisson-ish scheduling on AudioContext time; rate and level follow speed. No noise floor.
+//   scuff     (F28) a kicked boule: soft low-passed swish + a few gravel grains
 //   stone     one slightly louder pebble tick when the physics reports a stone contact
 
 import { createAmbient } from './ambient.js'; // F12: park ambience (birds, breeze, airplane)
@@ -99,6 +100,8 @@ export const SOUND = {
 };
 
 const MUTE_KEY = 'petanque-muted';
+const MUTE_ICON_ON = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+const MUTE_ICON_OFF = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor"/><path d="M16 9.5l5 5M21 9.5l-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 
 function loadMuted() {
   try {
@@ -249,6 +252,17 @@ export function createAudio(opts = {}) {
       const bp = filt('bandpass', rnd(K.freqLo, K.freqHi), K.q);
       src.connect(bp).connect(envGain(gt, K.gain * amount * rnd(0.3, 1), len, K.attack)).connect(master);
     }
+  }
+
+  // F28: a boule nudged along the gravel by a foot: a soft scuff (a short low-passed noise swish plus a few gravel grains).
+  // No thud, no click: it is a gentle sound. len: seconds the boule slides (0.3 to 1).
+  function scuff(t, len) {
+    const d = clamp01(len / 1) * 0.25 + 0.12;
+    startVoice(t, d + 0.1);
+    const src = noiseSrc(t, d);
+    const lp = filt('lowpass', 1400, 0.5);
+    src.connect(lp).connect(envGain(t, 0.045, d, 0.03)).connect(master);
+    crunch(t + 0.02, 0.5);
   }
 
   // Boule on gravel: soft low thud + faint crunch. No ringing tone, no sharp attack.
@@ -455,6 +469,12 @@ export function createAudio(opts = {}) {
     try { click(ctx.currentTime + 0.005, SOUND.carreauAccent, 1); } catch (e) { /* ignore */ }
   }
 
+  // F28: the scuff of a kicked boule (silent when muted, locked or paused; never throws)
+  function playScuff(len = 0.7) {
+    if (!ctx || muted || ctx.state !== 'running') return;
+    try { scuff(ctx.currentTime + 0.005, len); } catch (e) { /* ignore */ }
+  }
+
   // Audition entry point. Ignores mute (explicit user action) but needs unlock().
   // names: land {speed}, jackLand {speed}, jackHit {speed}, roll {kind, speed, dur, decay},
   //        graze, direct, carreau, hit {speed, rel}
@@ -465,6 +485,7 @@ export function createAudio(opts = {}) {
       const t = ctx.currentTime + 0.01;
       switch (name) {
         case 'land': land(t, p.speed ?? 4); break;
+        case 'scuff': scuff(t, p.len ?? 0.7); break;
         case 'jackLand': jackLand(t, p.speed ?? 3); break;
         case 'jackHit': tick(t, p.speed ?? 4); break;
         case 'graze': hit(t, p.speed ?? 2.5, p.rel ?? 8); break;
@@ -490,8 +511,10 @@ export function createAudio(opts = {}) {
 
   function syncButtons() {
     for (const btn of buttons) {
-      // Fixed label plus aria-pressed: screen readers announce "Mute, pressed".
-      btn.textContent = 'Mute';
+      // F32: an icon button (speaker / muted speaker). Fixed label plus aria-pressed: screen readers announce "Mute, pressed".
+      btn.innerHTML = muted ? MUTE_ICON_OFF : MUTE_ICON_ON;
+      btn.setAttribute('aria-label', 'Mute');
+      btn.title = muted ? 'Unmute' : 'Mute';
       btn.setAttribute('aria-pressed', String(muted));
     }
   }
@@ -527,5 +550,5 @@ export function createAudio(opts = {}) {
     return btn;
   }
 
-  return { unlock, setPaused, handleEvents, update, accent, play, setMuted, isMuted, setAmbience, playAmbient, setEngine, createMuteButton };
+  return { unlock, setPaused, handleEvents, update, accent, playScuff, play, setMuted, isMuted, setAmbience, playAmbient, setEngine, createMuteButton };
 }
