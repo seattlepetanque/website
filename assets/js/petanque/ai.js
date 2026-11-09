@@ -189,6 +189,20 @@ const cfgOf = () => ({
   gateHit: AI.gateHit, stylePref: AI.stylePref, ...AI.ablate,
 });
 
+// F27: what the partner said he would do. A suggestion (advice decision) records the family, intent and target for the
+// court as it stands; the partner's own turn in the same, unchanged situation plays that same plan (re-planning only the
+// execution: his own skill, release point). Any change to the court, hands or difficulty makes the key differ, so a stale
+// suggestion is never followed. One slot per team; consumed on use.
+const adviceMemo = new Map();
+const r2 = (v) => Math.round(v * 100);
+export function situationKey({ match, bodies, player, difficulty }) {
+  const bs = bodies.filter((b) => !b.dead).map((b) => `${b.kind[0]}${b.team ?? ''}:${r2(b.x)},${r2(b.y)}`).sort().join(';');
+  const hands = match && match.players ? match.players.map((p) => `${p.id}${p.boulesLeft}`).join(',') : '';
+  return `${player.team}|${difficulty}|${hands}|${bs}`;
+}
+export const forgetAdvice = () => adviceMemo.clear();
+export const peekAdvice = (team) => adviceMemo.get(team) || null;
+
 function* decide({ world, match, player, difficulty = 'medium', rand, from = FROM, advice = false }) {
   const dk = DIFFICULTY[difficulty] ? difficulty : 'medium';
   const nSims = AI.sims[dk] ?? AI.sims.medium;
@@ -219,6 +233,24 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
     return out;
   };
   const planned = plan(sit, cfgOf());
+  const memoKey = situationKey({ match, bodies: world.bodies, player, difficulty });
+  let follow = null; // F27: the plan the partner suggested for this very court
+  if (advice) {
+    adviceMemo.delete(team);
+    if (planned.cands.length) adviceMemo.set(team, { key: memoKey, pending: true });
+  } else {
+    const m = adviceMemo.get(team);
+    if (m && m.key === memoKey && m.plan) { follow = m.plan; adviceMemo.delete(team); }
+  }
+  if (follow) {
+    const same = (c) => c.family === follow.family && (follow.intent === 'point' || !follow.target || dist2(c.target, follow.target) < 0.2);
+    const kept = planned.cands.filter(same);
+    // his own profile may not admit the very same family: keep the intent (and the style) at least
+    const byIntent = kept.length ? kept : planned.cands.filter((c) => c.intent === follow.intent && c.tag === follow.tag).length
+      ? planned.cands.filter((c) => c.intent === follow.intent && c.tag === follow.tag) : planned.cands.filter((c) => c.intent === follow.intent);
+    if (byIntent.length && follow.family !== 'drop') { planned.cands = byIntent; planned.drop = null; }
+    else follow = null;
+  }
   let bareWorld = null; // the court emptied: promotions are aimed as if the boule they push were not there
   const bare = { clone: (t, r) => { if (!bareWorld) { bareWorld = world.clone(t, r); bareWorld.bodies.length = 0; } return bareWorld.clone(t, r); } };
   if (!planned.cands.length) return lob(); // no jack to aim at: just lob towards the middle of the lane
@@ -245,7 +277,7 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
   };
 
   // A tactical error (12.7): with probability eps the AI drops its principles and plays the other kind of throw
-  if (errRoll < sit.diff.eps) {
+  if (!follow && errRoll < sit.diff.eps) {
     const loose = plan(sit, cfgOf(), { loose: true }).cands.filter((c) => c.family !== 'shootJack');
     const normal = planned.cands[0].intent;
     let pool = loose.filter((c) => c.intent !== normal);
@@ -408,18 +440,26 @@ function labelKeyFor(k) {
   return { event: 'spotShoot', target: k.tag === 'jack' ? 'jack' : 'boule' };
 }
 
+// the advice decision's result becomes the plan his own turn follows (a mistake or a fallback is not a plan)
+function remember(args, out) {
+  if (!args.advice || !out || !out.family || out.mistake || (out.info && out.info.fallback)) { if (args.advice) adviceMemo.delete(args.player.team); return out; }
+  const m = adviceMemo.get(args.player.team);
+  if (m && m.pending) { m.pending = false; m.plan = { family: out.family, intent: out.intent, tag: out.info && out.info.tag, target: out.info && out.info.target ? { ...out.info.target } : null }; }
+  return out;
+}
+
 export function chooseThrow(args) {
   const g = decide(args);
   let r;
   while (!(r = g.next()).done);
-  return r.value;
+  return remember(args, r.value);
 }
 
 export async function chooseThrowAsync(args) {
   const g = decide(args);
   let r;
   while (!(r = g.next()).done) await new Promise((res) => setTimeout(res, 0));
-  return r.value;
+  return remember(args, r.value);
 }
 
 // --- Jack throw ---------------------------------------------------------------------------

@@ -844,7 +844,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
 | F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25, F26, F27, F28, F31, F32, F33, F34 | Round 5 review |
 | F26 | done | haiku | — | Slow mode: brisker fetch walks with natural arm swing (or folded arms) |
-| F27 | todo | sonnet | F04 | Pierre does what he said he'd do |
+| F27 | done | sonnet | F04 | Pierre does what he said he'd do |
 | F28 | in-progress (step 2) | sonnet | F26 | Better end-of-mène boule collection: design done (GAME-PLAN §10c, decisions recorded); implementing |
 | F17 | done | haiku | — | Remove "lands at …" landing-distance text from the status line |
 | F18 | done | haiku | — | Breeze only occasionally, fading in and out |
@@ -1181,3 +1181,5 @@ F23 outcome (partial, committed): Pierre's skill (donnee.js lat 0.0088 / long 0.
 F51 outcome: implemented (ring carried straight to the next circle after the result; ring gate waits while a boule is in the ring or a person within 0.6 m; own boules in the ring's way picked first; next mène waits for ring + collection; pure helpers ringBlockers/ringGate/meneEndReady in crowd.js with 4 tests). Tests 323/323 on a quiet machine. NOT verified in a browser: headless screenshots could not reach the mène-end sequence (virtual time). Please check on a real browser: the ring and collection run in parallel, no stuck ring (F24), fallback 14 s and click/key skip still work.
 
 F52 outcome: committed; the agent was stopped after about 2.5 h without a final report, verified by the manager (323/323 tests, hugo build, screenshots of ?gravel=grey and ?gravel=sand at scratchpad f52v). Observations for review: the grey court reads quite dark and flat, closer to asphalt than gravel (maybe lighten, add more pebble/speckle texture and a bit more blue); the small orange/red jack is hard to spot at the shoulder view on both variants (check contrast, maybe a slightly larger jack or a light ring). User to judge on port 1500.
+
+F27 outcome: done in ai.js only (root cause: main.js's pierreChoice cache was declared but never set). The partner's advice decision records its plan per team keyed to the court state; the partner's own decision then follows that family/intent/style (shot target within 0.2 m), once, with no random tactical error. Works for any partner (F45). Tests: f27.test.js (3 partners x 6 layouts), no tolerance changes.
