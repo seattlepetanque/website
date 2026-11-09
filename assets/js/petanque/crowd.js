@@ -369,49 +369,136 @@ export function kickLineBlocked(from, to, people = [], clear = 0.35) {
   return people.some((p) => dseg(p.x, p.y, from.x, from.y, to.x, to.y) < clear);
 }
 
-// F54: agents: [{ id, team, x, y, goal: { x, y } }]; boules: [{ id, owner, x, y, dead? }]; opts: { head, plan, dims, scoredTeam, terrain,
-// speed, holder }. Every player kicks each of their boules (a scripted ease-out slide that ignores the terrain) into their own
-// zone's triangle slots, then stands at zoneStand and takes all of them in ONE bend; boules out of bounds or too far are picked up
-// where they lie afterwards. step(dt) advances; afterwards agent.phase ('wait' | 'locate' | 'hold' | 'approach' | 'kick' | 'zone' |
-// 'pick' | 'seek' | 'goal' | 'done' | 'faded'), agent.stands (where the pick-up stand point was, for the tests), collect.kicks (the
-// log), collect.finished, collect.fallback, collect.zones.
-export function createCollect(agents, boules, { head, plan = null, dims, scoredTeam = null, terrain = null, speed = 1.35, holder = null, timeout = KICK_TIMEOUT, pick = PICK_TIME, stagger = KICK_STAGGER } = {}) {
-  const A = agents.map((a) => ({ ...a, held: 0, phase: 'wait', timer: 0, cur: null, blockedT: 0, stands: null, slotted: [], lineWait: 0 }));
-  const B = boules.map((b) => ({ ...b, slide: null }));
+// ---- F55: one kicker taps every boule toward its owner's slot (sidling along the cluster, a leg out to each boule) ----
+export const TAP_REACH = 0.5; // m: a boule this close to the kicker (centre to centre) can be tapped without a step
+export const TAP_STAND = 0.42; // m: when a step is needed, the kicker ends this far from the boule (sideways to it)
+export const TAP_ANIM = 0.5, TAP_CONTACT_T = 0.22; // s: character.js TAP_TIME and TAP_CONTACT (a test keeps them equal)
+export const TURN_T = 0.25; // s: a turn in place before a tap when the boule ended up behind the kicker
+export const KICKER_HURRY = 1.35; // the kicker sidles this much quicker than the others walk (short quick steps; main.js passes it to the walk)
+export const TAP_FREE_T = 0.34; // s: character.js TAP_FREE: the kicker may start stepping on while the leg is still coming back
+const SIDLE_ANGLE = 50 * Math.PI / 180;
+
+// Who kicks: the player nearest the head that is not busy with the ring or the jack (a busy one only when nobody else is free).
+// players: [{ id, x, y }]; busy: ids (the ring holder, a fetcher). Ties go by id.
+export function chooseKicker(players, head, { holder = null, busy = [] } = {}) {
+  const taken = new Set([holder, ...busy].filter((x) => x !== null && x !== undefined));
+  const pool = players.some((p) => !taken.has(p.id)) ? players.filter((p) => !taken.has(p.id)) : players;
+  const sorted = [...pool].sort((a, b) => Math.hypot(a.x - head.x, a.y - head.y) - Math.hypot(b.x - head.x, b.y - head.y) || (a.id < b.id ? -1 : 1));
+  return sorted.length ? sorted[0].id : null;
+}
+
+// The leg reach to a boule from where the kicker stands (pos) facing yaw (forward is (sin yaw, cos yaw), no turning toward the boule):
+// -> { ok, leg: 'left' | 'right', x, y, d } where (x, y) is where the toe meets the boule's near edge in the kicker's own space
+// (x right, y ahead, metres). ok: the boule is within `reach` and not behind the kicker. The leg is the one on the boule's side.
+export function tapReach(pos, yaw, boule, { reach = TAP_REACH, r = BOULE_R } = {}) {
+  const dx = boule.x - pos.x, dy = boule.y - pos.y, d = Math.hypot(dx, dy);
+  const fwd = dx * Math.sin(yaw) + dy * Math.cos(yaw), side = dx * Math.cos(yaw) - dy * Math.sin(yaw);
+  const k = d > r ? (d - r) / d : 0;
+  return { ok: d <= reach + 1e-9 && fwd >= 0.05, leg: side >= 0 ? 'right' : 'left', x: side * k, y: fwd * k, d };
+}
+
+// The sidle: where the kicker steps to next to reach `boule`. Already in reach: stays. Otherwise to a point TAP_STAND from the boule,
+// off to one side (50 degrees round from the way he came, the nearer side), so he arrives travelling past the boule and taps it with
+// the leg on its side rather than squaring up to it; straight at it when that side point would still leave it out of reach.
+// -> { x, y, move, yaw } (yaw: his heading on arrival, the direction of the step; his own yaw when he stays; turn: true when he only
+// turns in place to the boule, which is close but behind him)
+export function sidleStop(pos, yaw, boule, { reach = TAP_REACH, stand = TAP_STAND } = {}) {
+  if (tapReach(pos, yaw, boule, { reach }).ok) return { x: pos.x, y: pos.y, move: false, yaw };
+  const dx = pos.x - boule.x, dy = pos.y - boule.y, d = Math.hypot(dx, dy);
+  if (d <= reach) return { x: pos.x, y: pos.y, move: false, turn: true, yaw: Math.atan2(-dx, -dy) }; // close but behind him: a turn in place, no step
+  const ux = d > 1e-6 ? dx / d : -Math.sin(yaw), uy = d > 1e-6 ? dy / d : -Math.cos(yaw);
+  const cands = [];
+  for (const sg of [1, -1]) {
+    const c = Math.cos(sg * SIDLE_ANGLE), n = Math.sin(sg * SIDLE_ANGLE);
+    cands.push({ x: boule.x + stand * (ux * c - uy * n), y: boule.y + stand * (ux * n + uy * c) });
+  }
+  cands.push({ x: boule.x + stand * ux, y: boule.y + stand * uy });
+  const opts = cands.map((q) => {
+    const h = Math.hypot(q.x - pos.x, q.y - pos.y) > 1e-6 ? Math.atan2(q.x - pos.x, q.y - pos.y) : yaw;
+    return { ...q, move: true, yaw: h, walk: Math.hypot(q.x - pos.x, q.y - pos.y) };
+  }).filter((q) => tapReach(q, q.yaw, boule, { reach }).ok);
+  opts.sort((p, q) => p.walk - q.walk);
+  const best = opts[0] || { ...cands[2], move: true, yaw: Math.atan2(cands[2].x - pos.x, cands[2].y - pos.y) };
+  return { x: best.x, y: best.y, move: true, yaw: best.yaw };
+}
+
+// The whole plan: every in-field live boule within SLOT_MAX of its owner's zone (zones: { [ownerId]: { x, y } | null }) gets its slot
+// in the owner's triangle (kickList). Boules within SLOT_NEAR of their slot go to `quick` (slid there, no tap). The rest are the
+// kicker's `tour`: a nearest-next walk along the cluster from `from`, boules `first` (lying in the ring's way) ahead of it.
+// -> { tour: [{ boule, target, owner, kick }], quick: [...], slotted: { [ownerId]: [boule] } }
+export function collectPlan(boules, zones, inField = () => true, from = null, first = () => false) {
+  const all = [], slotted = {};
+  const owners = [...new Set(boules.map((b) => b.owner))].sort();
+  for (const o of owners) {
+    const z = zones[o];
+    if (!z) continue;
+    for (const k of kickList(boules.filter((b) => b.owner === o), z, inField)) { all.push({ ...k, owner: o }); (slotted[o] = slotted[o] || []).push(k.boule); }
+  }
+  const quick = all.filter((k) => !k.kick), left = all.filter((k) => k.kick), tour = [];
+  let p = from ? { x: from.x, y: from.y } : null;
+  while (left.length) {
+    const urgent = left.some((k) => first(k.boule));
+    let bi = -1, bd = Infinity;
+    left.forEach((k, i) => {
+      if (urgent && !first(k.boule)) return;
+      const d = p ? Math.hypot(k.boule.x - p.x, k.boule.y - p.y) : -Math.hypot(k.boule.x - k.target.x, k.boule.y - k.target.y);
+      if (d < bd - 1e-9) { bd = d; bi = i; }
+    });
+    const k = left.splice(bi, 1)[0]; tour.push(k); p = { x: k.boule.x, y: k.boule.y };
+  }
+  if (from && !boules.some((b) => first(b))) { // 2-opt: reverse a stretch of the path while that shortens the walk
+    const pt = (i) => (i < 0 ? from : tour[i].boule), len = (a, b) => Math.hypot(pt(a).x - pt(b).x, pt(a).y - pt(b).y);
+    for (let pass = 0, imp = true; imp && pass < 8; pass++) {
+      imp = false;
+      for (let i = 0; i < tour.length - 1; i++) for (let j = i + 1; j < tour.length; j++) {
+        const n = j + 1 < tour.length;
+        const delta = len(i - 1, j) + (n ? len(i, j + 1) : 0) - len(i - 1, i) - (n ? len(j, j + 1) : 0);
+        if (delta < -1e-6) {
+          const seg = tour.slice(i, j + 1).reverse(); tour.splice(i, j - i + 1, ...seg); imp = true;
+        }
+      }
+    }
+  }
+  return { tour, quick, slotted };
+}
+
+// F55 whole-process model. agents: [{ id, team, x, y, goal: { x, y } }]; boules: [{ id, owner, x, y, dead? }]; opts: { head, plan, dims,
+// scoredTeam, terrain, speed, holder }. One kicker (chooseKicker) sidles along the boules and taps each toward its slot in its
+// owner's triangle (scripted slide, exact end point); everybody else walks to their own zone's stand point and takes all three at once
+// when their triangle is complete; the kicker takes his last. Boules out of bounds or too far are picked up where they lie. step(dt)
+// advances; afterwards agent.phase ('wait' | 'locate' | 'sidle' | 'tap' | 'zone' | 'pick' | 'seek' | 'seekpick' | 'goal' | 'done' |
+// 'faded'), agent.stands, collect.kicks, collect.kicker, collect.finished, collect.fallback, collect.zones.
+export function createCollect(agents, boules, { head, plan = null, dims, scoredTeam = null, terrain = null, speed = 1.35, holder = null, timeout = KICK_TIMEOUT, pick = PICK_TIME } = {}) {
+  const A = agents.map((a) => ({ ...a, held: 0, phase: 'wait', timer: 0, blockedT: 0, stands: null, slotted: [], yaw: Math.atan2(head.x - a.x, head.y - a.y) }));
+  const B = boules.map((b) => ({ ...b, slide: null, at: false }));
   const inField = (b) => b.x > 0 && b.x < dims.terrainW && b.y > 0 && b.y < dims.terrainL;
-  const c = { agents: A, boules: B, t: 0, fallback: false, finished: false, kicks: [], zones: null };
+  const c = { agents: A, boules: B, t: 0, fallback: false, finished: false, kicks: [], zones: null, kicker: null, tour: [] };
   const live = () => B.filter((b) => !b.taken);
   c.zones = assignZones(A, live().filter((b) => inField(b) && !b.dead), head, plan, { dims, holder });
-  const order = collectOrder(A, head, scoredTeam);
-  A.forEach((a) => { a.start = 0; a.kickAt = order.indexOf(a.id) * stagger; a.zone = c.zones[a.id]; });
+  const kid = chooseKicker(A, head, { holder });
+  c.kicker = kid;
+  const kp = A.find((a) => a.id === kid);
+  const cp = collectPlan(live().filter((b) => inField(b) && !b.dead), c.zones, inField, kp, () => false);
+  c.tour = cp.tour;
+  for (const a of A) { a.zone = c.zones[a.id]; a.slotted = cp.slotted[a.id] || []; }
+  for (const k of cp.tour) k.boule.tour = true;
   const people = (a) => A.filter((o) => o !== a && o.phase !== 'done');
   const mine = (a) => live().filter((b) => b.owner === a.id);
   const near = (a, list) => list.reduce((best, b) => (!best || Math.hypot(b.x - a.x, b.y - a.y) < Math.hypot(best.x - a.x, best.y - a.y) ? b : best), null);
-  function walk(a, to, dt) {
+  function walk(a, to, dt0) {
+    const dt = a.phase === 'sidle' ? dt0 * KICKER_HURRY : dt0;
     const pos = A.map((o) => ({ x: o.x, y: o.y })), i = A.indexOf(a);
     const l = Math.hypot(to.x - a.x, to.y - a.y);
-    if (l < 0.4) { const d = Math.min(speed * dt, l); a.x += (to.x - a.x) / l * d; a.y += (to.y - a.y) / l * d; return { blocked: false }; } // arriving: no steering (as main.js crowdTick), so the last step lands
-    const v = steer(pos[i], to, pos.filter((_, j) => j !== i)), m = Math.hypot(v.vx, v.vy);
-    if (m > 0) { const d = Math.min(speed * dt * m, l); a.x += v.vx / m * d; a.y += v.vy / m * d; }
+    let v = { blocked: false };
+    if (l < 0.4) { const d = Math.min(speed * dt, l); a.yaw = Math.atan2(to.x - a.x, to.y - a.y); a.x += (to.x - a.x) / l * d; a.y += (to.y - a.y) / l * d; return v; } // arriving: no steering (as main.js crowdTick), so the last step lands
+    v = steer(pos[i], to, pos.filter((_, j) => j !== i));
+    const m = Math.hypot(v.vx, v.vy);
+    if (m > 0) { const d = Math.min(speed * dt * m, l); a.x += v.vx / m * d; a.y += v.vy / m * d; a.yaw = Math.atan2(v.vx, v.vy); }
     return v;
   }
   const arrived = (a, to) => Math.hypot(to.x - a.x, to.y - a.y) < 0.05;
   const takeAll = (a) => { for (const b of mine(a)) { b.taken = true; a.held++; } };
   const slide = (b, target) => { b.slide = { t: 0, mv: kickMove(b, target, terrain, { stones: false }) }; };
-  function nextStep(a) { // decide the next thing to do
-    if (a.zone && a.kicks === undefined) {
-      const plan2 = kickList(mine(a), a.zone, inField, a);
-      a.slotted = plan2.map((k) => k.boule);
-      a.kicks = plan2.filter((k) => k.kick);
-      for (const k of plan2) if (!k.kick) slide(k.boule, k.target); // already at the slot: moved there, no kick
-    }
-    if (a.kicks && a.kicks.length) {
-      const k = a.kicks[0];
-      a.cur = k; a.stand = kickStand(k.boule, k.target); a.phase = c.t < a.kickAt ? 'hold' : 'approach';
-      return;
-    }
-    a.phase = a.slotted.length ? 'zone' : 'seek';
-  }
   c.step = (dt) => {
     if (c.finished) return;
     c.t += dt;
@@ -419,36 +506,42 @@ export function createCollect(agents, boules, { head, plan = null, dims, scoredT
       c.fallback = true;
       for (const a of A) { if (a.phase === 'done' || a.phase === 'faded') continue; takeAll(a); a.phase = 'goal'; a.blockedT = 0; }
     }
+    if (c.t - dt <= 0) for (const k of cp.quick) slide(k.boule, k.target); // already at the slot: moved there, no tap
     for (const b of B) { // slides run on
       if (!b.slide) continue;
       b.slide.t += dt;
       const p = b.slide.mv.at(b.slide.t);
       b.x = p.x; b.y = p.y;
-      if (b.slide.t >= b.slide.mv.T) b.slide = null;
+      if (b.slide.t >= b.slide.mv.T) { b.slide = null; b.at = true; }
     }
     for (const a of A) {
-      if (a.phase === 'wait') { if (c.t >= a.start) { a.phase = 'locate'; a.timer = LOCATE_T; } }
-      else if (a.phase === 'locate') { a.timer -= dt; if (a.timer <= 0) nextStep(a); }
-      else if (a.phase === 'hold') { if (c.t >= a.kickAt) a.phase = 'approach'; }
-      else if (a.phase === 'approach') {
-        if (arrived(a, a.stand)) {
-          // somebody on the line of the slide: a moment's wait (never for long)
-          const ppl = people(a);
-          if (a.lineWait < 1.5 && kickLineBlocked(a.cur.boule, a.cur.target, ppl)) { a.lineWait += dt; continue; }
-          a.phase = 'kick'; a.timer = 0; a.fired = false; a.yaw = a.stand.yaw; a.lineWait = 0;
-        } else walk(a, a.stand, dt);
-      } else if (a.phase === 'kick') {
-        a.timer += dt;
-        if (!a.fired && a.timer >= KICK_CONTACT_T) {
-          a.fired = true;
-          const k = a.cur, ppl = people(a);
-          slide(k.boule, k.target);
-          c.kicks.push({ t: c.t, id: k.boule.id, owner: a.id, from: { x: k.boule.x, y: k.boule.y }, to: { x: k.target.x, y: k.target.y }, people: ppl.map((p) => ({ x: p.x, y: p.y })), kicker: { x: a.x, y: a.y } });
+      if (a.phase === 'wait') { a.phase = 'locate'; a.timer = LOCATE_T; }
+      else if (a.phase === 'locate') { a.timer -= dt; if (a.timer <= 0) a.phase = a.id === kid ? 'sidle' : 'zone'; }
+      else if (a.phase === 'sidle') {
+        const k = c.tour[0];
+        if (!k) { a.phase = 'zone'; continue; }
+        if (k.boule.taken) { c.tour.shift(); continue; }
+        const st = sidleStop(a, a.yaw, k.boule);
+        a.stop = st;
+        if (!st.move || arrived(a, st)) {
+          a.phase = 'tap'; a.timer = 0; a.fired = false; a.cur = k;
+          if (!tapReach(a, a.yaw, k.boule).ok) { a.yaw = Math.atan2(k.boule.x - a.x, k.boule.y - a.y); a.timer = -TURN_T; } // arrived facing the wrong way (steering): a quick turn first
         }
-        if (a.timer >= KICK_ANIM) { a.kicks.shift(); a.cur = null; nextStep(a); }
+        else walk(a, st, dt);
+      } else if (a.phase === 'tap') {
+        a.timer += dt;
+        const k = a.cur;
+        if (!a.fired && a.timer >= TAP_CONTACT_T) {
+          a.fired = true;
+          const r = tapReach(a, a.yaw, k.boule);
+          slide(k.boule, k.target);
+          c.kicks.push({ t: c.t, id: k.boule.id, owner: k.owner, from: { x: k.boule.x, y: k.boule.y }, to: { x: k.target.x, y: k.target.y }, kicker: { x: a.x, y: a.y }, reach: r });
+        }
+        if (a.timer >= TAP_FREE_T) { c.tour.shift(); a.cur = null; a.phase = 'sidle'; }
       } else if (a.phase === 'zone') {
+        if (!a.slotted.length) { a.phase = 'seek'; continue; }
         const st = zoneStand(a.zone);
-        if (arrived(a, st)) { if (!a.slotted.some((b) => b.slide)) { a.phase = 'pick'; a.timer = pick; a.stands = { x: a.x, y: a.y }; } } // wait for the last boule to arrive
+        if (arrived(a, st)) { if (a.slotted.every((b) => b.at || b.taken) && (a.id !== kid || !c.tour.length)) { a.phase = 'pick'; a.timer = pick; a.stands = { x: a.x, y: a.y }; } } // all three down: one bend
         else walk(a, st, dt);
       } else if (a.phase === 'pick') { // one bend takes the whole triangle
         a.timer -= dt;

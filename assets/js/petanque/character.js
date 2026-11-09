@@ -557,6 +557,42 @@ export function kickPose(t, opts = {}) {
   p.ry = footprintShift({ footL: p.footL, footR: p.footL }); // the planted left foot stays where the character stands
   return p;
 }
+// F55: the tap. The one kicker of the mène end sidles along the boules and reaches a leg out to each (a short, light poke):
+// authored for the right leg, mirrored for the left. (x, y) is the foot's authored target in root space, metres (x right, y ahead);
+// the toe is at it at TAP_CONTACT, when the boule is sent on its way.
+export const TAP_WIND = 0.12, TAP_SWING = 0.1, TAP_FOLLOW = 0.1, TAP_RECOVER = 0.18;
+export const TAP_TIME = TAP_WIND + TAP_SWING + TAP_FOLLOW + TAP_RECOVER; // 0.5 s
+export const TAP_CONTACT = TAP_WIND + TAP_SWING;
+export const TAP_FREE = 0.34; // the tap hands over (resolves, the next step may start) here; the leg is still coming back and the blend takes it
+export function tapPose(t, { x = 0.085 * 1.75, y = KICK_FOOT_Y * 1.75, H = 1.75 } = {}) {
+  const p = basePose();
+  const wind = ease(t / TAP_WIND);
+  const sw = ease((t - TAP_WIND) / TAP_SWING);
+  const rec = ease((t - TAP_WIND - TAP_SWING - TAP_FOLLOW) / TAP_RECOVER);
+  const w = wind * (1 - sw), out = sw * (1 - rec);
+  p.footR = { x: 0.085 + (x / H - 0.085) * out, y: -0.1 * w + (y / H) * out, z: 0.03 * w + 0.016 * out, yaw: 0.15 };
+  p.footL = { x: -0.085, y: 0.02 * (wind - rec * wind), z: 0, yaw: -0.15 };
+  const k = wind * (1 - rec);
+  p.pz = 0.505 - 0.015 * k; p.px = -0.03 * k;
+  p.pitch = 0.05 + 0.1 * k;
+  p.twist = 0.08 * w - 0.12 * out;
+  p.spine = 0.04 * k; p.neck = -0.1 * k;
+  p.armL = arm(0.1, 0.1 + k * 0.25, 0.3);
+  p.armR = arm(0.1, 0.1 + k * 0.25, 0.3);
+  p.ry = footprintShift({ footL: p.footL, footR: p.footL });
+  return p;
+}
+// The authored foot target (tapPose's x, y) that puts the toe at (x, y) in root space (metres) at TAP_CONTACT: fixed-point corrections
+// of the ankle-to-toe offset.
+export function tapFoot(x, y, H = 1.75) {
+  let ax = x, ay = y;
+  for (let i = 0; i < 4; i++) {
+    const j = solveSkeleton(tapPose(TAP_CONTACT, { x: ax, y: ay, H }), H).joints.footR;
+    ax += x - j[0]; ay += y - j[1];
+  }
+  return { x: ax, y: ay };
+}
+
 // Where the kicking foot is at the contact frame, in root space (x right, y ahead, z up): a kicker stands so this lands on the boule
 export function kickReach(H = 1.75, hand = 'right') {
   const p = kickPose(KICK_CONTACT);
@@ -843,7 +879,7 @@ export function createCharacter(THREE, spec = {}) {
   const st = {
     t: 0, yaw: 0, stance: 'idle', mode: 'stance', blend: 1, snap: null, out: null,
     look: null, lookSm: { yaw: 0, pitch: 0 }, holding: false,
-    walk: null, throwing: null, bending: null, kicking: null, carry: false, solved: null, frame: null, forceQuirk: null,
+    walk: null, throwing: null, bending: null, kicking: null, tapping: null, carry: false, solved: null, frame: null, forceQuirk: null,
   };
   let vis = null; // skinned-mesh visual: { scene, s, name, bones, hatG, mHat }
   const V = THREE;
@@ -875,6 +911,10 @@ export function createCharacter(THREE, spec = {}) {
     if (st.mode === 'kick') { // F28: authored for a right-hander, mirrored for a left-hander
       const kp = kickPose(st.kicking.t, { carry: st.carry });
       return hand === 'left' ? mirrorPose(kp) : kp;
+    }
+    if (st.mode === 'tap') { // F55: a leg reaches out to a boule: authored right, mirrored for the left leg
+      const tp = st.tapping, p = tapPose(tp.t, { x: tp.x, y: tp.y, H });
+      return tp.leg === 'left' ? mirrorPose(p) : p;
     }
     if (st.mode === 'throw') {
       const p = throwPose(st.throwing.t, stancePose(stanceKind, st.t, {}), stanceKind);
@@ -960,6 +1000,11 @@ export function createCharacter(THREE, spec = {}) {
     st.lookSm.pitch += Math.max(-mx, Math.min(mx, (lt.pitch - st.lookSm.pitch) * k));
   }
 
+  function endTap() { // F55
+    const k = st.tapping; st.tapping = null;
+    switchMode('stance');
+    if (k) k.done();
+  }
   function endKick() { // F28
     const k = st.kicking; st.kicking = null;
     switchMode('stance');
@@ -1055,6 +1100,14 @@ export function createCharacter(THREE, spec = {}) {
         if (k.onContact) { const f = k.onContact; k.onContact = null; evalPose(); applyMeshes(); f(toWorld(st.solved.joints['foot' + HK])); }
       }
       if (k.t >= KICK_TIME) endKick();
+    } else if (st.mode === 'tap') { // F55: onContact fires once at TAP_CONTACT
+      const k = st.tapping;
+      k.t += dt;
+      if (!k.contacted && k.t >= TAP_CONTACT) {
+        k.contacted = true;
+        if (k.onContact) { const f = k.onContact; k.onContact = null; f(); }
+      }
+      if (k.t >= TAP_FREE) endTap();
     } else if (st.mode === 'throw') {
       const th = st.throwing;
       th.t += dt;
@@ -1186,7 +1239,7 @@ export function createCharacter(THREE, spec = {}) {
     const valid = ['idle', 'aim', 'crouch', 'stand', 'watch', 'celebrate', 'dismay', 'give'];
     if (!valid.includes(name)) throw new Error('unknown stance ' + name);
     if (st.mode === 'throw') cancelThrow();
-    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
+    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick(); else if (st.mode === 'tap') endTap();
     if (name === 'crouch' || name === 'stand') stanceKind = name;
     st.stance = name;
     if (st.mode === 'stance') switchMode('stance');
@@ -1198,7 +1251,7 @@ export function createCharacter(THREE, spec = {}) {
   }
   function walkTo(target) {
     if (st.mode === 'throw') cancelThrow();
-    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
+    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick(); else if (st.mode === 'tap') endTap();
     if (st.walk) st.walk.resolve();
     return new Promise((resolve) => {
       // target.via: waypoints [{x, y, lift}] walked first without stopping (lift > 1: stepping over something)
@@ -1223,7 +1276,7 @@ export function createCharacter(THREE, spec = {}) {
   // 'putdown': it is let go at BEND_ACT (onAct runs once, with the hand's world position), the hand is empty afterwards.
   function playBend({ kind = 'pickup', onAct } = {}) {
     if (st.mode === 'throw') cancelThrow();
-    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
+    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick(); else if (st.mode === 'tap') endTap();
     if (st.walk) { const w = st.walk; st.walk = null; w.resolve(); }
     return new Promise((resolve) => {
       st.bending = { t: 0, kind, acted: false, onAct, done: resolve };
@@ -1233,11 +1286,23 @@ export function createCharacter(THREE, spec = {}) {
   // F28: a gentle kick with the side of the dominant foot (see kickPose); resolves when the character is upright again
   function playKick({ onContact } = {}) {
     if (st.mode === 'throw') cancelThrow();
-    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
+    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick(); else if (st.mode === 'tap') endTap();
     if (st.walk) { const w = st.walk; st.walk = null; w.resolve(); }
     return new Promise((resolve) => {
       st.kicking = { t: 0, contacted: false, onContact, done: resolve };
       switchMode('kick');
+    });
+  }
+  // F55: a short leg-reach tap with `leg` ('left' | 'right') toward (x, y) in root space (metres, x right, y ahead: where the toe
+  // meets the boule's edge); no facing or standing behind needed. Resolves when upright again.
+  function playTap({ leg = 'right', x = 0.1, y = 0.4, onContact } = {}) {
+    if (st.mode === 'throw') cancelThrow();
+    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick(); else if (st.mode === 'tap') endTap();
+    if (st.walk) { const w = st.walk; st.walk = null; w.resolve(); }
+    const f = tapFoot(leg === 'left' ? -x : x, y, H);
+    return new Promise((resolve) => {
+      st.tapping = { t: 0, contacted: false, onContact, done: resolve, leg, x: f.x, y: f.y };
+      switchMode('tap');
     });
   }
   // F14: for this frame only, a walk's 'go' stage follows { vx, vy } (crowd.js steer) instead of its straight leg
@@ -1247,7 +1312,7 @@ export function createCharacter(THREE, spec = {}) {
   function setCarrying(on) { st.carry = !!on; }
   function playThrow({ loft = 0.5, onRelease } = {}) {
     if (st.mode === 'throw') cancelThrow();
-    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
+    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick(); else if (st.mode === 'tap') endTap();
     if (st.walk) { const w = st.walk; st.walk = null; w.resolve(); }
     return new Promise((resolve) => {
       st.throwing = { t: 0, tRel: releaseTime(loft), released: false, onRelease, done: resolve, loft };
@@ -1281,7 +1346,7 @@ export function createCharacter(THREE, spec = {}) {
   function setPlacement(x, y, yaw = st.yaw) {
     // a teleport ends any walk in progress, else the walk would carry on and snap the figure to its old goal
     if (st.mode === 'throw') cancelThrow();
-    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
+    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick(); else if (st.mode === 'tap') endTap();
     if (st.walk) { const w = st.walk; st.walk = null; switchMode('stance'); w.resolve(); }
     root.position.set(x, y, root.position.z); setYaw(yaw);
   }
@@ -1338,7 +1403,7 @@ export function createCharacter(THREE, spec = {}) {
   function dispose() {
     if (st.walk) { const w = st.walk; st.walk = null; w.resolve(); }
     if (st.throwing) cancelThrow();
-    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
+    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick(); else if (st.mode === 'tap') endTap();
     if (vis) {
       vis.model.traverse((o) => {
         if (!o.isMesh) return;
@@ -1355,7 +1420,7 @@ export function createCharacter(THREE, spec = {}) {
   evalPose();
   applyMeshes();
   return {
-    root, update, setStance, walkTo, playThrow, playBend, playKick, setCarrying, handWorldPosition, dispose,
+    root, update, setStance, walkTo, playThrow, playBend, playKick, playTap, setCarrying, handWorldPosition, dispose,
     setTrousers: (c) => mTrousers.color.set(c), // F45: team colour of the trousers
     lookAt, setHolding, setHeldBoules, shiftBoule, setPlacement, setSteer, walkLeg, attachModel, forceQuirk, setReducedMotion, fadeTo, setOpacity,
     hand, // 'right' | 'left': the dominant (throwing, carrying) hand
