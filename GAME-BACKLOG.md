@@ -818,8 +818,9 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F13 | done | haiku | — | Dead-jack void message gives the wrong reason |
 | F14 | done | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
 | F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
-| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25, F26 | Round 5 review |
+| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25, F26, F27 | Round 5 review |
 | F26 | todo | haiku | — | Slow mode: brisker fetch walks with natural arm swing (or folded arms) |
+| F27 | todo | sonnet | F04 | Pierre does what he said he'd do |
 | F17 | done | haiku | — | Remove "lands at …" landing-distance text from the status line |
 | F18 | done | haiku | — | Breeze only occasionally, fading in and out |
 | F19 | done | sonnet | — | Distant lake with an occasional floatplane taking off or landing |
@@ -1031,3 +1032,6 @@ The F05 slope field reads as noise. Real courts have a few broad features player
 ### F26 Brisker, more natural walking (haiku)
 - **Pace:** in slow mode, walks to pick up or fetch boules (F02/F14 gathering, E02/F10 retrievals) use the same brisk pace as walking to the circle for a turn (match the walk-in speed constant), not the slower stroll.
 - **Arms:** while walking, arms either swing naturally opposite the legs (a typical walking swing, smaller when holding boules) or stay folded across the chest, chosen per personality and varied (e.g. Odette often folded, Pierre swinging); no stiff carry pose unless actually carrying the ring or a jack. Keep the hand/boule attachment and release accuracy; tests for bone lengths during the new walk arms.
+
+### F27 Pierre does what he said (sonnet)
+When Pierre suggests a move in the chooser ("I'd shoot Marcel's boule", "A blocker in front", "You point, I'll shoot after") and the player picks him, he must play that move: the same intent, family and target (e.g. the boule he named), not a fresh decision that might point instead. Likewise any "I'm going to…" line he says before throwing must match the throw. Cause to check: the chooser runs an advice decision (`advice: true`, blended profile, human skill cone) but Pierre's actual turn calls `chooseThrowAsync` again with his own profile; cache the advice decision (keyed to the court state) and, when he's chosen, re-plan only the execution (his own skill, release point) for the same candidate. If the court changed since the suggestion, re-suggest first. Test: across seeded scenarios, the family and target of Pierre's throw equal his suggestion when chosen.
