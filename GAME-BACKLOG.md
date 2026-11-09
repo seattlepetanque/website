@@ -818,11 +818,12 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F13 | done | haiku | — | Dead-jack void message gives the wrong reason |
 | F14 | done | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
 | F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
-| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20 | Round 5 review |
+| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21 | Round 5 review |
 | F17 | done | haiku | — | Remove "lands at …" landing-distance text from the status line |
 | F18 | done | haiku | — | Breeze only occasionally, fading in and out |
 | F19 | in-progress | sonnet | — | Distant lake with an occasional floatplane taking off or landing |
 | F20 | in-progress | sonnet | — | Better hands, relaxed arms while holding boules, richer idle animation |
+| F21 | todo | haiku | — | Remove the coloured team rings around boules |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -977,3 +978,6 @@ A Lake Union touch: a lake in the distance down-court (between the field and the
 - **Arms while holding:** standing around holding boules, arms should hang relaxed at the sides (boules cupped at the hip) or sit akimbo (hands on hips), not held out in a carry pose. E16's `heldArms()` forces the carry pose; replace it with a relaxed hold and switch to the carry pose only while walking briskly. Personality: Marcel tends to akimbo, Odette arms by her sides or folded with boules, Pierre fidgets.
 - **Idle animation:** while waiting or watching, everyone moves a little all the time (breathing, weight shifts, small head turns tracking play, an occasional step) and, now and then, an interesting gesture: checking the boules in hand, wiping a boule on the trousers, shading the eyes to look at the head, a shrug, chatting gestures toward a teammate, tossing a boule from hand to hand (Pierre). Randomised timing per character, never in sync; respect reduced motion (subtler) and pause. Build on character.js's existing quirks (C12) without breaking release-point accuracy or tests.
 - Screenshots of the new hands close up and of idle poses.
+
+### F21 Remove the coloured team rings around boules (haiku)
+Remove the navy/orange team rings drawn on the ground around each boule (from B06's head-view rings, also visible at mène end and in the overhead views), and the white rival ring added in D07/E22. Teams stay distinguishable by the boules' own steel/bronze look. Keep the mène-end scoring circle, numbered badges and distance labels. render.js only; check with a mène-end screenshot.
