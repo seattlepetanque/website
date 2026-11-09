@@ -257,7 +257,7 @@ export function createTossMachine(opts) {
   return m;
 }
 
-const STYLE_NAMES = { roulette: 'Roulette', 'demi-portee': 'Demi-portée', plombee: 'Plombée', tir: 'Tir' };
+const STYLE_NAMES = { roulette: 'Roulette', 'demi-portee': 'Demi-portée', plombee: 'Plombée' };
 
 export function createTossInput(canvas, options) {
   const { showReadout = true, ...opts } = options;
@@ -276,7 +276,7 @@ export function createTossInput(canvas, options) {
     readout.classList.toggle('is-cancel', !!s.cancel);
     readout.textContent = s.cancel
       ? 'Release to cancel'
-      : `${STYLE_NAMES[styleForLoft(s.loft, !!s.snappedTo)]} ${Math.round(s.loft / DEG)}°${s.snappedTo ? ' · lands just short' : ''}`;
+      : `${STYLE_NAMES[styleForLoft(s.loft)]} ${Math.round(s.loft / DEG)}°${s.snappedTo ? ' · lands just short' : ''}`;
     let x, y;
     if (s.px !== undefined) { x = s.px + 18; y = s.py - 36; }
     else { const r = canvas.getBoundingClientRect(); x = r.left + r.width / 2; y = r.top + r.height * 0.2; }

@@ -124,7 +124,7 @@ test('results carry the donnée, loft and style, and the throw was solved for th
     const r = chooseThrow({ world: s.world, match: s.match, player: marcel(s.match), difficulty, rand: mulberry32(5), from });
     assert.ok(Number.isFinite(r.donnee.x) && Number.isFinite(r.donnee.y));
     assert.ok(r.loft >= LOFT_MIN && r.loft <= LOFT_MAX);
-    assert.equal(r.style, styleForLoft(r.loft, r.intent === 'shoot'));
+    assert.equal(r.style, r.intent === 'shoot' ? 'tir' : styleForLoft(r.loft)); // the AI's internal label for shots
     assert.ok(typeof r.score === 'number');
     // throw aims within the cone of the donnée (yaw close to the line to it)
     const yaw = Math.atan2(r.donnee.x - from.x, r.donnee.y - from.y);

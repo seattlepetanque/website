@@ -10,9 +10,10 @@ export const LOFT_MIN = 8 * Math.PI / 180;
 export const LOFT_MAX = 75 * Math.PI / 180;
 const DEG = Math.PI / 180;
 
-// Style names: below 20 deg roulette, 20-45 demi-portée, above 45 plombée, tir when snapped to a target
+// Style names by loft: below 20 deg roulette, 20-45 demi-portée, above 45 plombée. `snapped` is ignored (F35: the throw is
+// always named by its loft; the AI's internal 'tir' label for shots at a boule is set in ai.js).
 export function styleForLoft(loft, snapped = false) {
-  if (snapped) return 'tir';
+  void snapped;
   if (loft < 20 * DEG) return 'roulette';
   if (loft <= 45 * DEG) return 'demi-portee';
   return 'plombee';

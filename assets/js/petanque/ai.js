@@ -207,7 +207,7 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
     const throwParams = throwThrough({ from: rel, donnee: fit.landing, loft, skill, terrain: world.terrain, rand, energyFrac: fit.energyFrac });
     // info: for ?debug&ailog and the measure scripts (what the plan wanted, how far the budget pulled it in, a fallback pick)
     return {
-      throwParams, from: rel, intent, label, labelKey, score, donnee: fit.landing, loft, style: styleForLoft(loft, snapped), energyFrac: fit.energyFrac,
+      throwParams, from: rel, intent, label, labelKey, score, donnee: fit.landing, loft, style: snapped ? 'tir' : styleForLoft(loft), energyFrac: fit.energyFrac,
       who: player.id,
       info: { wanted: donnee, clampedBy: dist2(donnee, fit.landing), fallback, budgetClamped: fit.clamped },
     };

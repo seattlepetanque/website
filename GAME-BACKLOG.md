@@ -804,15 +804,16 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | ID | Status | Model | Deps | Title |
 |---|---|---|---|---|
 | F34 | review | haiku | F25 | String lines partly buried in the ground (implemented; steep seeds unverified) |
-| F35 | todo | haiku | F32 | Drop the "tir" label: always name the throw by loft |
-| F36 | todo | haiku | F32 | Temporary ✈ Takeoff demo button in the hamburger menu (next to Landing; remove later) |
-| F37 | todo | haiku | F32 | Random ambient planes only in slow mode (quick mode: none) |
+| F35 | done | haiku | F32 | Drop the "tir" label: always name the throw by loft |
+| F36 | done | haiku | F32 | Temporary ✈ Takeoff demo button in the hamburger menu (next to Landing; remove later) |
+| F37 | done | haiku | F32 | Random ambient planes only in slow mode (quick mode: none) |
 | F38 | todo | sonnet | F37 | While a plane is flying and the human isn't active, camera occasionally frames the plane |
 | F39 | todo | sonnet | F28 | Slow mode: camera follows the human walking to the ring |
 | F40 | done | haiku | - | Sideline timbers have a slightly flickery shadow |
 | F42 | done | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
 | F43 | on-hold | sonnet | F44 | Timbers half buried where the ground is higher (F25 heights) |
 | F44 | in-progress | sonnet | F42 | User chose: revert F25 (terrain shapes) |
+| F49 | todo | sonnet | F04 | Medium AI decision slow again after F04 (345 ms quiet vs 100 ms test); time-boxed profiling and fix |
 | F48 | todo | sonnet | F35, F45 | Move Adjust view / Read the ground / View(head) out of the hamburger into translucent hold-to-use icons; pan clamped to allowed region |
 | F47 | todo | sonnet | F46 | Floatplane: after landing, turn away from the court and fade into the background (like the arrival); departures reversed; fade audio out too |
 | F46 | todo | sonnet | - | Scenery: grass edge near distant trees/skyline looks foggy; lake half the size and bluer; distant forest hilly with more mountains behind |
@@ -1148,3 +1149,6 @@ User spec (supersedes the F32 menu placement for these three):
 2. **Read the ground** leaves the hamburger: translucent terrain icon (contour lines/hill). Press and hold shows the Read-the-ground view; letting go returns to normal.
 3. **View: head** leaves the hamburger: translucent icon showing the two views (shoulder vs overhead). Press and hold shows the overhead view; letting go returns to the shoulder ("normal") view. (Replaces the toggle semantics; remove the persisted head/shoulder toggle if now redundant.)
 Details: pointer events (pointerdown/up/cancel/leave, touch-friendly, no context menu/selection), keyboard equivalents (hold key or Space/Enter while focused), aria-labels, only shown when applicable (human's turn, as before); keep them in the F32 icon cluster area without overlapping the F41 mène-end bar or the toss input zone; hamburger keeps Mode, Ambience, ✈ demo buttons. Test with screenshots at 1200x800, 500x900, 844x390. Run after F35-F37 are committed and with F45 (setup dialog) not conflicting: both touch hud.js/main.js/css.
+
+### F49 Medium decision speed after F04 (sonnet, time-boxed)
+`ai.test.js` 'a medium decision takes under 100 ms' fails since a2677a9 (345 ms on a quiet machine, 1-3 s under load). A first agent ran over an hour without a working fix; its partial changes (fewer refine sims, looser refineTol, a per-loft correction memo in `pointDonnee`) broke three AI tests (court planning, tactics scenarios 1-3, tireur hit rates) and were discarded. Hypothesis to test first: F04's new families (promote/block/cover/drop) multiplied the refined pointing candidates, each running `refineDonnee` (refineSims x refineIters sims) plus a second emptied-world clone for promote. Do: profile with a script (count sims per decision per family), then prune cheaply (e.g. only refine the top-N candidates by the analytic score, skip families that cannot beat the best point, cache the refined donnée across candidates of the same loft only where tests stay green). Time-box: 30 minutes. Acceptance: test passes on a quiet machine, `tactics`, `court`, `ai-throws` tests unchanged, win-rate check with measure-tactics within noise. Never edit the timing test.

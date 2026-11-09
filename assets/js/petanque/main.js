@@ -177,6 +177,16 @@ function boot() {
     fp.trigger('landing');
   });
   // END TEMP F29
+  // TEMP F36: remove after review. Floatplane takeoff from the lake on demand, ambient like the landing button.
+  const takeoffBtn = mkBtn(bar, '✈ Takeoff', 'pc-takeoff');
+  takeoffBtn.setAttribute('aria-label', 'Start a floatplane takeoff');
+  takeoffBtn.title = 'Watch the floatplane take off from the lake (temporary)';
+  takeoffBtn.addEventListener('click', () => {
+    const fp = renderer.floatplane;
+    if (fp.active) return; // one plane at a time
+    fp.trigger('takeoff');
+  });
+  // END TEMP F36
   const ambBtn = mkBtn(bar, 'Ambience', 'pc-ambience');
   { // F12: Ambience toggle (remembered); the sound starts after the first unlock
     ambBtn.title = 'Quiet park sounds: birds, breeze, a distant plane.';
@@ -352,7 +362,7 @@ function boot() {
     const band = rollBandFor(from, landing, t.loft, cone, kind); // F32: the roll guide is always shown while aiming
     if (band.blending) roll.raf = requestAnimationFrame(() => { roll.raf = 0; if (lastToss === t) showToss(t, kind); });
     renderer.setThrowPreview({
-      ...env, roll: band, donnee: clamped ? landing : t.donnee, style: styleForLoft(t.loft, !!t.snappedTo),
+      ...env, roll: band, donnee: clamped ? landing : t.donnee, style: styleForLoft(t.loft),
       snapped: !!t.snappedTo && !clamped, legalZone: kind === 'jack',
     });
   }
@@ -1141,7 +1151,7 @@ function boot() {
       const cone = coneFor({ skill, from, landing: choice.donnee, loft: choice.loft, energyFrac: choice.energyFrac });
       const env = coneEnvelope({ from, landing: choice.donnee, loft: choice.loft, cone, terrain: world.terrain });
       renderer.setThrowPreview({
-        ...env, roll: null, donnee: choice.donnee, style: choice.style || styleForLoft(choice.loft, snapped),
+        ...env, roll: null, donnee: choice.donnee, style: choice.style || styleForLoft(choice.loft),
         snapped, legalZone: kind === 'jack',
       });
     }
@@ -2458,7 +2468,8 @@ function boot() {
     syncGv(pausedNow ? 0 : dt);
     { // F19: the floatplane keeps game time (none while paused or between games) and feeds its engine to the ambience
       const fp = renderer.floatplane;
-      fp.schedule(match && !pausedNow && playing ? dt : 0, match, reduceMotion());
+      // F37: random planes are scheduled in slow mode only (quick mode: none). The demo buttons trigger directly, in either mode.
+      fp.schedule(match && !pausedNow && playing ? dt : 0, match, reduceMotion() || settings.mode !== 'slow');
       const en = fp.engine;
       audio.setEngine(en.on && !pausedNow, en.level, en.pan, en.rev, en.dist);
     }
