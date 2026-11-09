@@ -225,7 +225,7 @@ test('7-point game ends at 7', () => {
   m = playOut(m, [b('a', 1, 2, 8.1), b('b', 1, 2, 8.2), b('c', 0, 2, 8.5)]);
   assert.equal(m.phase, 'gameOver');
   assert.equal(m.winner, 1);
-  assert.deepEqual(m.scores, [5, 8]);
+  assert.deepEqual(m.scores, [5, 7]); // F31: capped at the target
 });
 
 test('dead boules relocated beyond the far line are not counted or measured', () => {
@@ -348,4 +348,42 @@ test('E08: far and short faults carry the measured distance; a dead jack that ro
   assert.equal(back.reason, 'out');
   assert.equal(back.back, true);
   assert.equal(jackFault({ x: 2, y: 15.3, dead: true }).back, undefined);
+});
+
+// --- F31: stored scores are capped at the target; the winner is still the team that reaches it ---
+
+test('F31: 12 + 3 is stored as 13, and the team that reached the target wins', () => {
+  let m = started({});
+  m = { ...m, scores: [12, 0] };
+  m = playOut(m, [b('a', 0, 2, 8.1), b('b', 0, 2, 8.2), b('c', 0, 2, 8.3), b('o', 1, 2, 9)]);
+  assert.equal(m.phase, 'gameOver');
+  assert.equal(m.winner, 0);
+  assert.deepEqual(m.scores, [13, 0]);
+  assert.equal(m.result.points, 3);
+});
+
+test('F31: in a 7-point game 6 + 6 is stored as 7', () => {
+  let m = started({ target: 7 });
+  m = { ...m, scores: [6, 2] };
+  m = playOut(m, [b('a', 0, 2, 8.1), b('b', 0, 2, 8.2), b('c', 0, 2, 8.3), b('o', 1, 2, 9)]);
+  assert.equal(m.phase, 'gameOver');
+  assert.equal(m.winner, 0);
+  assert.deepEqual(m.scores, [7, 2]);
+});
+
+test('F31: ordinary scoring below the target is unchanged', () => {
+  let m = started({});
+  m = { ...m, scores: [4, 5] };
+  m = playOut(m, [b('a', 1, 2, 8.1), b('b', 1, 2, 8.2), b('c', 0, 2, 8.5)]);
+  assert.equal(m.phase, 'meneEnd');
+  assert.deepEqual(m.scores, [4, 7]);
+  assert.equal(m.winner, null);
+});
+
+test('F31: E15 early end still fires with a capped score', () => {
+  const m = e15Setup([12, 0], 0);
+  const r = throwBoule(m, 'you', jackAt, [b('a', 0, 2, 8.1), b('a2', 0, 2, 8.2), b('a3', 0, 2, 8.3), b('o', 1, 2, 9)]);
+  assert.equal(r.phase, 'gameOver');
+  assert.equal(r.winner, 0);
+  assert.deepEqual(r.scores, [13, 0]);
 });

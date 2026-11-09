@@ -803,7 +803,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 
 | ID | Status | Model | Deps | Title |
 |---|---|---|---|---|
-| F31 | in-progress | haiku | — | Cap reported scores at the game target (13) |
+| F31 | done | haiku | — | Cap reported scores at the game target (13) |
 | F30 | done | haiku | F29 | Landing button: plane lands in the background, no camera change |
 | F29 | done (temporary) | haiku | F19 | Temporary button to trigger a floatplane landing (remove later) |
 | F01 | done | sonnet | — | Sports-broadcast follow camera for the roving view |
@@ -1053,3 +1053,6 @@ Top priority. The F29 button should just start the floatplane landing in the bac
 
 ### F31 Cap reported scores at the target (haiku)
 If a team ever ends a mène with more points than needed (e.g. 12 + 3 = 15), the scores stored and shown must never exceed the game target: clamp each team's score to `match.target` (13 in a normal game, 7 in the quick game) when scoring a mène (rules.js `endMene` / the scores array), so the scoreboard, mène-end card, game-over panel and winner logic all show at most the target (e.g. "13 to 8", not "15 to 8"). The winner is still decided by reaching the target. Tests: 12 + 3 gives 13; 6 + 6 in a 7-point game gives 7; normal scoring is unchanged.
+
+### F31 notes
+- rules.js `endMene`: `scores[team] = Math.min(match.target, scores[team] + points)`; display code reads `match.scores` so needed no change. The old "7-point game ends at 7" test now expects the capped `[5, 7]`; four new tests (12 + 3 → 13, 6 + 6 in a 7-point game → 7, normal scoring unchanged, E15 early end at a capped score).

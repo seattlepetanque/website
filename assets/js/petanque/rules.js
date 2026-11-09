@@ -171,7 +171,8 @@ function endMene(match, jack, boules) {
     result = meneResult(jack, boules);
   }
   const scores = match.scores.slice();
-  if (!result.void) scores[result.team] += result.points;
+  // F31: a team's score never exceeds the target (12 + 3 is stored and shown as 13).
+  if (!result.void) scores[result.team] = Math.min(match.target, scores[result.team] + result.points);
   const over = scores.findIndex((s) => s >= match.target) >= 0;
   const winner = over ? (scores[0] >= scores[1] ? 0 : 1) : null;
   return { ...match, jack, boules, scores, result, inFlight: null,
