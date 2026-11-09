@@ -506,6 +506,8 @@ export function createAudio(opts = {}) {
   // F12: Ambience on/off (main.js remembers it in settings); audition ('bird' | 'breeze' | 'plane') ignores both.
   function setAmbience(on) { ambOn = !!on; syncAmb(); }
   function playAmbient(name) { unlock(); if (amb) amb.audition(name); }
+  // F19: the floatplane's engine, fed every frame by the game (follows the Ambience toggle and mute; silent while paused)
+  function setEngine(on, level, pan, rev, dist) { if (amb && amb.engine && !held) amb.engine(on, level, pan, rev, dist); }
 
   function isMuted() {
     return muted;
@@ -525,5 +527,5 @@ export function createAudio(opts = {}) {
     return btn;
   }
 
-  return { unlock, setPaused, handleEvents, update, accent, play, setMuted, isMuted, setAmbience, playAmbient, createMuteButton };
+  return { unlock, setPaused, handleEvents, update, accent, play, setMuted, isMuted, setAmbience, playAmbient, setEngine, createMuteButton };
 }

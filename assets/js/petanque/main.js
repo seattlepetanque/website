@@ -214,7 +214,7 @@ function boot() {
     for (const [label, name, p] of SOUNDS) {
       mkBtn(panel, label, 'pc-sound').addEventListener('click', () => { audio.unlock(); audio.play(name, p); });
     }
-    for (const [label, name] of [['Ambience: bird', 'bird'], ['Ambience: breeze swell', 'breeze'], ['Ambience: airplane (25 s)', 'plane']]) {
+    for (const [label, name] of [['Ambience: bird', 'bird'], ['Ambience: breeze swell', 'breeze'], ['Ambience: airplane (25 s)', 'plane'], ['Ambience: floatplane engine (10 s)', 'floatplane']]) {
       mkBtn(panel, label, 'pc-sound').addEventListener('click', () => audio.playAmbient(name));
     }
     drawer.append(panel);
@@ -2327,10 +2327,22 @@ function boot() {
     if (!pausedNow) { try { tickCast(dt); } catch (err) { console.error('[tickCast]', err); } } // E21: a throw in a release callback must not stop the loop
     renderer.sync(world);
     syncGv(pausedNow ? 0 : dt);
+    { // F19: the floatplane keeps game time (none while paused or between games) and feeds its engine to the ambience
+      const fp = renderer.floatplane;
+      fp.schedule(match && !pausedNow && playing ? dt : 0, match, reduceMotion());
+      const en = fp.engine;
+      audio.setEngine(en.on && !pausedNow, en.level, en.pan, en.rev, en.dist);
+    }
     renderer.render(pausedNow ? 0 : dt);
     nextFrame(frame);
   }
 
+  if (debug && params.get('floatplane')) { // ?debug&floatplane=takeoff|landing[&fpat=seconds][&fpcam=0]: run it now, camera on it
+    const fp = renderer.floatplane;
+    fp.trigger(params.get('floatplane') === 'landing' ? 'landing' : 'takeoff', params.get('fpmirror') === '-1' ? -1 : 1);
+    fp.debugFrame = params.get('fpcam') !== '0';
+    if (params.has('fpat')) fp.advance(+params.get('fpat') || 0);
+  }
   aimView();
   nextFrame(frame);
 

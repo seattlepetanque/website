@@ -627,3 +627,98 @@ export function makeSkyPanorama(cx, cy, fogHex = SKY_HAZE) {
   grp.add(wrap, det);
   return grp;
 }
+
+// ---- Lake (F19) -----------------------------------------------------------------------------------------
+// One flat plane down-court (+y), beyond the trees: it starts ~42 m from the court centre and reaches into the fog, so
+// its far edge never shows. A small shader gives it a sky-reflecting, slowly moving shimmer, a lighter shallow band and
+// a faint foam line along an irregular near shore. Fog is the scene's own (30-170 m to SKY_HAZE), so the water melts
+// into the panorama exactly like the grass does.
+export const LAKE = { near: 42, far: 260, halfW: 340, dz: 0.05 }; // y of the shore, far edge, half width (m), height over the grass plane
+
+const LAKE_VERT = `
+#include <fog_pars_vertex>
+varying vec3 vW;
+void main() {
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vW = wp.xyz;
+  vec4 mvPosition = viewMatrix * wp;
+  gl_Position = projectionMatrix * mvPosition;
+  #include <fog_vertex>
+}`;
+
+const LAKE_FRAG = `
+uniform float uTime;
+uniform float uCx;
+uniform vec3 uDeep;
+uniform vec3 uShallow;
+uniform vec3 uFoam;
+uniform vec3 uSky0;
+uniform vec3 uSky1;
+uniform vec3 uSky2;
+uniform vec3 uSky3;
+varying vec3 vW;
+#include <fog_pars_fragment>
+vec3 skyAt(float e) { // sky gradient by elevation (degrees), the same stops as the dome
+  vec3 c = mix(uSky0, uSky1, smoothstep(0.0, 10.0, e));
+  c = mix(c, uSky2, smoothstep(10.0, 25.0, e));
+  return mix(c, uSky3, smoothstep(25.0, 50.0, e));
+}
+float shoreEdge(float x) {
+  float dx = x - uCx;
+  float round = pow(max(0.0, abs(dx) - 110.0) / 60.0, 2.0) * 40.0;
+  return ${LAKE.near.toFixed(1)} + 5.0 * sin(x * 0.045 + 1.0) + 3.0 * sin(x * 0.11 + 2.3) + 1.5 * sin(x * 0.27) + round;
+}
+void main() {
+  float d = vW.y - shoreEdge(vW.x); // metres into the water
+  if (d < -0.2) discard;
+  vec3 toCam = cameraPosition - vW;
+  float dist = length(toCam);
+  vec3 V = toCam / dist;
+  // a few crossing wave trains (world space, sped by uTime); their slope fades with distance so far water does not alias
+  vec2 p = vW.xy;
+  float t = uTime;
+  vec2 g = vec2(0.0);
+  g += vec2(0.8, 0.6) * cos(dot(p, vec2(0.8, 0.6)) * 0.9 + t * 0.9) * 0.9;
+  g += vec2(-0.5, 0.87) * cos(dot(p, vec2(-0.5, 0.87)) * 1.7 + t * 1.3 + 1.7) * 0.6;
+  g += vec2(0.97, -0.24) * cos(dot(p, vec2(0.97, -0.24)) * 2.9 + t * 1.9 + 4.0) * 0.4;
+  g += vec2(0.2, 0.98) * cos(dot(p, vec2(0.2, 0.98)) * 0.35 + t * 0.5) * 1.1;
+  float slope = 0.045 / (1.0 + dist * 0.012);
+  vec3 n = normalize(vec3(-g * slope, 1.0));
+  vec3 R = reflect(-V, n);
+  float el = degrees(asin(clamp(R.z, 0.0, 1.0)));
+  float fres = 0.04 + 0.96 * pow(1.0 - clamp(V.z, 0.0, 1.0), 5.0);
+  vec3 sky = skyAt(el);
+  vec3 body = mix(uDeep, uShallow, 1.0 - smoothstep(0.0, 14.0, d));
+  vec3 col = mix(body, sky * 0.8, clamp(fres * 0.8, 0.0, 1.0));
+  // a faint light streak where the slope catches the sky, drifting slowly
+  col += 0.05 * smoothstep(0.35, 1.0, sin(g.x * 1.3 + g.y * 0.9 + t * 0.4)) * (1.0 - smoothstep(0.0, 120.0, dist) * 0.6);
+  // foam line along the shore (a few metres wide, so it still reads at a grazing angle) and soft fade at the very edge
+  float foam = smoothstep(-0.2, 0.8, d) * (1.0 - smoothstep(0.8, 3.6, d));
+  foam *= 0.55 + 0.45 * sin(vW.x * 0.9 + t * 0.7 + d * 1.3);
+  col = mix(col, uFoam, foam * 0.7);
+  float a = smoothstep(-0.2, 0.9, d);
+  gl_FragColor = vec4(col, a);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+  #include <fog_fragment>
+}`;
+
+// Returns { mesh, update(dt) }. cx: x of the court centre (the lake is centred on it); z: the grass plane's height.
+export function makeLake(cx, z) {
+  const geo = new THREE.PlaneGeometry(LAKE.halfW * 2, LAKE.far - 20);
+  const sk = [0, 10, 25, 50].map((e) => skyColor(e));
+  const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
+    uTime: { value: 0 }, uCx: { value: cx },
+    uDeep: { value: new THREE.Color('#1f5f8c') }, uShallow: { value: new THREE.Color('#6fa89c') }, uFoam: { value: new THREE.Color('#f2f7f5') },
+    uSky0: { value: sk[0] }, uSky1: { value: sk[1] }, uSky2: { value: sk[2] }, uSky3: { value: sk[3] },
+  }]);
+  const mat = new THREE.ShaderMaterial({
+    uniforms, vertexShader: LAKE_VERT, fragmentShader: LAKE_FRAG, fog: true, transparent: true, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(cx, (20 + LAKE.far) / 2, z + LAKE.dz);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = -1; // under the spray and the plane (also transparent)
+  return { mesh, update(dt) { uniforms.uTime.value += dt; } };
+}

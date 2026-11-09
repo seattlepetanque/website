@@ -262,9 +262,65 @@ export function stancePose(stance, t, ctx = {}) {
       p.armL.p = 0.05 + 0.01 * b; p.armR.p = 0.05 + 0.01 * b;
     }
   }
+  const standing = stance === 'watch' || stance === 'idle';
+  if (standing) {
+    microMotion(p, t, ctx, stance);
+    if (ctx.hold) holdArms(p, t, ctx);
+  }
   p.ry = footprintShift(p);
-  if ((stance === 'watch' || stance === 'idle') && (ctx.quirks || ctx.forceQuirk)) return withQuirk(p, t, ctx);
+  if (standing && (ctx.quirks || ctx.forceQuirk)) return withQuirk(p, t, ctx);
   return p;
+}
+
+// ---------- F20: layered micro-motion, relaxed holds, idle gestures (pure) ----------
+const hash = (a, b = 0) => { const x = sin(a * 127.1 + b * 311.7) * 43758.5453; return x - Math.floor(x); };
+// Breathing, a slow weight shift, small head movements and an occasional small step, all added to a watch/idle pose.
+// ctx.offset desynchronises characters; ctx.reduced scales it down (and drops the step).
+function microMotion(p, t, ctx, stance) {
+  const o = ctx.offset || 0, k = ctx.reduced ? 0.4 : 1;
+  const b = sin(t * 1.9 + o);
+  p.spine += 0.012 * b * k; p.pitch += 0.007 * b * k;
+  const ws = 0.6 * sin(t * 0.31 + o) + 0.4 * sin(t * 0.53 + o * 2);
+  p.px += 0.007 * ws * k; p.twist += 0.014 * ws * k; p.pz -= 0.003 * abs(ws) * k;
+  p.neck += 0.025 * sin(t * 0.9 + o) * k;
+  if (stance === 'watch') p.headYaw += (ctx.look ? 0.04 * sin(t * 1.3 + o * 3) : 0.3 * sin(t * 0.37 + o) * (0.5 + 0.5 * sin(t * 0.13 + o))) * k;
+  if (ctx.steps && !ctx.reduced) { // (ctx.steps: real characters only, so pose tests stay grounded) a small shuffle every STEP seconds: one foot lifts, shifts a little and lands back
+    const tt = t + o * 2.7, i = Math.floor(tt / STEP), s = (tt - i * STEP - 2 - hash(i, o) * 8) / 0.9;
+    if (s >= 0 && s < 1) {
+      const f = i % 2 ? p.footL : p.footR;
+      f.x += (i % 2 ? -1 : 1) * 0.035 * (hash(i, o + 1) - 0.3) * sin(PI * s); f.y += 0.03 * (hash(i, o + 2) - 0.5) * sin(PI * s);
+      f.z += 0.02 * sin(PI * s);
+    }
+  }
+}
+const STEP = 17;
+
+// Relaxed holds while standing about. Styles: 'sides' arms hanging, boules cupped at the hips; 'akimbo' empty hands on the hips;
+// 'fold' arms loosely folded; 'fidget' hanging arms that never quite settle.
+const SIDE_ARM = { p: 0.1, ab: 0.1, p2: 0.8, ab2: -0.12 };
+const FOLD = { L: { p: 0.5, ab: 0.1, p2: 1.75, ab2: -1.0 }, R: { p: 0.55, ab: 0.1, p2: 1.5, ab2: -1.0 } };
+const HANG = { p: 0.06, ab: 0.12, p2: 0.3, ab2: 0.12 };
+export function holdArm(style, held, t, side, o = 0) {
+  const ph = side === 'L' ? 0 : 1.7;
+  if (style === 'akimbo') return held ? { ...SIDE_ARM } : { ...HIPS.armL };
+  if (style === 'fold') return { ...FOLD[side] };
+  if (style === 'fidget') {
+    const a = held ? { ...SIDE_ARM } : { ...HANG };
+    a.p += 0.07 * sin(t * 2.3 + ph + o); a.p2 += 0.2 * sin(t * 3.1 + ph * 2 + o); a.ab2 += 0.1 * sin(t * 2.1 + ph);
+    return a;
+  }
+  return held ? { ...SIDE_ARM, p2: SIDE_ARM.p2 + 0.03 * sin(t * 1.3 + ph + o) } : { ...HANG };
+}
+const HOLD_SLOT = 13;
+export function holdArmsAt(styles, held, t, side, o = 0) {
+  const list = styles && styles.length ? styles : ['sides'];
+  const tt = t + o * 3, i = Math.floor(tt / HOLD_SLOT), pick = (n) => list[Math.floor(hash(n, o + 5) * list.length)];
+  const cur = holdArm(pick(i), held, t, side, o);
+  const w = (tt - i * HOLD_SLOT) / 1.2;
+  return w >= 1 ? cur : blendPoses(holdArm(pick(i - 1), held, t, side, o), cur, w);
+}
+function holdArms(p, t, ctx) {
+  for (const s of ['L', 'R']) p['arm' + s] = holdArmsAt(ctx.hold.styles, !!ctx.hold.held[s], t, s, ctx.offset || 0);
 }
 
 // ---------- personality: idle quirks and reaction styles (pure) ----------
@@ -305,26 +361,72 @@ export const QUIRKS = {
   shift: { dur: 3, fn: (p, u) => { p.px += 0.035 * sin(u * 2); p.twist += 0.06 * sin(u * 2); p.footR.x += 0.015; } },
   lookaround: { dur: 3, fn: (p, u) => { p.headYaw += 0.55 * sin(u * 1.8); p.neck += 0.03; } },
 };
+const pulse = (u, dur) => sin(PI * clamp(u / dur, 0, 1));
+const dk = (c) => 'arm' + ((c && c.dom) || 'R'), ok = (c) => 'arm' + ((c && c.dom) === 'L' ? 'R' : 'L');
+// F20 gestures (c: { dom, off } the dominant and other hand letters; the hands may be holding boules)
+const FRONT = (u, a = 0) => ({ p: 0.78 + 0.04 * sin(u * 2 + a), ab: 0.14, p2: 1.5, ab2: -0.12 });
+Object.assign(QUIRKS, {
+  checkboules: { dur: 3.6, fn: (p, u, c) => { // look down at what is in the hands, turning them over a little
+    p[dk(c)] = FRONT(u); p[ok(c)] = FRONT(u, 1.5);
+    p[dk(c)].p2 += 0.08 * sin(u * 5); p[ok(c)].p2 += 0.08 * sin(u * 4.2 + 1);
+    p.neck += 0.5 * pulse(u, 3.6); p.spine += 0.05; p.headYaw += 0.12 * sin(u * 1.5);
+  } },
+  wipeboule: { dur: 3, fn: (p, u, c) => { // rub a boule on the trouser leg
+    p[dk(c)] = { p: 0.3, ab: 0.08, p2: 0.62 + 0.3 * sin(u * 8), ab2: 0.05 };
+    p.spine += 0.08; p.neck += 0.4 * pulse(u, 3); p.pitch += 0.03;
+  } },
+  shade: { dur: 3.4, fn: (p, u, c) => { // a flat hand over the eyes, peering toward the head
+    const k = min(1, pulse(u, 3.4) / 0.9);
+    p[dk(c)] = { p: 1.3, ab: 0.35, p2: 2.95, ab2: -0.45 }; p.neck -= 0.08 * k;
+    p.headYaw += 0.1 * k; p.spine -= 0.03;
+  } },
+  shrug: { dur: 2.4, fn: (p, u) => { // both palms up and out, a small lift and drop
+    const e = pulse(u, 2.4), a = { p: 0.4, ab: 0.45 + 0.2 * e, p2: 0.85, ab2: 0.8 + 0.15 * e };
+    p.armL = { ...a }; p.armR = { ...a }; p.neck += 0.1 * e; p.pz -= 0.006 * e; p.headYaw += 0.15 * sin(u * 2.5);
+  } },
+  chat: { dur: 4, fn: (p, u, c) => { // talking with the hand to a teammate beside us
+    const side = (c && c.dom) === 'L' ? -1 : 1;
+    p[dk(c)] = { p: 0.85, ab: 0.3, p2: 1.45 + 0.35 * sin(u * 5.3), ab2: 0.02 + 0.2 * sin(u * 2.9) };
+    p.headYaw += 0.5 * side * pulse(u, 4); p.twist += 0.1 * side * pulse(u, 4); p.neck += 0.04 * sin(u * 3);
+  } },
+  toss: { dur: 3.6, fn: (p, u, c) => { // Pierre tosses a boule from hand to hand (tossBall places it)
+    p[dk(c)] = { ...FRONT(u), ab: 0.22 }; p[ok(c)] = { ...FRONT(u, 1), ab: 0.22 };
+    const f = u / 0.9 % 1, i = Math.floor(u / 0.9); // the hand that just caught dips a little
+    (i % 2 ? p[dk(c)] : p[ok(c)]).p += 0.06 * sin(PI * f);
+    p.neck += 0.2; p.headYaw += 0.1 * sin(u * 3.5);
+  } },
+});
+// Where the tossed boule is at u seconds in: k 0 at the dominant hand, 1 at the other, arc metres of lift
+export function tossBall(u) {
+  const c = u / 0.9, i = Math.floor(c), f = c - i;
+  return { k: i % 2 ? 1 - f : f, arc: 0.22 * sin(PI * f) };
+}
 const BLEND_IN = 0.45;
-// Which quirk (if any) is active at time t for a character: a slot every SLOT seconds, a quirk in each, with a rest first
-const SLOT = 7.5;
+// Which quirk (if any) is active at time t for a character: one slot every SLOT seconds, each with a hashed start, a quirk and sometimes
+// nothing, so the gestures come at irregular intervals and differ between characters (offset)
+const SLOT = 8.5;
 export function quirkAt(list, t, offset = 0) {
   if (!list || !list.length) return null;
-  const tt = t + offset, i = Math.floor(tt / SLOT), u = tt - i * SLOT - 1.2;
-  const name = list[(i * 5 + 3 + Math.floor(offset)) % list.length], dur = QUIRKS[name].dur;
+  const tt = t + offset, i = Math.floor(tt / SLOT);
+  if (hash(i, offset + 9) < 0.25) return null;
+  const name = list[Math.floor(hash(i, offset + 3) * list.length)], dur = QUIRKS[name].dur;
+  const u = tt - i * SLOT - 0.5 - hash(i, offset) * max(0, SLOT - dur - 1);
   if (u < 0 || u > dur) return null;
   return { name, u, w: clamp(min(u, dur - u) / BLEND_IN, 0, 1) };
 }
+// The active gesture at time t for a ctx ({ quirks, forceQuirk, offset, reduced, canToss }), or null
+export function activeQuirk(t, ctx) {
+  if (ctx.forceQuirk) return { name: ctx.forceQuirk, u: t, w: 1 };
+  const a = quirkAt(ctx.quirks && ctx.quirks.idle, t, ctx.offset || 0);
+  if (!a || (a.name === 'toss' && (ctx.reduced || !ctx.canToss))) return null;
+  return ctx.reduced ? { ...a, w: a.w * 0.5 } : a;
+}
 function withQuirk(p, t, ctx) {
-  let name, u, w = 1;
-  if (ctx.forceQuirk) { name = ctx.forceQuirk; u = t; } else {
-    const a = quirkAt(ctx.quirks && ctx.quirks.idle, t, ctx.offset || 0);
-    if (!a) return p;
-    ({ name, u, w } = a);
-  }
+  const a = activeQuirk(t, ctx);
+  if (!a) return p;
   const q = clonePose(p);
-  QUIRKS[name].fn(q, u);
-  return blendPoses(p, q, w);
+  QUIRKS[a.name].fn(q, a.u, ctx);
+  return blendPoses(p, q, a.w);
 }
 
 // Celebrate / dismay variants by personality (the default 'cheer' and 'head' live in stancePose)
@@ -589,11 +691,22 @@ export function createCharacter(THREE, spec = {}) {
   const shoulderBar = addMesh(new THREE.CapsuleGeometry(rs(0.04), L.shoulderHalf * 2, 4, 10), mShirt);
   const hipBar = addMesh(new THREE.CapsuleGeometry(rs(0.06), L.hipHalf * 2, 4, 10), mTrousers);
   caps.push({ me: shoulderBar, a: 'shoulderL', b: 'shoulderR' }, { me: hipBar, a: 'hipL', b: 'hipR' });
-  // hands: a flat mitten (unit sphere scaled: across, along the forearm, thin through the palm) so palm up or down reads
+  // F20 hands: a flattened palm, a short thumb angled out and three finger capsules that curl toward the palm side (more when
+  // a boule is held). The group's frame is the hand basis: x across the palm toward the inside (so the thumb is at -x for
+  // either hand), y along the forearm, z away from the palm side. Everything is cheap and mirrors for free.
   const hands = ['L', 'R'].map(() => {
-    const m = addMesh(new THREE.SphereGeometry(1, 10, 8), mSkin);
-    m.scale.set(H * 0.019, H * 0.027, H * 0.007);
-    return m;
+    const g = new THREE.Group(); stickG.add(g);
+    const palm = addMesh(new THREE.BoxGeometry(H * 0.044, H * 0.045, H * 0.014), mSkin, g);
+    const knuckle = new THREE.Group(); knuckle.position.y = H * 0.0225; g.add(knuckle);
+    const fr = H * 0.0075;
+    for (const i of [-1, 0, 1]) {
+      const f = addMesh(new THREE.CapsuleGeometry(fr, H * (i === 0 ? 0.032 : 0.026), 3, 6), mSkin, knuckle);
+      f.position.set(i * fr * 2, H * (i === 0 ? 0.0235 : 0.021), 0);
+    }
+    const thumb = addMesh(new THREE.CapsuleGeometry(H * 0.0072, H * 0.018, 3, 6), mSkin, g);
+    thumb.position.set(-H * 0.0285, H * 0.002, -H * 0.005); thumb.rotation.set(-0.3, 0, 0.5);
+    void palm;
+    return { g, knuckle };
   });
   const feetMeshes = ['L', 'R'].map(() => addMesh(new THREE.CapsuleGeometry(rLimb(0.028), L.foot + L.heel - 2 * rLimb(0.028), 4, 8), mShoe));
 
@@ -674,6 +787,16 @@ export function createCharacter(THREE, spec = {}) {
   const m4 = new V.Matrix4();
   headG.matrixAutoUpdate = false;
 
+  // F20: what the idle system needs to know: the quirk lists, hold styles, which hands hold boules, reduced motion
+  const reduced = () => reducedMotion === null ? (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) : reducedMotion;
+  let reducedMotion = null;
+  function idleCtx(react) {
+    return {
+      look: st.lookSm, quirks, react, forceQuirk: st.forceQuirk, offset: quirkOffset, reduced: reduced(), dom: HK, steps: true,
+      canToss: holdMesh.visible && !(held && held.other > 0),
+      hold: held ? { styles: quirks.hold, held: { [HK]: held.dominant > 0, [OFF_HK]: held.other > 0 } } : null,
+    };
+  }
   function currentTarget() {
     const sw = (p) => (hand === 'left' ? armSwap(p) : p);
     if (st.mode === 'walk') return sw(walkPose(st.walk.phase, { lift: st.walk.lift, carry: st.carry }));
@@ -686,15 +809,15 @@ export function createCharacter(THREE, spec = {}) {
       return hand === 'left' ? mirrorPose(p) : p;
     }
     const react = st.stance === 'celebrate' ? quirks.celebrate : st.stance === 'dismay' ? quirks.dismay : undefined;
-    const sp = stancePose(st.stance, st.t, { look: st.lookSm, quirks, react, forceQuirk: st.forceQuirk, offset: quirkOffset });
+    const sp = stancePose(st.stance, st.t, idleCtx(react));
     // the throwing stances and the hand-over are one-handed: mirror them for a left-hander (the rest is symmetric)
     if (hand === 'left' && ['aim', 'crouch', 'stand', 'give'].includes(st.stance)) mirrorPose(sp);
-    if (st.carry && (st.stance === 'watch' || st.stance === 'idle')) sp[armKey] = { ...CARRY_ARM };
+    if (st.carry && !held && (st.stance === 'watch' || st.stance === 'idle')) sp[armKey] = { ...CARRY_ARM };
     return sp;
   }
-  // Hands that hold boules keep their arms at the waist, palm up, while walking or waiting
+  // Hands that hold boules carry them at the waist, palm up, while walking (standing about uses the relaxed holds in stancePose)
   function heldArms(p) {
-    if (!held || !(st.mode === 'walk' || (st.mode === 'stance' && (st.stance === 'watch' || st.stance === 'idle')))) return p;
+    if (!held || st.mode !== 'walk') return p;
     if (held.dominant > 0) p['arm' + HK] = { ...CARRY_ARM };
     if (held.other > 0) p['arm' + OFF_HK] = { ...CARRY_ARM };
     return p;
@@ -728,6 +851,13 @@ export function createCharacter(THREE, spec = {}) {
   const ballLocal = (k) => heldBallAt(st.out, st.solved, k, handAt(k));
   function placeHeld() {
     holdMesh.position.set(...ballLocal(HK));
+    if (st.mode === 'stance' && st.blend >= 1 && (st.stance === 'watch' || st.stance === 'idle') && holdMesh.visible) {
+      const a = activeQuirk(st.t, idleCtx());
+      if (a && a.name === 'toss') { // Pierre's toss: the boule arcs between the hands
+        const { k, arc } = tossBall(a.u), d = ballLocal(HK), o = ballLocal(OFF_HK);
+        holdMesh.position.set(lerp(d[0], o[0], k), lerp(d[1], o[1], k), lerp(d[2], o[2], k) + arc);
+      }
+    }
     jackHeld.position.set(...ballLocal(HK)); // same centre as a boule: the release point is unchanged
     if (!held || held.other < 1) return;
     const c = ballLocal(OFF_HK);
@@ -738,10 +868,13 @@ export function createCharacter(THREE, spec = {}) {
   function placeHands() {
     ['L', 'R'].forEach((n, i) => {
       const b = handBasis(st.out, st.solved, n), j = st.solved.joints['hand' + n];
-      const p = add(sub(add(j, mul(add(b.n, b.n0), BALL_D / 2)), mul(b.n, BALL_D)), mul(b.d, -H * 0.012)); // the palm under the boule's place
+      const p = add(sub(add(j, mul(add(b.n, b.n0), BALL_D / 2)), mul(b.n, BALL_D)), mul(b.d, -H * 0.02)); // the palm under the boule's place, wrist side
       const z = cross(b.lat, b.d);
-      hands[i].position.set(...p);
-      hands[i].quaternion.setFromRotationMatrix(m4.makeBasis(va.set(...b.lat), vb.set(...b.d), vd.set(...z)));
+      const holds = held ? (n === HK ? held.dominant > 0 : held.other > 0) : (n === HK && st.holding === 'boule');
+      const g = hands[i].g;
+      g.position.set(...sub(p, mul(b.n, H * 0.008)));
+      g.quaternion.setFromRotationMatrix(m4.makeBasis(va.set(...b.lat), vb.set(...b.d), vd.set(...z)));
+      hands[i].knuckle.rotation.x = -(holds ? 0.75 : 0.3);
     });
   }
 
@@ -1021,6 +1154,7 @@ export function createCharacter(THREE, spec = {}) {
       switchMode('throw');
     });
   }
+  function setReducedMotion(on) { reducedMotion = on === null || on === undefined ? null : !!on; }
   function forceQuirk(name) { st.forceQuirk = name || null; st.t = 0; } // debug: hold one idle quirk
   // E23: setHolding('jack') shows the cochonnet in the dominant hand; setHolding(true | 'boule', colour) a boule (the
   // team's look: colour sets the single boule's material); false hides both. A release clears it (step()).
@@ -1122,7 +1256,7 @@ export function createCharacter(THREE, spec = {}) {
   applyMeshes();
   return {
     root, update, setStance, walkTo, playThrow, playBend, setCarrying, handWorldPosition, dispose,
-    lookAt, setHolding, setHeldBoules, shiftBoule, setPlacement, setSteer, walkLeg, attachModel, forceQuirk, fadeTo, setOpacity,
+    lookAt, setHolding, setHeldBoules, shiftBoule, setPlacement, setSteer, walkLeg, attachModel, forceQuirk, setReducedMotion, fadeTo, setOpacity,
     hand, // 'right' | 'left': the dominant (throwing, carrying) hand
     get isMesh() { return !!vis; },
     get yaw() { return st.yaw; },

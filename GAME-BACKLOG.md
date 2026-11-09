@@ -821,9 +821,9 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21 | Round 5 review |
 | F17 | done | haiku | — | Remove "lands at …" landing-distance text from the status line |
 | F18 | done | haiku | — | Breeze only occasionally, fading in and out |
-| F19 | in-progress | sonnet | — | Distant lake with an occasional floatplane taking off or landing |
-| F20 | in-progress | sonnet | — | Better hands, relaxed arms while holding boules, richer idle animation |
-| F21 | todo | haiku | — | Remove the coloured team rings around boules |
+| F19 | done | sonnet | — | Distant lake with an occasional floatplane taking off or landing |
+| F20 | done | sonnet | — | Better hands, relaxed arms while holding boules, richer idle animation |
+| F21 | done | haiku | — | Remove the coloured team rings around boules |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -981,3 +981,12 @@ A Lake Union touch: a lake in the distance down-court (between the field and the
 
 ### F21 Remove the coloured team rings around boules (haiku)
 Remove the navy/orange team rings drawn on the ground around each boule (from B06's head-view rings, also visible at mène end and in the overhead views), and the white rival ring added in D07/E22. Teams stay distinguishable by the boules' own steel/bronze look. Keep the mène-end scoring circle, numbered badges and distance labels. render.js only; check with a mène-end screenshot.
+
+### F21 notes
+- Team ring geometry, materials, per-boule meshes and visibility toggles removed from render.js; the two rival ring meshes removed from `showScoring`. For F16: in the mène-end screenshot the rival boule's distance label sat behind the result card; keep labels clear of the card. Committed with the next render.js commit.
+
+### F19 notes
+- scenery.js `makeLake`: shader water ~42 m down-court into the fog (sky shimmer, shallow band, faint foam shoreline; frozen when paused/reduced motion). floatplane.js: low-poly white/red floatplane, keyframed takeoff (taxi, spray, lift-off, climb) or landing (descend, touchdown spray, slow, taxi off), random side, once per match at 25–75% of 900 s game time, skipped under reduced motion; 150-point spray pool. ambient.js engine (sawtooth + octave + sub-square, low-pass, rasp, tremolo, revs with throttle, panned and distance-filtered on the ambience bus). `?debug&floatplane=takeoff|landing` (`&fpat`, `&fpmirror`, `&fpcam=0`); audition button. Engine not heard. On the desktop shoulder view the lake and plane sit just under the top HUD.
+
+### F20 notes
+- Hands: palm + angled thumb + three finger capsules (curl when holding; mirrored for Odette). Relaxed holds (sides / akimbo / folded / fidget per personality, drifting every 13 s; carry pose only while walking). Idle micro-motion and irregular gestures (check boules, wipe a boule, shade eyes, shrug, chat, Pierre's hand-to-hand toss); reduced motion scales it down; frozen at dt 0. Four new character tests. The `quirks.hold` field in personalities.js commits with F04 (shared file); character.js falls back to defaults until then.

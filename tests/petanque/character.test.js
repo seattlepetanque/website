@@ -371,3 +371,69 @@ test('a carried ball stays in the hand: the hand position follows the walk', asy
   assert.ok(Math.abs(p.y - 3) < 0.8);
   ch.dispose();
 });
+
+// ---------- F20: relaxed holds and idle gestures ----------
+import { QUIRKS, quirkAt, holdArmsAt, tossBall } from '../../assets/js/petanque/character.js';
+import { PERSONALITIES } from '../../assets/js/petanque/personalities.js';
+
+const GESTURES = ['checkboules', 'wipeboule', 'shade', 'shrug', 'chat', 'toss'];
+test('F20: bone lengths stay constant through every idle gesture, held boules or not, left or right', () => {
+  for (const hold of [null, { styles: ['sides', 'akimbo', 'fold', 'fidget'], held: { L: true, R: true } }]) {
+    for (const dom of ['L', 'R']) {
+      for (const g of [...GESTURES, 'hips', 'fold', 'fidget']) {
+        for (let u = 0; u <= QUIRKS[g].dur; u += 0.2) {
+          const p = stancePose('watch', u, { look: { yaw: 0.3, pitch: 0 }, forceQuirk: g, hold, dom, steps: true, canToss: true, offset: 3 });
+          checkBones(solveSkeleton(p, 1.8).joints, 1.8, `${g} u=${u}`);
+        }
+      }
+    }
+  }
+});
+
+test('F20: in the relaxed hold the hands stay near the hip or waist', () => {
+  const H = 1.75;
+  for (const style of ['sides', 'akimbo', 'fold', 'fidget']) {
+    for (const held of [true, false]) {
+      for (let t = 0; t < 30; t += 0.7) {
+        const p = stancePose('watch', t, { hold: { styles: [style], held: { L: held, R: held } }, steps: true, offset: 1 });
+        const j = solveSkeleton(p, H).joints;
+        for (const n of ['L', 'R']) {
+          const d = dist(j['hand' + n], j.pelvis);
+          assert.ok(d < 0.32 * H, `${style} held=${held} hand ${n} is ${(d / H).toFixed(2)} H from the pelvis`);
+          assert.ok(j['hand' + n][2] < j.pelvis[2] + 0.16 * H && j['hand' + n][2] > j.pelvis[2] - 0.25 * H, `${style}: hand height`);
+        }
+      }
+    }
+  }
+});
+
+test('F20: gestures come at irregular times and differ between characters; reduced motion is subtler', () => {
+  const list = PERSONALITIES.marcel.quirks.idle, starts = (off) => {
+    const s = []; let prev = null;
+    for (let t = 0; t < 200; t += 0.1) { const a = quirkAt(list, t, off); if (a && (!prev || prev.name !== a.name || a.u < prev.u)) s.push(+t.toFixed(1)); prev = a; }
+    return s;
+  };
+  const a = starts(10), b = starts(23.7);
+  assert.ok(a.length >= 8 && b.length >= 8);
+  assert.notDeepEqual(a.slice(0, 5), b.slice(0, 5));
+  const gaps = a.slice(1).map((v, i) => v - a[i]);
+  assert.ok(Math.max(...gaps) - Math.min(...gaps) > 2, 'irregular intervals');
+  const full = stancePose('watch', 1, { forceQuirk: 'shrug', hold: null });
+  const sub = stancePose('watch', 1, { forceQuirk: 'shrug', hold: null, reduced: true });
+  const rest = stancePose('watch', 1, { hold: null, reduced: true });
+  assert.ok(Math.abs(sub.armL.ab - rest.armL.ab) <= Math.abs(full.armL.ab - rest.armL.ab) + 1e-9);
+  assert.ok(tossBall(0).k === 0 && tossBall(0.9).k === 1);
+});
+
+test('F20: standing characters animate while updated and freeze at dt 0; hold styles vary over time', () => {
+  const ch = createCharacter(THREE, { height: 1.75, name: 'Marcel', quirks: PERSONALITIES.marcel.quirks });
+  ch.setPlacement(0, 0, 0); ch.setStance('watch'); ch.setHeldBoules({ dominant: 1, other: 2 });
+  ch.update(1);
+  const pos = () => ch.root.children.map((c) => c.position.x + c.position.y + c.position.z).join();
+  const a = pos(); ch.update(0); assert.equal(pos(), a, 'paused: nothing moves');
+  ch.update(0.5); assert.notEqual(pos(), a, 'update(dt) keeps it alive');
+  const seen = new Set();
+  for (let t = 0; t < 120; t += 13) seen.add(JSON.stringify(holdArmsAt(['akimbo', 'sides'], false, t, 'L', 5)).slice(0, 12));
+  assert.ok(seen.size >= 2, 'the hold style changes over time');
+  ch.dispose();
+});

@@ -12,13 +12,16 @@ export const AMBIENT = {
     first: [10, 40], gap: [30, 90], duration: [6, 20], fadeIn: [3, 5], fadeOut: [4, 6] },
   rustle: { every: [14, 40], gain: 0.22, dur: [0.5, 1.1] }, // rustles fall only inside a gust (every = mean spacing)
   plane: { every: [120, 300], first: [50, 130], dur: [22, 30], gain: 0.9, tone: 0.1 },
+  // F19 floatplane engine: sawtooth + detuned octave + sub square through a low-pass, a rasp of band-passed noise and a
+  // firing-rate tremolo; revs 0..1 move the pitch (hz) and brightness. `gain` is the peak at level 1.
+  engine: { gain: 0.9, hz: [58, 112], lpf: [380, 1500], rasp: 0.16, tremolo: 0.28, farLpf: 0.55 },
 };
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const rr = (r) => rnd(r[0], r[1]);
 
 export function createAmbient(ctx, dest) {
-  if (!ctx || !dest) return { setActive() {}, audition() {} };
+  if (!ctx || !dest) return { setActive() {}, audition() {}, engine() {} };
   const A = AMBIENT;
   const bus = ctx.createGain(); // follows the on/off + mute state
   bus.gain.value = 0;
@@ -194,6 +197,60 @@ export function createAmbient(ctx, dest) {
     planeEnd = t + dur;
   }
 
+  // ---- floatplane engine (F19) ----
+  // One chain, built on demand: [saw f, saw 2f (detuned), square f/2] -> low-pass -> tremolo -> level -> pan -> out, plus
+  // noise -> band-pass (rasp). set(t, level, pan, rev, dist, tc) moves it with smoothing; stop(t) ends it.
+  function engineChain(out) {
+    const E = A.engine, t = ctx.currentTime;
+    const mk = (type, g) => { const o = ctx.createOscillator(), og = ctx.createGain(); o.type = type; og.gain.value = g; o.connect(og); o.start(t); return { o, og }; };
+    const o1 = mk('sawtooth', 0.5), o2 = mk('sawtooth', 0.22), o3 = mk('square', 0.2);
+    o2.o.detune.value = 9;
+    const lpf = ctx.createBiquadFilter(); lpf.type = 'lowpass'; lpf.Q.value = 1.2; lpf.frequency.value = E.lpf[0];
+    const trem = ctx.createGain(); trem.gain.value = 1 - E.tremolo / 2;
+    const lfo = ctx.createOscillator(), lg = ctx.createGain(); lg.gain.value = E.tremolo / 2; lfo.connect(lg).connect(trem.gain); lfo.start(t);
+    const lvl = ctx.createGain(); lvl.gain.value = 0;
+    const pan = panner(0);
+    o1.og.connect(lpf); o2.og.connect(lpf); o3.og.connect(lpf);
+    lpf.connect(trem).connect(lvl);
+    const ns = noise(t, 0), bp = ctx.createBiquadFilter(), ng = ctx.createGain();
+    bp.type = 'bandpass'; bp.frequency.value = 1100; bp.Q.value = 0.8; ng.gain.value = E.rasp;
+    ns.connect(bp).connect(ng).connect(trem);
+    lvl.connect(pan).connect(out);
+    return {
+      set(at, level, p, rev, dist, tc) {
+        const f = E.hz[0] + (E.hz[1] - E.hz[0]) * rev;
+        for (const [n, m] of [[o1.o, 1], [o2.o, 2], [o3.o, 0.5]]) n.frequency.setTargetAtTime(f * m, at, tc);
+        lfo.frequency.setTargetAtTime(f * 0.5, at, tc);
+        lpf.frequency.setTargetAtTime((E.lpf[0] + (E.lpf[1] - E.lpf[0]) * rev) * (1 - E.farLpf * dist), at, tc);
+        lvl.gain.setTargetAtTime(E.gain * level * (0.55 + 0.45 * rev), at, tc);
+        setPan(pan, p, at, tc);
+      },
+      stop(at) {
+        for (const n of [o1.o, o2.o, o3.o, lfo, ns]) { try { n.stop(at); } catch (e) { /* ignore */ } }
+        setTimeout(() => { try { lvl.disconnect(); pan.disconnect(); } catch (e) { /* ignore */ } }, Math.max(0, (at - ctx.currentTime) * 1000) + 100);
+      },
+    };
+  }
+  let eng = null, engLast = 0;
+  function engineStop() {
+    if (!eng) return;
+    const t = ctx.currentTime;
+    eng.set(t, 0, 0, 0.3, 1, 0.1);
+    eng.stop(t + 0.8);
+    eng = null;
+  }
+  // Called every frame by the game with the plane's state; throttled here. Silent unless the ambience is on.
+  function engine(on, level, pan, rev, dist) {
+    try {
+      if (!on || !active || ctx.state !== 'running') { if (eng && (!on || !active)) engineStop(); return; }
+      const now = ctx.currentTime;
+      if (eng && now - engLast < 0.05) return;
+      if (!eng) { eng = engineChain(bus); engLast = 0; }
+      engLast = now;
+      eng.set(now, level, pan, rev, dist || 0, 0.12);
+    } catch (e) { /* ignore */ }
+  }
+
   // ---- scheduler ----
   function tick() {
     try {
@@ -228,6 +285,7 @@ export function createAmbient(ctx, dest) {
         tick();
       } else {
         stopBreeze();
+        engineStop();
         if (timer) { clearInterval(timer); timer = 0; }
         nextBird = nextGust = nextPlane = 0;
       }
@@ -244,6 +302,13 @@ export function createAmbient(ctx, dest) {
       } else if (name === 'breeze') { // one full gust, stopping after its fade out
         const c = breezeChain(t, audBus, 0);
         c.src.stop(gust(t, c, audBus) + 0.2);
+      } else if (name === 'floatplane') { // 10 s: idle, a take-off run revving up, then climbing away to the right
+        const c = engineChain(audBus);
+        for (let i = 0; i <= 20; i++) {
+          const k = i / 20, rev = k < 0.2 ? 0.3 + k * 0.5 : Math.min(1, 0.4 + (k - 0.2) * 0.9);
+          c.set(t + k * 10, Math.pow(1 - Math.max(0, k - 0.5) * 1.6, 1.5) * (0.5 + 0.5 * Math.min(1, k * 3)), -0.7 + 1.5 * k, rev, Math.max(0, k - 0.4), 0.15);
+        }
+        c.stop(t + 10.5);
       } else if (name === 'plane') {
         plane(t, audBus);
         planeEnd = 0;
@@ -251,5 +316,5 @@ export function createAmbient(ctx, dest) {
     } catch (e) { /* ignore */ }
   }
 
-  return { setActive, audition };
+  return { setActive, audition, engine };
 }
