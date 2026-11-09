@@ -815,7 +815,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F44 | in-progress | sonnet | F42 | User chose: revert F25 (terrain shapes) |
 | F51 | todo | sonnet | F45 | End of mène: ring move and boule collection run at the same time (no waiting for the ring) |
 | F50 | done | sonnet | F46 | Distant mountains smaller and rocky, no snow (Rainier unchanged) |
-| F49 | todo | sonnet | F04 | Medium AI decision slow again after F04 (345 ms quiet vs 100 ms test); time-boxed profiling and fix |
+| F49 | closed | sonnet | F04 | Medium AI decision slow again after F04 (345 ms quiet vs 100 ms test); time-boxed profiling and fix |
 | F48 | done | sonnet | F35, F45 | Move Adjust view / Read the ground / View(head) out of the hamburger into translucent hold-to-use icons; pan clamped to allowed region |
 | F47 | done | sonnet | F46 | Floatplane: after landing, turn away from the court and fade into the background (like the arrival); departures reversed; fade audio out too |
 | F46 | done | sonnet | - | Scenery: grass edge near distant trees/skyline looks foggy; lake half the size and bluer; distant forest hilly with more mountains behind |
@@ -1166,3 +1166,5 @@ User: the movement of the ring and the collection of boules can happen at the sa
 
 ### F49 revised (user chose options 2+3)
 Thrifty promotion: (2) gate before building: create a promote candidate only when a cheap geometric check passes (an own boule within about 1.5 m short of the jack, in line within `promoteAlign`, no opponent nearer than it, not already the point); (3) skip promote when our best point is already close to the jack / we hold the point comfortably, i.e. only consider it when it can matter. Follow-up (4) later if still slow: aim with analytic `predictRollBand`, verify once. Keep Easy/Medium/Hard behaviour in the situations where promote was chosen. All AI tests unchanged; timing test must pass on a quiet machine. Run in an isolated git worktree and hand back a patch (F45 is editing tactics.js in the main tree).
+
+F49 outcome: not reproducible. A profiling agent measured the 'medium decision' test at about 40 ms on a quiet machine (full suite 313/313 passing, then 318/318 after F45); promote costs about 3 ms per decision even when admitted, and the existing gates already match the user's options 2+3. The earlier 345 ms to 1 s readings were taken while other agents were running (machine load 5-13). No code changed. If it recurs on a quiet machine, capture a --cpu-prof of that setup.
