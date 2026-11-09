@@ -23,12 +23,12 @@ function makeCanvas(w, h) {
 function gravelTexture(grey) {
   const S = 512, cv = makeCanvas(S, S), g = cv.getContext('2d');
   const rand = mulberry32(7);
-  g.fillStyle = grey ? '#a3a8b2' : '#b9a98a';
+  g.fillStyle = grey ? '#aab6cc' : '#b9a98a';
   g.fillRect(0, 0, S, S);
-  for (let i = 0; i < 9000; i++) {
+  for (let i = 0; i < (grey ? 14000 : 9000); i++) { // F16: the grey court gets more, bluer speckle (it read as asphalt)
     const x = rand() * S, y = rand() * S, r = 0.6 + rand() * 2.6;
     const l = 45 + rand() * 45;
-    g.fillStyle = grey ? `hsl(${208 + rand() * 24}, ${3 + rand() * 9}%, ${l - 4}%)` : `hsl(${28 + rand() * 14}, ${12 + rand() * 22}%, ${l}%)`;
+    g.fillStyle = grey ? `hsl(${208 + rand() * 24}, ${8 + rand() * 16}%, ${Math.min(94, l + 4)}%)` : `hsl(${28 + rand() * 14}, ${12 + rand() * 22}%, ${l}%)`;
     // draw wrapped so the tile has no seams
     for (const ox of [-S, 0, S]) for (const oy of [-S, 0, S]) {
       if (x + ox < -4 || x + ox > S + 4 || y + oy < -4 || y + oy > S + 4) continue;
@@ -205,7 +205,7 @@ export function createRenderer(canvas, terrain) {
   for (let k = 0; k < grid.data.length; k++) edgeZ = Math.min(edgeZ, grid.data[k]);
   edgeZ -= 0.004;
   const grey = terrain.gravel === 'grey';
-  const earth = new THREE.Color(grey ? '#7a7f88' : '#8f8365'), packed = new THREE.Color(grey ? '#d2d7e0' : '#e6d9bd'), loose = new THREE.Color(grey ? '#eef2fa' : '#fff0d2'), tint = new THREE.Color();
+  const earth = new THREE.Color(grey ? '#8790a0' : '#8f8365'), packed = new THREE.Color(grey ? '#e0e6f2' : '#e6d9bd'), loose = new THREE.Color(grey ? '#eef2fa' : '#fff0d2'), tint = new THREE.Color();
   for (let j = 0; j < gh; j++) {
     for (let i = 0; i < gw; i++) {
       const k = j * gw + i, x = grid.x0 + i * grid.step, y = grid.y0 + j * grid.step;
