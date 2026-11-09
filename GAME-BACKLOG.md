@@ -803,6 +803,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 
 | ID | Status | Model | Deps | Title |
 |---|---|---|---|---|
+| F32 | in-progress | sonnet | — | Simplified in-game controls: always-on roll guide, icon cluster, hamburger menu, minimal pause screen |
 | F31 | done | haiku | — | Cap reported scores at the game target (13) |
 | F30 | done | haiku | F29 | Landing button: plane lands in the background, no camera change |
 | F29 | done (temporary) | haiku | F19 | Temporary button to trigger a floatplane landing (remove later) |
@@ -821,7 +822,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F13 | done | haiku | — | Dead-jack void message gives the wrong reason |
 | F14 | done | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
 | F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
-| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25, F26, F27, F28, F31 | Round 5 review |
+| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25, F26, F27, F28, F31, F32 | Round 5 review |
 | F26 | done | haiku | — | Slow mode: brisker fetch walks with natural arm swing (or folded arms) |
 | F27 | todo | sonnet | F04 | Pierre does what he said he'd do |
 | F28 | in-progress (step 2) | sonnet | F26 | Better end-of-mène boule collection: design done (GAME-PLAN §10c, decisions recorded); implementing |
@@ -1064,3 +1065,10 @@ If a team ever ends a mène with more points than needed (e.g. 12 + 3 = 15), the
 - terrain.js: per-seed archetypes tilt .25, ridge .17, basin .12, hills .14 (1–2 gaussians), saddle .08, tilt+hill .14, ridge+tilt .10; feature widths 3–10 m, plus low-amplitude 2-octave fBm; the main feature keeps ≥ 75% of the slope energy (`shapeMinShare`), then the whole field is scaled to `slopeMaxDeg` (1–2°). `terrain.shape` `{kind, dir, text, share}` (also on `perceived()`); `terrain.shapeText(courtDir)` rewords for the playing direction; groundview legend shows it in small italics. firmness/stones/divots streams unchanged. `maxHeight` 0.045 → 0.32 m (a 1.5° tilt spans about ±0.2 m).
 - Tests added (determinism, every archetype reachable, gradient range, main-feature share, direction coherence). Loosened: physics roulette test seed 3 → 1, demi spread lower bound 0.25 → 0.2 (measured 0.20–0.24; not compared against the old terrain), roll-band seeds [4,7] → [7,1]; old ±5 cm height test now checks `maxHeight`.
 - For F16/F23: check court edges against the timbers and grass plane now that heights reach ±0.2 m (and scenery following `sample()`), the Easy demi-portée outliers in measure-throws, and wire a first-mène commentary line from `terrain.shapeText(court.dir)` (personalities.js was F04's).
+
+### F32 Simplified in-game controls (sonnet)
+- **Roll guide always on:** remove the "Roll guide" toggle and its localStorage override; the guide is shown whenever the human aims (D21 band). Remove dead code and the difficulty-dependent default.
+- **Icon cluster:** the bottom-right cluster (just above the status text) holds: a speaker icon (the Mute button, toggling a muted-speaker/speaker icon, aria-pressed and aria-label), fullscreen, and pause icons.
+- **Hamburger menu:** every other in-game option button (Adjust view, Read the ground, Mode: Slow/Quick, View, Ambience, the temporary ✈ Landing button, and anything else in the controls bar) moves into a single hamburger button's submenu (a small dropdown or panel; keyboard accessible: Enter/Space opens, Esc closes, arrow keys move, focus returns to the button; closes on outside click; aria-expanded/haspopup; toggle items show their on/off state). Keep it in the top-right where the controls bar is now (or beside the icon cluster, whichever is tidier), so the scoreboard stays clean. Items that only apply on the human's turn (Adjust view, Read the ground, View) are shown disabled or hidden otherwise.
+- **Pause mode:** the paused state shows only three buttons: **Resume**, **New game** (back to setup / restart) and **End game** (leave the full-window view to the normal page, as the old Exit did). The in-game option buttons (hamburger, icon cluster) and the status/commentary strip and turn banner are hidden while paused (the sepia scene and free orbit stay). The existing paused bar on the page stays consistent with this (same three actions).
+- Update README controls text and the first-time hint if they mention the old buttons. Check at 1200×800, 500×900 and 844×390 with screenshots (menu closed, menu open, paused).
