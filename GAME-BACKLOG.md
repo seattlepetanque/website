@@ -818,15 +818,16 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F13 | done | haiku | — | Dead-jack void message gives the wrong reason |
 | F14 | done | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
 | F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
-| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24 | Round 5 review |
+| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25 | Round 5 review |
 | F17 | done | haiku | — | Remove "lands at …" landing-distance text from the status line |
 | F18 | done | haiku | — | Breeze only occasionally, fading in and out |
 | F19 | done | sonnet | — | Distant lake with an occasional floatplane taking off or landing |
 | F20 | done | sonnet | — | Better hands, relaxed arms while holding boules, richer idle animation |
 | F21 | done | haiku | — | Remove the coloured team rings around boules |
-| F22 | in-progress | sonnet | — | Mène-end card never hides the scoring circle or its labels |
-| F23 | todo | sonnet | F04 | Rebalance: Pierre strong and well-rounded (prefers shooting); Medium opponents beatable |
+| F22 | done | sonnet | — | Mène-end card never hides the scoring circle or its labels |
+| F23 | todo | sonnet | F04, F25 | Rebalance: Pierre strong and well-rounded (prefers shooting); Medium opponents beatable |
 | F24 | in-progress | sonnet | — | Bug: in quick mode the circle isn't placed at the start of a new mène |
+| F25 | in-progress | sonnet | — | Court shapes: broad, readable slopes (tilt, hills, ridges, basins) instead of noise |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -1009,3 +1010,16 @@ User play-testing: Pierre (your partner) plays badly, and Marcel and Odette are 
 
 ### F24 Bug: quick mode doesn't place the circle at a new mène (sonnet)
 User report: in quick mode the circle (ring) isn't placed at the beginning of a new mène. Expected (E10): at the start of the next jack throw the ring appears (short fade) at the new spot around the last jack (or F10's dead-jack spot), with the E28 room correction, and the thrower stands in it. Likely regression from F02/F07/F10/F14/F15 rewiring the mène transition around slow mode (ring carry, `ringTask`, `plan.ringDown`, `walkToSpots`) that left the quick-mode path without a ring move or with the court state not updated. Fix the quick path; make sure the court module (circle, dir), the ring mesh, the rules geometry and the camera all move together; add a test (pure where possible) that after `nextMene` in quick mode the court circle equals `nextCircle(...)` and the ring mesh position matches; check the slow path still works.
+
+### F22 notes
+- Card: slim bottom bar on wide screens (headline + 2-line detail + inline Next mène), compact stacked card under 34rem. render.js `fitScoring(measure)`: frames circle, boules, badges and labels into the area left by the scoreboard, controls and card (top-down, el 1.38, re-fits on resize); the card rect is an obstacle for label placement. `?debug&play&mescenario=small|big|close`.
+- For F16: in the big-scenario screenshot badge 1 had no distance label and the jack wasn't visible (hidden under boule 1?); the first-time hint text showed faintly behind the bar; the in-turn controls (Adjust view, Roll guide…) stay visible at mène end; on phones the fullscreen/pause icons overlap the card's corner; the close-call circle is small on screen. Committed with F24 (shared main.js).
+
+### F25 Court shapes: broad, readable slopes (sonnet)
+The F05 slope field reads as noise. Real courts have a few broad features players all notice: an overall tilt (uphill one way, downhill the other), a left-to-right lean, one or two gentle hills, a ridge running across or along, a shallow basin. Replace the macro height field with a composition of broad features, scaled so the steepest local gradient stays within F05's range (1–2°):
+- **Court archetypes**, picked per game seed with weights: e.g. "tilted" (a plane: uphill along y and/or a side lean), "ridge" (an elongated Gaussian ridge across or along the court), "basin" (a broad shallow bowl), "two hills" (1–2 broad Gaussian bumps), "saddle", combined (e.g. tilt + a hill). Feature widths of several metres (3–10 m), so slopes are coherent over the whole head area.
+- **Fine variation:** a small low-frequency fBm (Perlin/simplex, 2 octaves, low amplitude) for naturalness, kept well below the broad features. Approaches to borrow from: Gaussian-hill / "hill algorithm" terrain generators, low-octave fBm, radial basis functions, at this subtle scale.
+- **Rescaling:** the whole field is scaled so the max gradient near the court ≈ `slopeMaxDeg` (F05), and the dominant feature accounts for most of the slope (e.g. the shape's own gradient ≥ ~70% of the total over the court).
+- **Telling the player:** expose the chosen archetype and its main direction (e.g. "court slopes downhill toward the far end and to the left"), shown subtly in the F05 Read-the-ground legend, and maybe a line of Pierre or Marcel commentary at the first mène ("Watch it, it all runs left here").
+- **Consistency:** keep `perceived()` consistent (the AI sees the same broad shape), re-run measure-throws briefly, and keep divots and firmness untouched.
+- **Tests:** each archetype's gradient field is coherent (the gradient direction varies slowly: e.g. average angular change between neighbouring cells below a threshold), max gradient within range, the dominant-feature share holds, deterministic per seed. Screenshots of the Read-the-ground view for a few archetypes.
