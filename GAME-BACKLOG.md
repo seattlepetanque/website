@@ -816,7 +816,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F50 | in-progress | sonnet | F46 | Distant mountains smaller and rocky, no snow (Rainier unchanged) |
 | F49 | todo | sonnet | F04 | Medium AI decision slow again after F04 (345 ms quiet vs 100 ms test); time-boxed profiling and fix |
 | F48 | done | sonnet | F35, F45 | Move Adjust view / Read the ground / View(head) out of the hamburger into translucent hold-to-use icons; pan clamped to allowed region |
-| F47 | todo | sonnet | F46 | Floatplane: after landing, turn away from the court and fade into the background (like the arrival); departures reversed; fade audio out too |
+| F47 | done | sonnet | F46 | Floatplane: after landing, turn away from the court and fade into the background (like the arrival); departures reversed; fade audio out too |
 | F46 | done | sonnet | - | Scenery: grass edge near distant trees/skyline looks foggy; lake half the size and bluer; distant forest hilly with more mountains behind |
 | F45 | todo | sonnet | F35 | Setup dialog: choose partner from Pierre/Marcel/Odette (default Pierre); tighten the dialog's layout |
 | F41 | done | haiku | - | End-of-mène bar overlaps the bottom-right icon cluster and hides the Next button |

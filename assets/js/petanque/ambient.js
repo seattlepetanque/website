@@ -14,11 +14,17 @@ export const AMBIENT = {
   plane: { every: [120, 300], first: [50, 130], dur: [22, 30], gain: 0.9, tone: 0.1 },
   // F19 floatplane engine: sawtooth + detuned octave + sub square through a low-pass, a rasp of band-passed noise and a
   // firing-rate tremolo; revs 0..1 move the pitch (hz) and brightness. `gain` is the peak at level 1.
-  engine: { gain: 0.9, hz: [58, 112], lpf: [380, 1500], rasp: 0.16, tremolo: 0.28, farLpf: 0.55 },
+  engine: { gain: 0.6, fadeTc: 0.35, hz: [58, 112], lpf: [380, 1500], rasp: 0.16, tremolo: 0.28, farLpf: 0.55 },
 };
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const rr = (r) => rnd(r[0], r[1]);
+
+// F47: engine output gain for a plane loudness `level` 0..1 (the floatplane's phase envelope x distance) and revs 0..1.
+export function engineGain(level, rev, E) {
+  const l = Math.max(0, Math.min(1, level)), r = Math.max(0, Math.min(1, rev));
+  return E.gain * l * (0.55 + 0.45 * r);
+}
 
 export function createAmbient(ctx, dest) {
   if (!ctx || !dest) return { setActive() {}, audition() {}, engine() {} };
@@ -222,7 +228,7 @@ export function createAmbient(ctx, dest) {
         for (const [n, m] of [[o1.o, 1], [o2.o, 2], [o3.o, 0.5]]) n.frequency.setTargetAtTime(f * m, at, tc);
         lfo.frequency.setTargetAtTime(f * 0.5, at, tc);
         lpf.frequency.setTargetAtTime((E.lpf[0] + (E.lpf[1] - E.lpf[0]) * rev) * (1 - E.farLpf * dist), at, tc);
-        lvl.gain.setTargetAtTime(E.gain * level * (0.55 + 0.45 * rev), at, tc);
+        lvl.gain.setTargetAtTime(engineGain(level, rev, E), at, tc);
         setPan(pan, p, at, tc);
       },
       stop(at) {
@@ -235,8 +241,8 @@ export function createAmbient(ctx, dest) {
   function engineStop() {
     if (!eng) return;
     const t = ctx.currentTime;
-    eng.set(t, 0, 0, 0.3, 1, 0.1);
-    eng.stop(t + 0.8);
+    eng.set(t, 0, 0, 0.3, 1, 0.3); // F47: smooth fade to silence, then stop
+    eng.stop(t + 2.2);
     eng = null;
   }
   // Called every frame by the game with the plane's state; throttled here. Silent unless the ambience is on.
@@ -247,7 +253,7 @@ export function createAmbient(ctx, dest) {
       if (eng && now - engLast < 0.05) return;
       if (!eng) { eng = engineChain(bus); engLast = 0; }
       engLast = now;
-      eng.set(now, level, pan, rev, dist || 0, 0.12);
+      eng.set(now, level, pan, rev, dist || 0, A.engine.fadeTc);
     } catch (e) { /* ignore */ }
   }
 

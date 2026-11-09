@@ -13,19 +13,30 @@ export const PLANE = {
   maxSpray: 150,
   // Keyframes [t s, speed m/s, heading deg (0 = +x, 90 = +y, away from the court), climb m/s, revs 0..1]. Mirrored in x at random.
   // Speeds are a little cinematic (it is far away and seen for under a minute).
+  // F47: both flights are ambient entrances and exits. A takeoff starts already visible and opaque, idling on the far
+  // side of the lake, runs toward the court along the water, lifts off before the near shore, veers away to the side and
+  // fades out only while receding in the air; a landing fades in from the haze, touches down, turns away from the court,
+  // taxis back out over the water and fades into the background. `fade` = [seconds to fade in, when the fade-out starts].
   takeoff: {
-    start: { x: -28, y: 58, z: 0 }, // F46: the lake is smaller now (about 130 m x 110 m, 40-150 m down-court), so the water run is shorter
+    start: { x: 30, y: 138, z: 0 },
+    liftT: 15, // the floats leave the water here (alt > 0.35 a moment later); the fade-out starts well after this
+    fade: [0, 24],
     keys: [
-      [0, 5, 20, 0, 0.35], [7, 4, 25, 0, 0.35], [10, 3, 60, 0, 0.4], [13, 3, 76, 0, 0.5], [14, 3, 76, 0, 0.8],
-      [26, 5, 76, 0, 1.0], [27, 5.5, 76, 0.6, 1.0], [33, 12, 66, 3, 1.0], [50, 20, 62, 4.2, 0.95],
+      [0, 0, -105, 0, 0.3], [4, 0, -105, 0, 0.3], [7, 2.5, -105, 0, 0.45], [10, 5.5, -105, 0, 0.8], [13, 9, -105, 0, 1.0],
+      [15, 10, -105, 1.2, 1.0], [17, 13, -45, 3.5, 1.0], [21, 17, 0, 4.5, 1.0], [30, 21, 25, 4.5, 0.95], [42, 24, 40, 4.5, 0.95],
     ],
+    // engine loudness by phase (smooth interpolation): idle far off, loud only on the run and lift-off, then gone
+    env: [[0, 0.15], [5, 0.25], [9, 0.5], [12, 0.9], [17, 1], [23, 0.5], [30, 0.1], [38, 0]],
   },
   landing: {
     start: { x: 42, y: 225, z: 21.5 },
+    fade: [4, 34],
     keys: [
       [0, 13, -115, -2.2, 0.75], [9, 13, -115, -2.2, 0.6], [10, 12.5, -115, -0.5, 0.45], [11, 8, -115, 0, 0.4],
-      [13, 3, -120, 0, 0.3], [16, 1.2, -130, 0, 0.25], [28, 0.6, -140, 0, 0.3], [44, 0.4, -140, 0, 0.3],
+      [13, 3, -120, 0, 0.3], [17, 1.8, -130, 0, 0.25], [20, 1.8, -135, 0, 0.3],
+      [34, 2, -295, 0, 0.3], [52, 3, -295, 0, 0.3], // turns away through -x, then taxis off over the water
     ],
+    env: [[0, 0], [6, 0.8], [11, 1], [15, 0.4], [22, 0.12], [30, 0]],
   },
 };
 
@@ -46,6 +57,54 @@ export function sampleKeys(keys, t, out) {
 }
 
 export function planeDuration(kind) { const k = PLANE[kind].keys; return k[k.length - 1][0]; }
+
+const smooth = (k) => { k = clamp(k, 0, 1); return k * k * (3 - 2 * k); };
+
+// Smooth (smoothstep) interpolation in a [[t, v], ...] table, clamped at the ends.
+export function envAt(tab, t) {
+  if (t <= tab[0][0]) return tab[0][1];
+  for (let i = 1; i < tab.length; i++) {
+    if (t <= tab[i][0]) { const a = tab[i - 1], b = tab[i]; return a[1] + (b[1] - a[1]) * smooth((t - a[0]) / (b[0] - a[0])); }
+  }
+  return tab[tab.length - 1][1];
+}
+
+// Plane opacity 0..1 over a flight: fades in from the haze at the start, back out near the end.
+export function fadeOpacity(kind, t) {
+  const P = PLANE[kind], end = planeDuration(kind);
+  return (P.fade[0] > 0 ? smooth(t / P.fade[0]) : 1) * (1 - smooth((t - P.fade[1]) / (end - P.fade[1])));
+}
+
+// Engine loudness 0..1 from the flight phase and the distance to the listener (m): near-field falloff, silent past ~210 m.
+export function engineLevel(kind, t, dist) {
+  return envAt(PLANE[kind].env, t) * Math.pow(clamp(1 - dist / 210, 0, 1), 1.8);
+}
+
+// Where a flight starts (unmirrored; x is an offset from the court centre). A takeoff's lead-in is integrated backwards
+// from its anchor so the run always starts at the F46 spot.
+const STEP = 1 / 30;
+export function startOf(kind) {
+  const P = PLANE[kind];
+  if (!P.anchor) return P.start;
+  const K = [0, 0, 0, 0];
+  let x = 0, y = 0;
+  for (let t = 0; t < P.anchor.t - 1e-9; t += STEP) { sampleKeys(P.keys, t, K); x += Math.cos(K[1]) * K[0] * STEP; y += Math.sin(K[1]) * K[0] * STEP; }
+  return { x: P.anchor.x - x, y: P.anchor.y - y, z: 0 };
+}
+
+// The whole ground track as [t, x, y, alt] samples every `every` s (unmirrored, court-centre offsets). Pure; for tests.
+export function pathSamples(kind, every = 1) {
+  const P = PLANE[kind], s = startOf(kind), K = [0, 0, 0, 0], out = [];
+  let x = s.x, y = s.y, alt = s.z || 0, next = 0;
+  const end = planeDuration(kind);
+  for (let t = 0; t <= end + 1e-9; t += STEP) {
+    sampleKeys(P.keys, Math.min(t, end), K);
+    if (t >= next - 1e-9) { out.push([t, x, y, alt]); next += every; }
+    x += Math.cos(K[1]) * K[0] * STEP; y += Math.sin(K[1]) * K[0] * STEP;
+    if (alt > 0 || K[2] > 0) alt = Math.max(0, alt + K[2] * STEP);
+  }
+  return out;
+}
 
 function buildModel() {
   const white = new THREE.MeshLambertMaterial({ color: '#f3f3ee', flatShading: true });
@@ -89,7 +148,8 @@ function buildModel() {
   const disc = new THREE.CircleGeometry(1.15, 18); disc.rotateY(Math.PI / 2);
   add(disc, discMat, 0, 0, 0, prop);
   const blade = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.16, 2.2), steel); prop.add(blade);
-  return { group: g, prop };
+  const fadeMats = [white, red, dark, steel, discMat].map((m) => ({ m, base: m.opacity }));
+  return { group: g, prop, fadeMats };
 }
 
 function dotTexture() {
@@ -127,7 +187,7 @@ export function createFloatplane({ cx = 2, z = 0 } = {}) {
   };
   const K = [0, 0, 0, 0]; // sampled keys
   let mirror = 1, x = 0, y = 0, alt = 0, psi = 0, psiPrev = 0, pitch = 0, roll = 0, speed = 0, climb = 0, revs = 0, spinA = 0, emitAcc = 0, foamAcc = 0, bob = 0;
-  let touched = false;
+  let touched = false, opac = 1;
   let gameT = 0, fireAt = 0, fired = false, matchKey = null;
 
   function spawn(px, py, pz, vx, vy, vz, lf, kind) {
@@ -141,15 +201,27 @@ export function createFloatplane({ cx = 2, z = 0 } = {}) {
     if (!PLANE[kind]) return false;
     fp.kind = kind; fp.active = true; fp.t = 0;
     mirror = mir === undefined ? (Math.random() < 0.5 ? -1 : 1) : mir;
-    const s = PLANE[kind].start;
+    const s = startOf(kind);
     x = cx + mirror * s.x; y = s.y; alt = s.z;
     psi = 0; psiPrev = 0; pitch = 0; roll = 0; touched = kind === 'takeoff'; emitAcc = foamAcc = 0;
     sampleKeys(PLANE[kind].keys, 0, K);
     psi = psiPrev = mirror > 0 ? K[1] : Math.PI - K[1];
     speed = K[0]; revs = K[3];
-    root.visible = true;
+    setOpacity(fadeOpacity(kind, 0));
     place();
     return true;
+  }
+
+  // F47: fade the whole plane (and its spray) in and out; opaque materials only turn transparent while partly faded
+  function setOpacity(o) {
+    opac = o;
+    root.visible = o > 0.01;
+    for (const f of model.fadeMats) {
+      const tr = o < 0.999 || f.base < 1;
+      if (f.m.transparent !== tr) { f.m.transparent = tr; f.m.needsUpdate = true; }
+      f.m.opacity = f.base * o;
+      f.m.depthWrite = f.base >= 1 ? o > 0.5 : false;
+    }
   }
 
   function place() {
@@ -195,6 +267,7 @@ export function createFloatplane({ cx = 2, z = 0 } = {}) {
         spawn(x + c * lx - s * ly, y + s * lx + c * ly, z + 0.08, (-s * side) * 0.5, (c * side) * 0.5, 0, rnd(2.8, 4.2), 1);
       }
     }
+    setOpacity(fadeOpacity(fp.kind, fp.t));
     if (fp.t >= end) { fp.active = false; root.visible = false; eng.on = false; }
   }
 
@@ -207,10 +280,10 @@ export function createFloatplane({ cx = 2, z = 0 } = {}) {
         vel[i * 3 + 2] -= 8 * dt;
         posA[i * 3] += vel[i * 3] * dt; posA[i * 3 + 1] += vel[i * 3 + 1] * dt; posA[i * 3 + 2] += vel[i * 3 + 2] * dt;
         if (posA[i * 3 + 2] < z) age[i] = life[i];
-        colA[i * 4] = 1; colA[i * 4 + 1] = 1; colA[i * 4 + 2] = 1; colA[i * 4 + 3] = 0.75 * (1 - k);
+        colA[i * 4] = 1; colA[i * 4 + 1] = 1; colA[i * 4 + 2] = 1; colA[i * 4 + 3] = 0.75 * (1 - k) * opac;
       } else {
         posA[i * 3] += vel[i * 3] * dt; posA[i * 3 + 1] += vel[i * 3 + 1] * dt;
-        colA[i * 4] = 0.95; colA[i * 4 + 1] = 0.97; colA[i * 4 + 2] = 1; colA[i * 4 + 3] = 0.5 * Math.sin(Math.PI * Math.min(1, k * 1.15)) * (1 - k);
+        colA[i * 4] = 0.95; colA[i * 4 + 1] = 0.97; colA[i * 4 + 2] = 1; colA[i * 4 + 3] = 0.5 * Math.sin(Math.PI * Math.min(1, k * 1.15)) * (1 - k) * opac;
       }
     }
     geo.attributes.position.needsUpdate = true;
@@ -226,9 +299,9 @@ export function createFloatplane({ cx = 2, z = 0 } = {}) {
     const rl = Math.hypot(e[0], e[1]) || 1;
     eng.pan = hd > 1e-3 ? clamp(((dx * e[0] + dy * e[1]) / (hd * rl)) * 1.3, -1, 1) : 0;
     eng.dist = clamp(d / 260, 0, 1);
-    eng.level = Math.pow(clamp(1.08 - d / 260, 0, 1), 1.6);
+    eng.level = engineLevel(fp.kind, fp.t, d); // F47: phase envelope x distance falloff; silent after the loud window
     eng.rev = revs;
-    eng.on = true;
+    eng.on = eng.level > 0.003;
   }
 
   const FIX = 1 / 30;
