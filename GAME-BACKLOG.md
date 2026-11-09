@@ -807,7 +807,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F35 | done | haiku | F32 | Drop the "tir" label: always name the throw by loft |
 | F36 | done | haiku | F32 | Temporary ✈ Takeoff demo button in the hamburger menu (next to Landing; remove later) |
 | F37 | done | haiku | F32 | Random ambient planes only in slow mode (quick mode: none) |
-| F38 | todo | sonnet | F37 | While a plane is flying and the human isn't active, camera occasionally frames the plane |
+| F38 | done | sonnet | F37 | While a plane is flying and the human isn't active, camera occasionally frames the plane |
 | F39 | done-unverified | sonnet | F28 | Slow mode: camera follows the human walking to the ring |
 | F40 | done | haiku | - | Sideline timbers have a slightly flickery shadow |
 | F42 | done | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
@@ -1187,3 +1187,5 @@ F27 outcome: done in ai.js only (root cause: main.js's pierreChoice cache was de
 F39 outcome: implemented (camera.js walkSubject + OBS.walkLead 3 m; main.js startHumanWalk/followHumanWalk driven per frame in slow mode for the human's walk to the circle and the human jack thrower's walk to the new circle; ends when the human arrives, aims, a ball is in flight, or on skip; quick/instant unchanged). Tests 329/329. NOT verified live (headless runs never showed a mid-walk frame): please watch a slow-mode game and check the follow is smooth and ends in the shoulder view.
 
 F33 outcome: stanceFor(spec, distance, rand) in personalities.js (STAND_BEYOND = 7.5: everyone stands beyond 7.5 m, no random draw; Pierre's 50/50 unchanged below). main.js enterCircle uses the distance to the jack for boule throws and restance() re-plans once after planning if the stance does not match the planned donnee distance; aiBase plans standing for far jacks. Tests 330/330. Not checked in a running game: please watch a long throw (over 7.5 m) and confirm nobody crouches.
+
+F38 caveat: click/key skip, pause mid-shot, human turn starting mid-shot, reduced motion, quick mode and a landing flight were not driven in a browser (only a takeoff was); director logic covered by node tests (f38.test.js).

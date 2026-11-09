@@ -2,7 +2,7 @@
 import { C } from './constants.js';
 import { court, setCourt, resetCourt, baseYaw, ahead } from './court.js';
 import { cameraStyle, tvVariant, clampViewOffset, panViewOffset, walkSubject } from './camera.js';
-import { createDirector } from './director.js';
+import { createDirector, createPlaneCuts } from './director.js';
 import { mulberry32 } from './rng.js';
 import { createTerrain } from './terrain.js';
 import { createWorld, createBody, launch, placeDeadBall, deadRowSlot, deadJackSpot } from './physics.js';
@@ -137,6 +137,16 @@ function boot() {
   }
   const watchCircle = () => observerView([{ x: court.circle.x, y: court.circle.y }, ahead(5)]); // somebody about to throw
   const aimView = () => (observing() && match ? watchCircle() : shoulderView());
+  // F38: the occasional plane shot (decision in director.js, framing in camera.js, the overlay in render.js). Never while the human
+  // is busy (their walk, aim, throw or a turn pending), any boule is in flight, a toss or the end-of-mène card is up.
+  const planeCuts = createPlaneCuts();
+  const humanFree = () => !!match && playing && !userPaused && !pending && !flying && !humanWalk && !(circleWalk && isHumanId(circleWalk.id))
+    && toss.getPhase() === 'off' && match.phase !== 'meneEnd' && match.phase !== 'gameOver' && !scoringShown;
+  function planeShot() {
+    const fp = renderer.floatplane;
+    const verdict = planeCuts.update({ flight: fp.active ? fp.flight : 0, kind: fp.kind, t: fp.t, visible: fp.opacity > 0.4, allowed: slow() && !reduceMotion(), eligible: humanFree() });
+    if (verdict === 'cut') renderer.setPlaneShot(true); else if (verdict === 'end') renderer.setPlaneShot(false);
+  }
   const KEEP_YAW = 35 * DEG; // E12 (see setAdjust); the pan limits live in camera.js (VIEW_PAN, F48)
   let adjusting = false, viewAnim = 0;
   const audio = createAudio();
@@ -1706,6 +1716,7 @@ function boot() {
   });
   const skipEvent = (ev) => {
     if (isPaused()) return; // a drag to orbit the paused scene (or Esc) is not a skip
+    if (planeCuts.skip()) renderer.setPlaneShot(false); // F38: a click or key returns from the plane shot
     if (placing && ev.timeStamp - placing.start > 350) skipPlacement();
     else if (circleWalk && performance.now() - circleWalk.start > 350) { // E02: the thrower is at the circle at once
       const w = circleWalk; circleWalk = null;
@@ -2518,6 +2529,7 @@ function boot() {
       fp.schedule(match && !pausedNow && playing ? dt : 0, match, reduceMotion() || settings.mode !== 'slow');
       const en = fp.engine;
       audio.setEngine(en.on && !pausedNow, en.level, en.pan, en.rev, en.dist);
+      if (!pausedNow) planeShot(); // F38
     }
     renderer.render(pausedNow ? 0 : dt);
     nextFrame(frame);
@@ -2534,7 +2546,7 @@ function boot() {
 
   if (debug) {
     window.__petanque = {
-      world, terrain, renderer, seed, reset: toSetup, startGame, court,
+      world, terrain, renderer, seed, reset: toSetup, startGame, court, planeCuts,
       audio,
       setPlaying, clock,
       get paused() { return pausedNow; },

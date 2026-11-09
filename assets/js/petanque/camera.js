@@ -262,6 +262,44 @@ export function frameObserver(subject, opts, prev) {
   return { pos, tgt, yaw, pitch, fovK, side, dollyGoal, center: c, v: { y: vy, yaw: vyaw, p: vp, z: vz }, active: true };
 }
 
+// ---- F38: the occasional plane shot ----
+// While a floatplane flies and the human is not busy, the camera cuts (render.js, mode 'plane') to a spectator beside the court
+// looking down the lake at the plane, then goes back to whatever it was doing. The spectator stands on the side away from the
+// plane, so the court (its near corner and side) lies across the foreground, and the frame is aimed a little below the plane
+// so the lake and shore sit in the lower part of the picture. Pure: the renderer passes the plane position and a groundAt().
+export const PSHOT = Object.freeze({
+  y: 3, eye: 1.7, // where the spectator stands: along the court, and eye height above the ground
+  size: 16, // m: the plane with its wake, to keep in the picture
+  fill: 0.22, // the plane's angular size as a fraction of the horizontal view
+  minFovK: 0.4, maxFovK: 0.9,
+  lower: 0.3, // aim this fraction of the half-view below the plane, for lake and shore
+  follow: 1.8, // 1/s: how closely the frame tracks the plane
+});
+
+// plane: { x, y, z } (world position); opts: { dt, aspect, fov (vertical degrees), groundAt, width }; prev: the last result (null to snap).
+// Returns { pos, tgt, yaw, pitch, fovK, side } (feed `prev` back).
+export function framePlane(plane, opts, prev) {
+  const W = opts.width || C.terrainW, groundAt = opts.groundAt || (() => 0);
+  const side = prev ? prev.side : (plane.x >= W / 2 ? -1 : 1);
+  const px = side < 0 ? -OBS.side : W + OBS.side;
+  const pos = { x: px, y: PSHOT.y, z: groundAt(px, PSHOT.y) + PSHOT.eye };
+  const dx = plane.x - pos.x, dy = plane.y - pos.y, dh = Math.max(1, Math.hypot(dx, dy)), dist = Math.hypot(dh, plane.z - pos.z);
+  const baseFov = (opts.fov || 50) * Math.PI / 180, aspect = opts.aspect || 1.5;
+  const wantFovK = clamp(2 * Math.atan(PSHOT.size / 2 / dist) / (2 * Math.atan(Math.tan(baseFov / 2) * aspect) * PSHOT.fill), PSHOT.minFovK, PSHOT.maxFovK);
+  const wantYaw = Math.atan2(dx, dy);
+  const wantPitch = Math.atan2(plane.z - pos.z, dh) - PSHOT.lower * baseFov * wantFovK / 2;
+  let yaw = wantYaw, pitch = wantPitch, fovK = wantFovK;
+  const dt = clamp(opts.dt || 0, 0, 0.1);
+  if (prev) {
+    const k = 1 - Math.exp(-dt * PSHOT.follow);
+    yaw = prev.yaw + wrapAngle(wantYaw - prev.yaw) * k;
+    pitch = prev.pitch + (wantPitch - prev.pitch) * k;
+    fovK = prev.fovK + (wantFovK - prev.fovK) * k;
+  }
+  const cp = Math.cos(pitch);
+  return { pos, tgt: { x: pos.x + Math.sin(yaw) * cp * 50, y: pos.y + Math.cos(yaw) * cp * 50, z: pos.z + Math.sin(pitch) * 50 }, yaw, pitch, fovK, side };
+}
+
 // ---- E27: TV-presentation cameras for AI turns ----
 // (a) a low side shot that tracks the boule in flight (main then cuts to the head view);
 // (b) a reverse angle from just behind and beside the jack, watching the boule arrive;

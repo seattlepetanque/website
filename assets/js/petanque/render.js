@@ -7,7 +7,7 @@ import { court } from './court.js';
 import { JACK_END_MARGIN } from './rules.js';
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
-import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast } from './camera.js';
+import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, framePlane } from './camera.js';
 import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeSkyPanorama, makeLake, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 import { createFloatplane } from './floatplane.js'; // F19
 
@@ -1282,7 +1282,25 @@ export function createRenderer(canvas, terrain) {
 
   let bcFrame = null; // F01: camera.js state of the current broadcast shot (a new shot is a cut)
   let tvFrame = null, tvPending = null; // E27: the TV shot's state, and a camera request held until the shot has played out
+  // F38: a plane shot overlays the current camera. Requests made meanwhile are remembered and replayed when it ends, except the
+  // human's own cameras (aim, shoulder, inspect), which end it at once.
+  let planeSaved = null, planeFrame = null;
+  function setPlaneShot(on) {
+    if (on === !!planeSaved) return;
+    if (on) {
+      planeSaved = [mode, opts, false]; planeFrame = null;
+      from.pos.copy(cur.pos); from.tgt.copy(cur.tgt);
+      mode = 'plane'; opts = {}; trans = 1; computeGoal(0, true);
+    } else {
+      const [m, o, f] = planeSaved; planeSaved = null; planeFrame = null;
+      mode = m; opts = o; setCamera(m, o, f);
+    }
+  }
   function setCamera(m, o = {}, flush = false) {
+    if (planeSaved) {
+      if (m === 'aim' || m === 'shoulder' || m === 'inspect') setPlaneShot(false);
+      else { planeSaved = [m, o, flush]; return; }
+    }
     if (mode === 'tv' && m !== 'tv' && m !== 'flight' && !flush && !o.now) { // let the boule settle on screen before the next cut
       if (tvFrame && tvFrame.restT < (TV.hold[tvFrame.variant] || 0) && !reduce()) { tvPending = [m, o]; return; }
     }
@@ -1322,6 +1340,12 @@ export function createRenderer(canvas, terrain) {
       if (opts.target) pts = pts.concat([opts.target]);
       const f = frameObserver(pts, { aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50, dt, reduced: reduce(), groundAt: (x, y) => terrain.sample(x, y).h, dir: court.dir }, obsFrame);
       obsFrame = f;
+      goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
+      goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
+    } else if (mode === 'plane') { // F38: a spectator's view of the floatplane
+      const pp = floatplane.pos;
+      const f = framePlane({ x: pp.x, y: pp.y, z: pp.z }, { dt, aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50, groundAt: (x, y) => terrain.sample(x, y).h, width: C.terrainW }, planeFrame);
+      planeFrame = f;
       goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
       goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
     } else if (mode === 'broadcast') { // F01: a director's shot (opts.shot: prep | throw | reaction | flight)
@@ -1516,6 +1540,7 @@ export function createRenderer(canvas, terrain) {
       fov = baseFov * (1 - 0.32 * focusK * Math.max(0, Math.min(1, (d - 3) / 5)));
     }
     if (mode === 'observer' && obsFrame) fov *= obsFrame.fovK; // E11: the spectator's slow zoom
+    if (mode === 'plane' && planeFrame) fov *= planeFrame.fovK; // F38
     if (Math.abs(fov - camera.fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
     if (trans < 1) {
       trans = Math.min(1, trans + dt / TRANSITION);
@@ -1668,5 +1693,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  return { sync, fadeBody, setCamera, setPlaneShot, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
 }
