@@ -21,7 +21,6 @@
 //   roll      per rolling body: very faint, sparse, dry pebble ticks (1-3 ms band-passed noise bursts,
 //             random centre 1.5-4 kHz, 2-6 ms decay, some duller gravel ticks, rare 2-3 tick clatter).
 //             Poisson-ish scheduling on AudioContext time; rate and level follow speed. No noise floor.
-//   scuff     (F28) a kicked boule: soft low-passed swish + a few gravel grains
 //   stone     one slightly louder pebble tick when the physics reports a stone contact
 
 import { createAmbient } from './ambient.js'; // F12: park ambience (birds, breeze, airplane)
@@ -254,17 +253,6 @@ export function createAudio(opts = {}) {
     }
   }
 
-  // F28: a boule nudged along the gravel by a foot: a soft scuff (a short low-passed noise swish plus a few gravel grains).
-  // No thud, no click: it is a gentle sound. len: seconds the boule slides (0.3 to 1).
-  function scuff(t, len) {
-    const d = clamp01(len / 1) * 0.25 + 0.12;
-    startVoice(t, d + 0.1);
-    const src = noiseSrc(t, d);
-    const lp = filt('lowpass', 1400, 0.5);
-    src.connect(lp).connect(envGain(t, 0.045, d, 0.03)).connect(master);
-    crunch(t + 0.02, 0.5);
-  }
-
   // Boule on gravel: soft low thud + faint crunch. No ringing tone, no sharp attack.
   function land(t, speed) {
     const v = volumeFor(speed), T = SOUND.thud;
@@ -469,12 +457,6 @@ export function createAudio(opts = {}) {
     try { click(ctx.currentTime + 0.005, SOUND.carreauAccent, 1); } catch (e) { /* ignore */ }
   }
 
-  // F28: the scuff of a kicked boule (silent when muted, locked or paused; never throws)
-  function playScuff(len = 0.7) {
-    if (!ctx || muted || ctx.state !== 'running') return;
-    try { scuff(ctx.currentTime + 0.005, len); } catch (e) { /* ignore */ }
-  }
-
   // Audition entry point. Ignores mute (explicit user action) but needs unlock().
   // names: land {speed}, jackLand {speed}, jackHit {speed}, roll {kind, speed, dur, decay},
   //        graze, direct, carreau, hit {speed, rel}
@@ -485,7 +467,6 @@ export function createAudio(opts = {}) {
       const t = ctx.currentTime + 0.01;
       switch (name) {
         case 'land': land(t, p.speed ?? 4); break;
-        case 'scuff': scuff(t, p.len ?? 0.7); break;
         case 'jackLand': jackLand(t, p.speed ?? 3); break;
         case 'jackHit': tick(t, p.speed ?? 4); break;
         case 'graze': hit(t, p.speed ?? 2.5, p.rel ?? 8); break;
@@ -550,5 +531,5 @@ export function createAudio(opts = {}) {
     return btn;
   }
 
-  return { unlock, setPaused, handleEvents, update, accent, playScuff, play, setMuted, isMuted, setAmbience, playAmbient, setEngine, createMuteButton };
+  return { unlock, setPaused, handleEvents, update, accent, play, setMuted, isMuted, setAmbience, playAmbient, setEngine, createMuteButton };
 }
