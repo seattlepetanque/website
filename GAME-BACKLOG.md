@@ -810,6 +810,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F38 | todo | sonnet | F37 | While a plane is flying and the human isn't active, camera occasionally frames the plane |
 | F39 | todo | sonnet | F28 | Slow mode: camera follows the human walking to the ring |
 | F40 | todo | haiku | - | Sideline timbers have a slightly flickery shadow |
+| F42 | in-progress | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
 | F41 | todo | haiku | - | End-of-mène bar overlaps the bottom-right icon cluster and hides the Next button |
 | F33 | todo | sonnet | F04 | Nobody crouches for throws over 7.5 m |
 | F32 | in-progress | sonnet | — | Simplified in-game controls: always-on roll guide, icon cluster, hamburger menu, minimal pause screen |
@@ -1108,3 +1109,6 @@ User: the timbers along the court sidelines have a slightly flickery shadow. Lik
 
 ### F41 End-of-mène card overlaps the icon cluster (haiku)
 User screenshot (~/Desktop/Screenshot 2026-11-08 at 11.34.31 PM.png): the bottom "You & Pierre score 2 points" bar spans the full width, and the F32 icon cluster (speaker, fullscreen, pause) sits on top of its right end, covering the "Next mène" button. Fix: reserve room for the cluster (e.g. right padding / max-width on the bar, or lift the bar above the cluster, or move the Next button left of it) at all sizes incl. 500x900 and 844x390. CSS/hud only; verify with `&debug` screenshots at those three sizes.
+
+### F42 Boundary string completely missing (sonnet, top priority)
+User: the string is completely missing now. Almost certainly a regression from F34 (commit 695c8b7): the boundary strings in `render.js` became draped strips sampled from `terrain.sample`; check geometry winding/normal (single-sided strips facing down are culled), strip width/positions, `polygonOffset`, material, being added to the scene/group, or `terrain.sample` returning NaN. Verify with a real screenshot (not stopping at the modal) that the strings show on flat and steep seeds, and add a pure-function test for the strip geometry if possible.
