@@ -805,6 +805,10 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 |---|---|---|---|---|
 | F34 | review | haiku | F25 | String lines partly buried in the ground (implemented; steep seeds unverified) |
 | F35 | todo | haiku | F32 | Drop the "tir" label: always name the throw by loft |
+| F36 | todo | haiku | F32 | Temporary ✈ Takeoff demo button in the hamburger menu (next to Landing; remove later) |
+| F37 | todo | haiku | F32 | Random ambient planes only in slow mode (quick mode: none) |
+| F38 | todo | sonnet | F37 | While a plane is flying and the human isn't active, camera occasionally frames the plane |
+| F39 | todo | sonnet | F28 | Slow mode: camera follows the human walking to the ring |
 | F33 | todo | sonnet | F04 | Nobody crouches for throws over 7.5 m |
 | F32 | in-progress | sonnet | — | Simplified in-game controls: always-on roll guide, icon cluster, hamburger menu, minimal pause screen |
 | F31 | done | haiku | — | Cap reported scores at the game target (13) |
@@ -1084,3 +1088,15 @@ The string lines are drawn as flat lines at a fixed height (about z = 0.012, not
 
 ### F35 Remove "tir" terminology from the throw readout (haiku)
 User: remove the "tir" shooting terminology, always show the categorisation by loft (roulette < 20°, demi-portée 20-45°, plombée > 45°). Change `styleForLoft` in `donnee.js` to ignore `snapped`, update the readout/hud text and tests. Check `main.js:1135` (`choice.style === 'tir'`) and the AI's own `tir` style in `tactics.js` still work (the AI's internal style names are not user-facing; leave them unless they leak into UI text). Depends on F32 because hud/main are being edited there.
+
+### F36 Takeoff demo button (haiku)
+Add a temporary menu button (marked TEMP like F29) that triggers a floatplane takeoff from the lake, ambient, no camera takeover. Remove later when the user says so.
+
+### F37 Random planes only in slow mode (haiku)
+Random ambient floatplane flights/landings/takeoffs run only in slow mode; none in quick mode. Demo buttons still work in either mode.
+
+### F38 Camera occasionally frames the plane (sonnet)
+While a plane is flying and it isn't the human's turn (AI throws, walks, fetching), the director/observer camera should now and then pick a shot that fits the plane in view, then return. Do not do this during the human's own aim/throw. Pure framing logic in `camera.js`/`director.js` with tests.
+
+### F39 Camera follows the human walking to the ring (sonnet)
+In slow mode, when the human walks to the ring, the camera should follow them there, which it currently does not. Depends on F28 (main.js/crowd edits in flight).
