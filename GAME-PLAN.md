@@ -404,3 +404,154 @@ Order of work:
 - Is a visible tactical error rate on Easy acceptable (the AI occasionally shoots when it should not), or should Easy stay physically weak only?
 - The constants in `EPnet` (σ, 0.2, 1.2, `wG`) are a heuristic. OK to fit them against rollouts in step 2, or should the evaluator be a lookup table built offline?
 - Should `You`'s partner-chooser prompt show Pierre's suggested player as well as the throw (new UI line)?
+
+### 12.12 Tactics expansion (round 5)
+
+Design for F04. It extends 12.2 to 12.8 and changes no code yet. Coordinates as in 12.8: the circle is (2, 1), the jack J = (2, 8) unless stated, "short" means nearer the circle (smaller y), "past" means beyond the jack (larger y), and "in line" means within 20 degrees of the circle-to-jack line. Four things are added: a refined point/shoot choice, one new family for promotion (`promote`), two for defence (`block`, `cover`, which replace `pointFront` and `pointBehind`), and a `drop`. The evaluator, the successive halving, `whoThrows` and the profiles stay; the additions are priors, admission rules, two evaluator terms and new reason codes.
+
+**12.12.1 Pointing versus shooting, refined**
+
+12.2 gates a shot on the removal gain `G(t)` alone, and 12.3 adjusts the gate by boules in hand. The missing piece is a direct comparison with the best *point* in the same units, so distance and hit rate decide properly. New rule: shoot `t` only if `A(t) >= Apoint + margin`, where `Apoint = max over pointJack/pointSlot of pClose·(EPnet after - EPnow) - (1-pClose)·0.1` (already computed in `pointInfo`) and `margin = gate·0.25` (personality: Marcel 0.37, Odette 0.17, Pierre 0.14). The existing `G >= gate` test stays as a cheap first filter. Tolerances do the rest: a shot needs about 7 cm laterally and 25 cm along the line, a point needs roughly 25 cm around the jack, so a longer throw hurts the shot far more than the point.
+
+| Factor | Rule of thumb | How it enters |
+|---|---|---|
+| Distance to the jack | Short jack (under 7 m): shooting is cheaper, shoot when `pHit >= 0.4`. Long jack (over 9.5 m): `pHit` is usually under 0.3, so point unless the target is the whole game | Through `pHit` in `A(t)` (cone at that distance). No separate term; step 2 prints `pHit` for 6, 8, 10 m per player to check this against the numbers |
+| Their best boule | Within 0.15 m of the jack: pointing rarely beats it (`P(beat) = 1 - exp(-d²/2σ²)`, under 0.25 for most throwers), so shoot if `pHit >= 0.3`. Beyond 0.8 m: point, a decent point beats it | `Apoint` falls and `A(t)` rises as `d` falls; `G(t)` is small when `d` is large (the second boule is waiting behind it) |
+| Boules in hand | `BA <= -1`: point (R1), and a shot must beat `Apoint` by `margin + 0.2` per boule down. `BA >= 1`: shoot readily (R2), margin `- 0.1` per boule up. Their last boule against our two: do not shoot, force them to beat two points | `margin` above plus the R1/R2 priors that exist |
+| Score | At 11-12: point (R5, game term). Down 4+ and they hold two or more: shoot or void (R6, desperate) | Game term `wG`, and `fDesperate` in λ; no new rule |
+| Shooter's hit rate | The hit rate is the player's cone, not the character: Pierre at 8 m shoots at `pHit` 0.45, You at 0.30, so the same court gives different advice | `whoThrows` already uses each cone; `margin` is added to its shoot score as well |
+| Their boule beside ours | Shot would move both (`collateral >= 1`): prefer `promote` or `pointSlot` (12.12.2) | `missCost`, R4 |
+
+A shot that passes `G` but fails the `Apoint + margin` test is reported as `takePoint` (point beats it) or `farJack` when the jack is over 9.5 m and `pHit < 0.3`; `farJack` is new, with one line per character. A shot that passes both and has `pHit >= 0.5` carries `easyShot` (reported only when no stronger code applies).
+
+**12.12.2 Promotion (pousser)**
+
+*Idea.* Our boule B is short of the jack and the point is not safe, or not close enough to hold against their boules to come. A gentle throw that lands short of B on the line and rolls into it pushes B forward, and the new boule stops where it struck, so even a mediocre hit leaves two of our boules near the jack. The throw is a point attempt that lands near B whether or not it connects, so a miss costs little. That is why promotion pays where a shot at their boule does not.
+
+*Admission* (`promote`), all of:
+
+1. B is one of our two best boules, `0.35 <= d_B <= 1.4` m from the jack (nearer is just a point), and the jack lies in line behind B: angle between circle-to-B and B-to-J at most 20 degrees (Medium 15, Easy 25).
+2. Risk to the head is small: no other boule (either team) within 0.25 m of the segment from B to a point 0.9 m beyond B on the line, except boules that are ours and behind B; and the jack is not within 0.35 m of B unless an own boule sits past the jack on the line (a carom that helps). The jack's `exposure` is under 0.8 (a pushed jack must not leave the court).
+3. The pointing option is not already good: `EPnet` now is below `EPhold(max(0.1, d_B - 0.5))` by at least 0.5 (the promotion gain), so promotion is considered when there is something to gain, never as a reflex.
+4. We have a boule left, and `hO >= 1` or `holder != us` (with no reply and the point held, adding points is R8's business).
+
+*Candidates.* Up to two per target B: a demi (32 degrees) and a roulette (14 degrees, when the lane to B is clear; low loft carries more momentum), aimed `s` short of B on the line, `s = 0.45 m` for the roulette (so the boule lands and rolls on) and `0.30 m` for the demi. Nothing is aimed at B itself: that would make it a shot. A pointing loft keeps the existing donnée solver (`pointDonnee`, `refineDonnee`) in play with the player's own cone.
+
+*Analytic score* (for pruning and for `whoThrows`): `P_push = Φlat(0.10)·Φlong(0.30)` at the distance to B with the player's cone, `gain = EPnet(B moved to d_B - push) - EPnow` with `push = 0.55·(s + 0.4)` (a roll into a boule transfers roughly half), and
+
+```
+Apromote = prior + P_push·gain + (1-P_push)·pointValue(landing near B) - P_push·pDisturb·headCost
+pDisturb = clamp(0.1 + 0.8·max(0, 0.8 - dist(jack, B)) , 0, 0.5) · [jack in line within 0.9 m of B]
+headCost = 0.8 (the jack moves) + 0.3·(own boules near the path)
+```
+
+The simulations settle the real result; `evalEnd` already sees a jack moved or an own boule knocked (ownLost, EPnet from the new positions). The prior is small: `+0.15·aw` when we hold, so the evaluator decides. Reason `promote` is reported when the winner is a `promote` candidate and its prior or promotion gain outweighs the best `pointJack`. Early cut-off (12.6 step 5): a promote candidate whose first 4 sims move the jack by more than 0.15 m, or leave the shooter beyond 0.4 m of B in all four, is dropped.
+
+*Who.* A promotion is a pointing action: `whoThrows` counts it as a point for role purposes (a pointeur is favoured).
+
+**12.12.3 Defensive play: `block`, `cover`, spread**
+
+*When.* The other side has more ammunition (`BA <= -1`), or they hold more boules than we do on the ground and we hold the point (they must beat us), or `holder = us` and `hO >= 1`. Defence is about limiting *their* expected points, so three evaluator terms are added, all computed analytically from the settled state (no extra sims):
+
+- `laneShield` (their point replies): `σX` is multiplied by `1 + 0.35·blocked`, where `blocked` is 1 when one of our boules is within 0.3 m of the line from the circle to the jack and 0.2 to 1.2 m short of it (a roulette must pass it, and a high lob lands harder to control), 0.5 for a boule within 0.5 m of the line. `EPhold` uses the inflated `σX` so a blocker is simply worth more points.
+- `coverJack` (their shot at the jack): in `exposureTerm`, the exposure is multiplied by `1 - 0.5·covered`, where `covered` is 1 when one of our boules is within 0.45 m past the jack, within 0.3 m of the line (a jack knocked back stays next to it and our point survives).
+- `easyTarget` (spread): `wS = 0.12`, for each of our counting boules whose nearest neighbour (ours or theirs) is within 0.12 m (a hit sends two away) subtract 0.12 when `X` has a tireur with boules, and an extra 0.15 when it is the only counting boule nobody blocks (a clear, close, isolated target: `pHit_X` above 0.5). Spacing our boules 0.25 m or more apart costs nothing.
+
+*Families* (they replace `pointFront` and `pointBehind`; `blockFront`, `safetyBehind`, `coverJack` stay as reason codes):
+
+| Family | Candidates | Admitted when |
+|---|---|---|
+| `block` | A spot 0.30 m short of the jack on the line, and one 0.45 m short shifted 0.25 m toward the side of their best boule; plombée and demi | They have a pointeur with boules left, a clear lane, and `defense` is on (below). Never when it lands between our boule and a shot at it |
+| `cover` | 0.40 m past the jack on the line, and (±0.3, +0.35); demi, plombée | `exposure >= 0.4` and they have a tireur with boules, or we hold and `hO > 0` and `defense` is on. Hard adds the third spot |
+
+`defense` is on when `BA <= -1`, or `holder = us` and `hO >= 1`, or `hO > hT` after the throw. When it is off, the old admission rules apply unchanged (Easy keeps them). A blocker placed on the line is also a risk to ourselves: the sim prices it (a long lob that lands on it moves the jack), and a block candidate is dropped by R4 when `collateral >= 1`.
+
+*Priors.* `block +0.2·dw`, `cover +0.2·exposure·2·dw`, where `dw` is the profile's `defend` (below) times principle weight. Reasons: `block` (new code, alias of `blockFront`), `cover` (alias of `coverJack` and `safetyBehind`), and `spread` when a slot or cover spot is picked in preference to a nearer one only because of `easyTarget`.
+
+Note on the evaluator: the three terms apply to *every* candidate, so even a plain `pointJack` that lands in a lane is credited. They are not priors, so the explanation picks the term that decided the ranking.
+
+**12.12.4 The deliberate short drop**
+
+*Idea.* A team that holds and has nothing to gain must still play its boules. When every real throw can only lose (move the jack, knock an own boule), the best throw is one that cannot touch the head: a minimum-energy plombée that lands 1 to 2 m from the circle. It is a legal throw, it spends the boule, and it leaves the court as it was.
+
+*Admitted* (`drop`) only when we hold, `d_best` is under 0.5 m (a real point to protect), and either:
+
+- **A** `hO = 0` (nobody can reply) and the best real candidate's `mean(V) - λ·sd(V) < Vdrop + 0.1`, where `Vdrop` is `evalEnd` of today's court with one fewer boule in hand and no change to the head. This is rare: it happens when our boules are packed round a jack near the line and every roll or lob has a real chance to knock one out, so extra points are not worth that risk; or
+- **B** `hO >= 1`, it is our last boule, and every real candidate scores below `Vdrop - 0.1` (an unusual head: a dense cluster with the jack within 0.2 m of the string).
+
+Never admitted at Easy, never when `hO >= 1` and a real throw has a positive `V - Vdrop`.
+
+*Candidate.* One: a plombée (55 degrees) with a donnée 1.5 m from the circle on the thrower's side of the line, `x` shifted by 0.6 m from the circle-to-jack line (so it does not change the approach to the jack) and inside the court. `pointDonnee` is not used; the donnée is fixed, the cone applies (an accurate drop is a dead drop), and 2 sims check the landing is legal (inside the strings, not a spoiled throw). `evalEnd` of the sim is the usual one; the boule far from the jack is dead weight, so `V` is `Vdrop`. The drop wins only when the margin test above is met. The 0.1 threshold keeps the drop from becoming a free default: step 2 tunes it so a drop appears in under 1% of throws.
+
+*Check (open):* `rules.js` must accept a boule landing that close. The jack has a minimum distance (`jackMin`), but we have not seen a minimum for boules. If there is one, the `drop` spot is clamped to it.
+
+**12.12.5 Reason codes and lines**
+
+New codes, with params (reasons feed `why.<code>` and `suggest.<code>` as in 12.5):
+
+| Code | Params | Marcel | Odette | Pierre |
+|---|---|---|---|---|
+| `promote` | `gap` | "I give mine a little push. Doucement." | "I tap ours closer, no risk to theirs." | "Ha! I push our boule in. Watch this." |
+| `block` | none | "A door, in front of the jack. Let them try." | "I close the lane. They'll have to lob it." | "I park one in front. Nobody rolls through." |
+| `cover` | `exposure` | "Behind the cochonnet, like a goalkeeper." | "A boule behind: if they shoot the jack, we keep it." | "I put one behind, just in case." |
+| `spread` | none | "Apart, so one shot cannot take two." | "Not too close together. They hit one, not both." | "Spread them, no easy double." |
+| `drop` | none | "I put it at my feet. I do not touch what is good." | "A drop. Nothing to gain, so nothing to lose." | "...I drop it. Yes. Even I can read this." |
+| `farJack` | `dist` | "Too far to shoot. I point." | "Too far for a clean shot. I point." | "It is a long way... all right, I point." |
+| `easyShot` | none | "Close and clear. I shoot." | "A clean shot. That one is mine." | "Boom. Easy one." |
+
+Pierre's suggestions (to You): `suggest.promote` "Tap our own boule on, it'll be a point even if you miss", `suggest.block` "Put one in front of the jack and stop their rolling", `suggest.cover` "Behind the jack, they might shoot it", `suggest.drop` "Just drop it short. Nothing to gain here." Lines are pools of 2 to 3 per character (`LINES.<id>.why`), the same template fields as 12.5.
+
+**12.12.6 Personality and difficulty**
+
+Three profile fields are added: `promote` (promotion appetite, scales its prior and lowers the gain gate), `defend` (scales `block`/`cover`/`spread` priors and the `defense` threshold) and `dropOK` (willingness to drop; scales the Vdrop margin).
+
+| Profile | `promote` | `defend` | `dropOK` | Character |
+|---|---|---|---|---|
+| Marcel | 0.8 | 1.4 | 1.0 | Defensive; loves a blocker and a cover; drops without embarrassment; promotion only when the line is clean |
+| Odette | 0.6 | 0.8 | 1.0 | Prefers a clean shot or a clean point; blocks only when clearly behind on boules; drops with a shrug |
+| Pierre | 1.5 | 0.4 | 0.5 | Tries promotions and gambles; barely defends; reluctant to drop (margin ×2) |
+| You (advice) | 1.0 | 1.0 | 1.0 | Neutral; Pierre's advice blends 50/50 as in 12.10 |
+
+| Difficulty | `promote` | `block`/`cover`/`spread` | `drop` |
+|---|---|---|---|
+| Easy | Admitted with probability 0.25 per decision (a seeded draw), alignment 25 degrees, otherwise never | Only the old `pointFront`/`pointBehind` admission (no `defense` mode, no evaluator terms) | Never |
+| Medium | Yes, alignment 15 degrees, gain >= 0.6 | `defense` mode on; `easyTarget` term at half weight | Only case A |
+| Hard | Yes, alignment 20 degrees, gain >= 0.5 | Full, third `cover` spot | Cases A and B |
+
+The tactical-error draw (12.7) picks any admitted candidate, so Easy and Medium sometimes promote or block at the wrong moment.
+
+**12.12.7 Testing**
+
+Twelve scenario cases (18 to 29), added to `tactics.test.js` in the same form as 12.8 (static plan asserted exactly; Monte Carlo at Hard, 20 seeds, class holds in at least 70%). F05, F06 and F13 are independent of these.
+
+| # | Court state | Expected decision and why |
+|---|---|---|
+| 18 | Ours at (2, 7.35) in line, theirs at (2.35, 8.1) (0.36 m); we 2 left, they 3 | Hard: `promote` (roulette, 0.45 m short of ours); `pointJack` rarely beats 0.36 and a shot is risky |
+| 19 | Same, but their boule at (2.3, 7.5), 0.45 m beside our boule | No `promote` (clearing a neighbouring boule on the path, admission 2); `pointSlot` or `shootBoule` |
+| 20 | Ours at (2, 6.8) in line, 1.2 m short; theirs none; we 3, they 3 | `promote` admitted, or `pointJack`; both beat a shot (nothing to shoot). Check the gain gate with 12.12.2 item 3 |
+| 21 | Ours at (2, 7.7), the jack 0.3 m beyond, our second boule past the jack | Carom allowed: `promote` admitted (own boule past the jack) |
+| 22 | Jack (2, 8); our boule at (2.1, 7.9); they have 3 boules and a pointeur, we 1 | `block` at J - 0.3: Marcel (`block`, `downOnBoules`); Pierre may point the jack instead |
+| 23 | Jack (3.1, 9.0), 0.9 m from the string; ours at 0.25 m; they have a tireur with 2 boules, we 1 | `cover` at J + 0.4 on the line (`cover`); never a roulette past the jack |
+| 24 | Our boules at (2.0, 8.1) and (2.05, 8.15), tight (0.09 m apart); they have a tireur, 2 boules; we 1 | The spread term makes a distant `pointSlot` beat a third boule beside them (`spread`) |
+| 25 | Ours 0.15, 0.20, 0.25 m round the jack at (3.4, 9.2), 0.7 m from the string; they have no boules; we have 1 left | `drop` (case A), Marcel and Odette at Hard; Pierre points. Check that `jackScoreTrick` does not fire |
+| 26 | Same court, but they have 2 boules | `drop` not admitted (case A needs `hO = 0`); `cover` or a point |
+| 27 | Jack 12 m out; theirs at 0.12 m; `pHit` for Pierre about 0.2 | `farJack` on a shot that passes `G`: point |
+| 28 | Jack 6.5 m out; theirs at 0.12 m; Pierre, Odette | `easyShot`, `shootBoule` (Pierre 85%, Odette 70%); Marcel points (gate) |
+| 29 | Case 18 at Easy, 200 seeds | `promote` in 15 to 35% of seeds (admission 0.25 and the error rate); never `drop` anywhere |
+
+*Static tests:* `promote` admission from alignment and path, off a bad alignment; `block`/`cover` candidates on the throwing line; `laneShield` raises `EPhold` when a blocker is on the line and does nothing off it; `coverJack` lowers `exposureTerm`; the `drop` family appears in cases A and B and nowhere else; deterministic: `Apromote` ranks the closer boule higher; `margin` makes the shot fail in case 27.
+
+*Statistics* (`measure-tactics.js`, 200 matches per row, per difficulty, with ablation flags `noPromote`, `noDefense`, `noDrop` in `cfg`): share of throws that are `promote`, `block`, `cover`, `drop` per bucket (target: promote 3 to 8% of Medium throws, block + cover 4 to 10%, drop under 1%); promotion results (the boule ends closer by at least 0.1 m, jack moved over 0.15 m, own boule knocked, point lost, net points per promote against the `pointJack` alternative); the opponent's mean points from the next scoring reply after a `block`/`cover` against baseline; mean points scored by the team that played `drop`; win rate of each ablation against the full version (full should win by at least 52% at Hard, never lose); the D22 constraints: Medium against the pointer 46% +/- 5, Easy 38% +/- 5, Hard 71% +/- 5, and the D22 shoot-rate trend (down below even below up) must hold; the F03 role shares (shooter and pointer shares of throws) must not fall.
+
+**12.12.8 Performance**
+
+Admission does the work: `promote` needs one of our two best boules in line within 1.4 m of the jack (at most one target, two styles), `block` at most two spots, `cover` two (three at Hard), `drop` one (and two sims only), with the old `pointFront` and `pointBehind` counts replaced, not added to. The extra analytic terms are O(boules) per state, and all are computed once per candidate on the settled sim, so no extra simulations. The prune keeps the cap (6, 8 and 10); a promote or block candidate competes on `A` with everyone else, so the net number of candidates sent to simulation rises by at most 2 against 12.6, and only in these situations (about 1 in 5 at Medium). Successive halving and the 40 ms guard are unchanged; the harness reports p95 time for cases 18 to 26 separately and must stay under 50 ms at Medium.
+
+**12.12.9 Open questions**
+
+- Should a `drop` throw ever be allowed against a human, or is it too passive (a lot of players would call it a cheat)? The proposal keeps it very rare and explained by a line. Alternative: never at Easy and Medium (as above), Hard only.
+- Is a pushed boule that lands exactly on the jack (carom) acceptable behaviour for `promote`? It is the best outcome but also the case where the jack moves. The proposal admits it only when an own boule is past the jack.
+- Does the rule engine impose a minimum distance for a boule (not the jack)? If not, is a 1.5 m drop acceptable or should the court have a minimum like the 6 m jack rule?
+- Should Pierre's advice suggest `promote` and `drop` to the human, or only shots and points (the human controls how gentle a push is)?
+- Is it OK to remove `pointFront`/`pointBehind` as names (kept as aliases for reasons and old tests), or should they stay as separate families alongside `block`/`cover`?
+- Ablation targets: is 52% for the full tactics against the same tactics minus the new families good enough to ship, or do we want a bigger margin?
