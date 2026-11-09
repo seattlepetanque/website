@@ -114,6 +114,7 @@ Debug URLs (add the query to `/game.html`; a debug mode that starts a match ente
 - `?debug&fetch`: a scripted fetch of a dead boule and cochonnet and the hand-over and placement (`&fetchat=seconds` freezes it then, `&followc=pierre` with `&dist &az &el` for a close camera, `&fetchcam`, `&jx=&jy=`, `&lx=&ly=`).
 - `?debug&measure`: the between-throws measuring lines. `?debug&lumber`: ghost balls against and beyond the timbers (`&lx &ly &dist &az &el`). `?debug&jackshot`: a boule shot into the cochonnet with the flight camera (`&jspeed &jloft &jyaw`, `&freezeat=0.6`).
 - `?debug&ailog`: one console line per AI boule (plan and result). `?debug&sounds`: audition panel for the synthesized sounds.
+- `?debug&gravel=grey|sand`: force the court gravel (grey with a hint of blue, or sandy); by default a 50/50 pick from the seed. The cochonnet is orange on grey gravel and bright red on sand.
 - `?debug&jackvis=a|b|c|ab|…|none`: compare cochonnet finders (chevron, ground halo, bright colour).
 - `?debug&topcam`: top-down view of the circle (`&who=pierre|marcel|odette`, `&topdist=`, `&topel=`, `&topaz=` for a side view), for checking foot placement.
 - `?debug&preview`: static throw preview with made-up paths (`&zone`, `&snapped`), for screenshots.

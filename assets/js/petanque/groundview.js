@@ -34,9 +34,9 @@ export function lookup(fd, x, y) {
 }
 
 // firm 0 (soft) .. 1 (hard) -> warm amber .. cool blue
-export function washColor(firm) {
+export function washColor(firm, gravel = 'sand') {
   const t = Math.max(0, Math.min(1, firm));
-  const warm = [232, 118, 40], mid = [236, 226, 200], cool = [48, 120, 200];
+  const warm = [232, 118, 40], mid = gravel === 'grey' ? [214, 220, 230] : [236, 226, 200], cool = [48, 120, 200];
   const a = t < 0.5 ? warm : mid, b = t < 0.5 ? mid : cool, u = t < 0.5 ? t * 2 : (t - 0.5) * 2;
   return [0, 1, 2].map((c) => Math.round(a[c] + (b[c] - a[c]) * u));
 }
@@ -71,7 +71,7 @@ export function createGroundView(terrain, { phone = false, reduced = () => false
     for (let j = 0; j < TH; j++) {
       for (let i = 0; i < TW; i++) {
         const x = ((i + 0.5) / TW) * C.terrainW, y = ((j + 0.5) / TH) * C.terrainL; // flipY below puts y up
-        const [r, gg, b] = washColor(lookup(fd, x, y).firm);
+        const [r, gg, b] = washColor(lookup(fd, x, y).firm, terrain.gravel);
         const o = ((TH - 1 - j) * TW + i) * 4;
         img.data[o] = r; img.data[o + 1] = gg; img.data[o + 2] = b; img.data[o + 3] = 255;
       }

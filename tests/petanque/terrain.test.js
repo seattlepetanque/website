@@ -167,3 +167,24 @@ test('Read-the-ground overlay data matches sample()', async () => {
     assert.ok(Math.abs(fd.grad[k] - Math.hypot(s.nx, s.ny) / s.nz) < 1e-6);
   }
 });
+
+test('F52: gravel variant is a pure 50/50 pick from the seed, with a force override', async () => {
+  const { pickGravel, JACK_STYLE } = await import('../../assets/js/petanque/terrain.js');
+  let grey = 0;
+  for (let s = 1; s <= 2000; s++) {
+    const v = pickGravel(s * 7919);
+    assert.ok(v === 'grey' || v === 'sand');
+    assert.equal(v, pickGravel(s * 7919));
+    if (v === 'grey') grey++;
+  }
+  assert.ok(grey > 850 && grey < 1150, `grey ${grey}/2000`);
+  assert.equal(pickGravel(5, 'grey'), 'grey');
+  assert.equal(pickGravel(5, 'sand'), 'sand');
+  assert.equal(createTerrain(5, { gravel: 'grey' }).gravel, 'grey');
+  assert.equal(createTerrain(5, { gravel: 'sand' }).gravel, 'sand');
+  assert.equal(createTerrain(5).gravel, pickGravel(5));
+  assert.notEqual(JACK_STYLE.grey.color, JACK_STYLE.sand.color);
+  // the variant must not change the heightfield
+  const a = createTerrain(9, { gravel: 'grey' }), b = createTerrain(9, { gravel: 'sand' });
+  for (const [x, y] of pts(20)) assert.deepEqual(a.sample(x, y), b.sample(x, y));
+});

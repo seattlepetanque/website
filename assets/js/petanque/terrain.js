@@ -50,7 +50,30 @@ function poisson(rand, x0, y0, x1, y1, minD, limit, ok) {
   return pts;
 }
 
+// F52: which gravel this court has, a pure function of the seed (50/50 grey or sand) so the look is stable through a
+// game and reproducible with ?seed=. `force` ('grey' | 'sand') overrides it (the ?gravel= debug flag).
+export function pickGravel(seed, force) {
+  if (force === 'grey' || force === 'sand') return force;
+  return mulberry32((seed ^ 0x6772617) >>> 0)() < 0.5 ? 'grey' : 'sand';
+}
+
+// The jack's look per gravel: orange on grey, bright red on sand (contrast).
+export const JACK_STYLE = {
+  grey: { color: '#ff7a00', emissive: '#4a1e00' },
+  sand: { color: '#ff1d12', emissive: '#4a0500' },
+};
+
+let activeGravel = 'sand';
+export function currentGravel() { return activeGravel; }
+export function jackStyle() { return JACK_STYLE[activeGravel]; }
+
+function debugGravel() {
+  try { return typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug') ? new URLSearchParams(location.search).get('gravel') : null; } catch (e) { return null; }
+}
+
 export function createTerrain(seed, opts = {}) {
+  const gravel = pickGravel(seed, opts.gravel || debugGravel());
+  activeGravel = gravel;
   const rand = mulberry32(seed);
   const pad = C.terrainPad, step = C.gridStep;
   const X0 = -pad, Y0 = -pad;
@@ -133,6 +156,7 @@ export function createTerrain(seed, opts = {}) {
         return { h, nx: -gx * inv, ny: -gy * inv, nz: inv, friction: f, loose: l, firm: 1 - l };
       },
       stonesNear,
+      gravel,
       visibleStones,
       heightGrid,
       addDivot,

@@ -813,7 +813,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F42 | done | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
 | F43 | moot | sonnet | F44 | Timbers half buried where the ground is higher (F25 heights) |
 | F44 | in-progress | sonnet | F42 | User chose: revert F25 (terrain shapes) |
-| F52 | in-progress | sonnet | - | Court gravel colour: 50/50 grey gravel (hint of blue) or sandy (current); jack stays orange on grey, bright red on sandy |
+| F52 | done | sonnet | - | Court gravel colour: 50/50 grey gravel (hint of blue) or sandy (current); jack stays orange on grey, bright red on sandy |
 | F51 | done-unverified | sonnet | F45 | End of mène: ring move and boule collection run at the same time (no waiting for the ring) |
 | F50 | done | sonnet | F46 | Distant mountains smaller and rocky, no snow (Rainier unchanged) |
 | F49 | closed | sonnet | F04 | Medium AI decision slow again after F04 (345 ms quiet vs 100 ms test); time-boxed profiling and fix |
@@ -1179,3 +1179,5 @@ F43 outcome: moot. After the F25 revert the largest ground height is 3.5 cm, so 
 F23 outcome (partial, committed): Pierre's skill (donnee.js lat 0.0088 / long 0.0255 / loft 1.4 deg; Odette long 0.028), difficultyScale 3.0 / 1.6 / 1.3, Pierre profile lambda0 0.12 awareness 1.0, FAR_HIT 0.4 for far jacks. Human-team win rates (scripted pointer + Pierre, n=120): Easy 61% -> 81% (target 85-90%: probably needs scale about 3.3-3.5), Medium 49% -> 54-57% on an intermediate setup (final setup 1.6 NOT measured; target 45-55%), Hard 33% -> 37% (final setup not measured; target 25-40%). Two test loosenings: tactics.test #13 threshold 0.7 -> 0.6 and the slanted-promote fixture boule moved. TODO: re-measure Medium/Hard at the final setup on a quiet machine and raise Easy's scale.
 
 F51 outcome: implemented (ring carried straight to the next circle after the result; ring gate waits while a boule is in the ring or a person within 0.6 m; own boules in the ring's way picked first; next mène waits for ring + collection; pure helpers ringBlockers/ringGate/meneEndReady in crowd.js with 4 tests). Tests 323/323 on a quiet machine. NOT verified in a browser: headless screenshots could not reach the mène-end sequence (virtual time). Please check on a real browser: the ring and collection run in parallel, no stuck ring (F24), fallback 14 s and click/key skip still work.
+
+F52 outcome: committed; the agent was stopped after about 2.5 h without a final report, verified by the manager (323/323 tests, hugo build, screenshots of ?gravel=grey and ?gravel=sand at scratchpad f52v). Observations for review: the grey court reads quite dark and flat, closer to asphalt than gravel (maybe lighten, add more pebble/speckle texture and a bit more blue); the small orange/red jack is hard to spot at the shoulder view on both variants (check contrast, maybe a slightly larger jack or a light ring). User to judge on port 1500.

@@ -2,6 +2,7 @@
 import { stripGeometry } from './strip.js';
 import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
+import { jackStyle } from './terrain.js';
 import { court } from './court.js';
 import { JACK_END_MARGIN } from './rules.js';
 import { mulberry32 } from './rng.js';
@@ -19,15 +20,15 @@ function makeCanvas(w, h) {
 }
 
 // Speckled gravel detail texture, tileable enough at this scale
-function gravelTexture() {
+function gravelTexture(grey) {
   const S = 512, cv = makeCanvas(S, S), g = cv.getContext('2d');
   const rand = mulberry32(7);
-  g.fillStyle = '#b9a98a';
+  g.fillStyle = grey ? '#a3a8b2' : '#b9a98a';
   g.fillRect(0, 0, S, S);
   for (let i = 0; i < 9000; i++) {
     const x = rand() * S, y = rand() * S, r = 0.6 + rand() * 2.6;
     const l = 45 + rand() * 45;
-    g.fillStyle = `hsl(${28 + rand() * 14}, ${12 + rand() * 22}%, ${l}%)`;
+    g.fillStyle = grey ? `hsl(${208 + rand() * 24}, ${3 + rand() * 9}%, ${l - 4}%)` : `hsl(${28 + rand() * 14}, ${12 + rand() * 22}%, ${l}%)`;
     // draw wrapped so the tile has no seams
     for (const ox of [-S, 0, S]) for (const oy of [-S, 0, S]) {
       if (x + ox < -4 || x + ox > S + 4 || y + oy < -4 || y + oy > S + 4) continue;
@@ -120,10 +121,10 @@ function makeSky() {
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false, toneMapped: false }));
 }
-function makeEnvMap(renderer) {
+function makeEnvMap(renderer, envFloor) {
   const s = new THREE.Scene();
   s.add(makeSky());
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(150, 16), new THREE.MeshBasicMaterial({ color: '#a8977a' }));
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(150, 16), new THREE.MeshBasicMaterial({ color: envFloor }));
   floor.position.z = -1;
   s.add(floor);
   const bright = new THREE.MeshBasicMaterial({ color: '#fff4dc' });
@@ -161,7 +162,7 @@ export function createRenderer(canvas, terrain) {
   scene.fog = new THREE.Fog(FOG, 60, 320);
   scene.add(makeSky());
   scene.add(makeSkyPanorama(C.terrainW / 2, C.terrainL / 2, SKY_HAZE));
-  scene.environment = makeEnvMap(renderer);
+  scene.environment = makeEnvMap(renderer, terrain.gravel === 'grey' ? '#8e939c' : '#a8977a');
 
   const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 300);
   camera.up.set(0, 0, 1);
@@ -203,7 +204,8 @@ export function createRenderer(canvas, terrain) {
   let edgeZ = 0; // the grass plane sits just below the lowest terrain point; the mesh eases down to it past the timbers
   for (let k = 0; k < grid.data.length; k++) edgeZ = Math.min(edgeZ, grid.data[k]);
   edgeZ -= 0.004;
-  const earth = new THREE.Color('#8f8365'), packed = new THREE.Color('#e6d9bd'), loose = new THREE.Color('#fff0d2'), tint = new THREE.Color();
+  const grey = terrain.gravel === 'grey';
+  const earth = new THREE.Color(grey ? '#7a7f88' : '#8f8365'), packed = new THREE.Color(grey ? '#d2d7e0' : '#e6d9bd'), loose = new THREE.Color(grey ? '#eef2fa' : '#fff0d2'), tint = new THREE.Color();
   for (let j = 0; j < gh; j++) {
     for (let i = 0; i < gw; i++) {
       const k = j * gw + i, x = grid.x0 + i * grid.step, y = grid.y0 + j * grid.step;
@@ -235,7 +237,7 @@ export function createRenderer(canvas, terrain) {
   tgeo.setAttribute('color', new THREE.BufferAttribute(colr, 3));
   tgeo.setIndex(new THREE.BufferAttribute(idx, 1));
   tgeo.computeVertexNormals();
-  const gravel = gravelTexture();
+  const gravel = gravelTexture(grey);
   const terrainMesh = new THREE.Mesh(tgeo, new THREE.MeshStandardMaterial({
     map: gravel, vertexColors: true, roughness: 0.95, metalness: 0, envMapIntensity: 0.4,
   }));
@@ -303,7 +305,8 @@ export function createRenderer(canvas, terrain) {
       m.compose(pv, q, sv);
       stoneMesh.setMatrixAt(i, m);
       const t = rand();
-      col.setHSL(0.09 + rand() * 0.04, 0.1 + t * 0.25, 0.3 + rand() * 0.3);
+      if (grey) col.setHSL(0.6 + rand() * 0.04, 0.04 + t * 0.1, 0.22 + rand() * 0.25);
+      else col.setHSL(0.09 + rand() * 0.04, 0.1 + t * 0.25, 0.3 + rand() * 0.3);
       stoneMesh.setColorAt(i, col);
     });
     stoneMesh.castShadow = true;
@@ -375,7 +378,7 @@ export function createRenderer(canvas, terrain) {
   // Dead (out of play) bodies: greyed and dulled
   const deadBouleMat = new THREE.MeshStandardMaterial({ color: '#a4a8b0', metalness: 0.45, roughness: 0.5, envMapIntensity: 0.9 });
   const deadJackMat = new THREE.MeshStandardMaterial({ color: '#8a7a5e', metalness: 0, roughness: 0.6 });
-  const jackMat = new THREE.MeshStandardMaterial({ color: '#ff7a00', metalness: 0, roughness: 0.45, emissive: '#4a1e00' }); // bright orange, lit a little from within so it stays vivid in shade
+  const jackMat = new THREE.MeshStandardMaterial({ color: jackStyle().color, metalness: 0, roughness: 0.45, emissive: jackStyle().emissive }); // orange on grey gravel, bright red on sand (F52), lit a little from within so it stays vivid in shade
   const bouleGeo = new THREE.SphereGeometry(1, 40, 24);
   bouleGeo.rotateX(Math.PI / 2); // texture poles along z; any orientation is fine
   const jackGeo = new THREE.SphereGeometry(1, 20, 12);
@@ -479,9 +482,10 @@ export function createRenderer(canvas, terrain) {
   const divotTex = (() => {
     const cv = makeCanvas(64, 64), g = cv.getContext('2d');
     const gr = g.createRadialGradient(32, 32, 4, 32, 32, 31);
-    gr.addColorStop(0, 'rgba(60,44,24,0.55)');
-    gr.addColorStop(0.65, 'rgba(60,44,24,0.3)');
-    gr.addColorStop(1, 'rgba(60,44,24,0)');
+    const dc = grey ? '40,46,58' : '60,44,24';
+    gr.addColorStop(0, `rgba(${dc},0.55)`);
+    gr.addColorStop(0.65, `rgba(${dc},0.3)`);
+    gr.addColorStop(1, `rgba(${dc},0)`);
     g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
     return new THREE.CanvasTexture(cv);
   })();

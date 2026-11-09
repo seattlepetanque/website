@@ -2,6 +2,7 @@
 // World is z-up, metres. The character faces +y at yaw 0; positive yaw turns toward +x.
 // The pose math below is pure (no three.js) so it can be tested in Node.
 import { C } from './constants.js';
+import { jackStyle } from './terrain.js';
 
 const { sin, cos, sqrt, atan2, min, max, abs, PI } = Math;
 const BLEND = 0.25; // s, stance-to-stance blend
@@ -819,10 +820,10 @@ export function createCharacter(THREE, spec = {}) {
   mats.push(holdMesh.material);
   holdMesh.castShadow = true; holdMesh.visible = false;
   root.add(holdMesh);
-  // E23: the cochonnet in the dominant hand for a jack throw: the live jack's orange (render.js jackMat), jack radius
+  // E23: the cochonnet in the dominant hand for a jack throw: the live jack's colour (terrain.js JACK_STYLE, render.js jackMat), jack radius
   const jackHeld = new THREE.Mesh(
     geo(new THREE.SphereGeometry(C.jack.r, 14, 10)),
-    new THREE.MeshStandardMaterial({ color: '#ff7a00', metalness: 0, roughness: 0.45, emissive: '#4a1e00' }),
+    new THREE.MeshStandardMaterial({ color: jackStyle().color, metalness: 0, roughness: 0.45, emissive: jackStyle().emissive }),
   );
   mats.push(jackHeld.material);
   jackHeld.castShadow = true; jackHeld.visible = false;
