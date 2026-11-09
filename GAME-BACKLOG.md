@@ -818,12 +818,13 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F13 | done | haiku | — | Dead-jack void message gives the wrong reason |
 | F14 | done | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
 | F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
-| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21 | Round 5 review |
+| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22 | Round 5 review |
 | F17 | done | haiku | — | Remove "lands at …" landing-distance text from the status line |
 | F18 | done | haiku | — | Breeze only occasionally, fading in and out |
 | F19 | done | sonnet | — | Distant lake with an occasional floatplane taking off or landing |
 | F20 | done | sonnet | — | Better hands, relaxed arms while holding boules, richer idle animation |
 | F21 | done | haiku | — | Remove the coloured team rings around boules |
+| F22 | in-progress | sonnet | — | Mène-end card never hides the scoring circle or its labels |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -990,3 +991,10 @@ Remove the navy/orange team rings drawn on the ground around each boule (from B0
 
 ### F20 notes
 - Hands: palm + angled thumb + three finger capsules (curl when holding; mirrored for Odette). Relaxed holds (sides / akimbo / folded / fidget per personality, drifting every 13 s; carry pose only while walking). Idle micro-motion and irregular gestures (check boules, wipe a boule, shade eyes, shrug, chat, Pierre's hand-to-hand toss); reduced motion scales it down; frozen at dt 0. Four new character tests. The `quirks.hold` field in personalities.js commits with F04 (shared file); character.js falls back to defaults until then.
+
+### F22 Mène-end card never hides the scoring view (sonnet)
+The result card ("Marcel & Odette score 3 points") can cover boules, badges or distance labels around the scoring circle. Fix it from both sides:
+- **Camera:** measure the card's on-screen rect (and the top HUD) after it's shown, and frame the circle plus every label and badge into the remaining visible area (offset the camera target and adjust distance so the content's projected bounds fit the free region with a margin), in both the top-down (E32) and the observer/broadcast end views.
+- **Card:** make it compact: a slim bar along the bottom on wide screens (headline + one line of detail + the Next mène button inline), a smaller card on phones, optionally collapsible ("details" toggle) and semi-transparent. Never covers the circle centre.
+- **Labels:** the label placement (E32) treats the card rect as an obstacle.
+- Check with mène-end screenshots for small, medium and very large circles (1 vs 4+ scoring boules), at 1200×800, 500×900 and 844×390.
