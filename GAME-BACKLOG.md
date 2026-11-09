@@ -811,7 +811,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F39 | todo | sonnet | F28 | Slow mode: camera follows the human walking to the ring |
 | F40 | done | haiku | - | Sideline timbers have a slightly flickery shadow |
 | F42 | done | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
-| F43 | on-hold | sonnet | F44 | Timbers half buried where the ground is higher (F25 heights) |
+| F43 | moot | sonnet | F44 | Timbers half buried where the ground is higher (F25 heights) |
 | F44 | in-progress | sonnet | F42 | User chose: revert F25 (terrain shapes) |
 | F52 | todo | sonnet | - | Court gravel colour: 50/50 grey gravel (hint of blue) or sandy (current); jack stays orange on grey, bright red on sandy |
 | F51 | todo | sonnet | F45 | End of mène: ring move and boule collection run at the same time (no waiting for the ring) |
@@ -1173,3 +1173,5 @@ F49 outcome: not reproducible. A profiling agent measured the 'medium decision' 
 ### F52 Gravel colour variants (sonnet)
 User: 50/50 chance the court is a more grey gravel (hinting just of blue) or sandy (as now). If the gravel is grey, the jack (cochonnet) keeps its current colour (orange); if sandy, the jack is bright red (for contrast on sand).
 Assumptions to confirm or note: chosen once per game from the terrain seed (so a court looks the same through a game; new game rerolls); both variants still need good boule/jack contrast and keep the Read-the-ground wash, gravel pebbles, dust, divots and rock colours coherent (grey: pebbles/rocks a bit darker/bluer-grey, sandy: as now); the debug `?seed=` flag reproduces either variant and a new `?gravel=grey|sand` debug flag forces one. Touches `terrain.js` (variant pick, pure + test), `render.js` terrain texture/pebble colours, the jack material (render.js/character held-jack/orange arrow references: grep for the jack colour and any UI elements that mention "orange" e.g. the arrow, rules text, README/game.md), and screenshots of both.
+
+F43 outcome: moot. After the F25 revert the largest ground height is 3.5 cm, so timbers (top 15 cm above zero) are no longer buried.
