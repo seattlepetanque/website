@@ -22,7 +22,7 @@ import { createClock } from './clock.js';
 import * as THREE from '../vendor/three.module.js';
 import { createCharacter, releaseOffset, bendReach } from './character.js';
 import { planRoute, standPoint, pathLength } from './fetch.js';
-import { ringBlockers, ringGate, meneEndReady, atPlaces, steer, planGoals, BLOCK_FADE_S, COLLECT_TIMEOUT, CARRY_T, HAND_H, handTargets, carryAt } from './crowd.js';
+import { ringBlockers, ringGate, meneEndReady, atPlaces, steer, planGoals, BLOCK_FADE_S } from './crowd.js';
 import { pickWaitingSlot, waitingSlots } from './waiting.js';
 import { attachModels } from './models.js';
 import { createGroundView } from './groundview.js';
@@ -756,7 +756,6 @@ function boot() {
     const w = flying && !flying.dead ? flying : jackBody();
     crowdTick(dt); // F14
     followHumanWalk(); // F39
-    carryTick(dt); // F59
     for (const ch of cast.values()) {
       const p = ch.root.position;
       p.z = terrain.sample(p.x, p.y).h;
@@ -2248,33 +2247,18 @@ function boot() {
     if (fadeOut) for (const ch of cast.values()) { ch.setOpacity(0); ch.fadeTo(1, FADE_S); }
   }
 
-  // ---- F02/F14: after a mène the players collect their boules, then walk to their spots ----
-  // Slow mode: a little after the result every free player starts at once (the ring carrier F07 and the jack fetcher F10
-  // join when they are free) and walks to their own boules, nearest first (the dead ones are in the row past the far
-  // string, reached round the outside of the timbers), bends and takes each up (the held count grows, the boule leaves
-  // the court). Walkers steer round each other (`crowdTick`, crowd.js: separation, slowing for whoever is ahead) and
-  // wait while somebody is bending where they want to stand. After COLLECT_TIMEOUT s of game time any boule still on
-  // the ground goes straight into its owner's hand. nextMene lets this run beside the ring carrying, then sends
-  // everyone but the next jack thrower to waiting slots round the new circle (`walkToSpots`, steered too; blocked for
-  // more than BLOCK_FADE_S they fade to the slot); the mène start leaves them there (spotsKept) and collectBoules
-  // skips anyone already holding their boules. A click or key (skipCollect) jumps to the end state.
-  // Quick mode: boules and players fade (nextMene). Instant: nothing.
-  let collect = null, spotsKept = 0, f02Script = false; // collect: { tok, ids, skipped, finished, done, walkers, goal, blocked, fb }
+  // ---- F60: after Next every boule goes at once into its owner's hands; the owners walk straight to their next-mène places ----
+  // Slow mode: the ring carrier (F07) and the jack fetcher (F10) finish first and then take their boules. Walkers steer round
+  // each other (`crowdTick`, crowd.js) and, blocked for more than BLOCK_FADE_S, fade to the place. The mène starts when the ring
+  // is down and everybody is at their place (nextMene); the start leaves them there (spotsKept). A click or key (skipCollect)
+  // jumps to the end state. Quick mode: boules and players fade (nextMene). Instant: nothing.
+  let collect = null, spotsKept = 0, f02Script = false; // collect: { tok, ids, skipped, finished, done, walkers, goal, blocked }
   const ownBoules = (id) => world.bodies.filter((b) => b.kind === 'boule' && b.owner === id && !(carry && carry.body === b));
-  function takeBoule(st, id, b) { // the boule leaves the court and is in the hand
-    const i = world.bodies.indexOf(b);
-    if (i >= 0) world.bodies.splice(i, 1);
-    renderer.sync(world);
-    if (!st.picked) { st.picked = true; renderer.clearMeasure(); } // the result labels would point at nothing
-    const ch = cast.get(id), n = (st.held.get(id) || 0) + 1;
-    st.held.set(id, n);
-    ch.setHeldBoules({ ...splitHeld(n), color: teamColor(id) });
-  }
-  function startCollect(delay = 2600) {
+  function startCollect() {
     if (!slow() || collect || !match || match.phase !== 'meneEnd') return;
-    const st = { tok: token, ids: match.players.map((p) => p.id), skipped: false, finished: false, held: new Map(), picked: false, walkers: new Set(), goal: new Map(), blocked: new Map(), fb: new Set(), goalStarted: new Set(), plan: planNext(), carries: [], places: new Map() };
+    const st = { tok: token, ids: match.players.map((p) => p.id), skipped: false, finished: false, held: new Map(), picked: false, walkers: new Set(), goal: new Map(), blocked: new Map(), goalStarted: new Set(), plan: planNext(), places: new Map() };
     collect = st;
-    st.done = runCollect(st, delay).catch((err) => console.error(err)).then(() => { st.finished = true; });
+    st.done = runCollect(st).catch((err) => console.error(err)).then(() => { st.finished = true; });
   }
   // F15: the next mène's circle and waiting slots depend only on the final jack spot, so they are known as soon as the result
   // is. Each player walks to their own spot straight after picking up their boules; the next jack thrower goes to the new
@@ -2341,70 +2325,25 @@ function boot() {
     ch.fadeTo(0, 0.15);
     later(() => { if (st.tok !== token) return; placeAt(id, g.x, g.y, g.yaw); ch.fadeTo(1, 0.15); ch.setStance('watch'); shadow(id, false); }, 200);
   }
-  function giveBoules(st, id) { // the fallback (or a skip): every boule still on the court is in its owner's hands
+  function giveBoules(st, id) { // F60: every boule still on the court is at once in its owner's hands (a skip does the same)
     const rest = ownBoules(id);
     for (const b of rest) { const i = world.bodies.indexOf(b); if (i >= 0) world.bodies.splice(i, 1); }
     const n = (st.held.get(id) || 0) + rest.length;
     st.held.set(id, n);
-    if (n) cast.get(id).setHeldBoules({ ...splitHeld(n), color: teamColor(id) });
-    return rest.length;
+    if (rest.length) { cast.get(id).setHeldBoules({ ...splitHeld(n), color: teamColor(id) }); renderer.sync(world); renderer.clearMeasure(); } // (the result labels would point at nothing)
   }
-  function fallbackFor(st, id) { // COLLECT_TIMEOUT s passed: stop where they stand with their boules in hand
-    if (st.tok !== token || st.skipped || st.fb.has(id) || st.goalStarted.has(id) || gatherBusy(id)) return; // (already on the way to the next spot: leave them)
-    st.fb.add(id); st.walkers.delete(id);
-    const ch = cast.get(id), p = ch.root.position;
-    giveBoules(st, id);
-    ch.setPlacement(p.x, p.y); ch.setCarrying(false); // ends a walk or bend in place
-    renderer.sync(world); renderer.clearMeasure();
-    goalWalk(st, id, () => st.tok === token && !st.skipped && !!match).catch((err) => console.error(err)); // F15: then on to the next spot
-  }
-  // ---- F59: the boules go into the owners' hands by themselves ----
-  // After Next every boule still on the court (dead ones in the row included) arcs from where it lies into its owner's hand
-  // (crowd.js handTargets/carryAt, a little apart in time), then the owner walks to their next-mene place (goalWalk). The ring holder
-  // keeps carrying the ring and takes his boules once it is down. No kicking, no zones: after COLLECT_TIMEOUT s the fallback
-  // puts whatever is left in the hands at once.
-  function startCarries(st, ids) {
-    const people = ids.map((id) => { const ch = cast.get(id), q = ch.root.position; return { id, x: q.x, y: q.y, h: ch.height }; });
-    const head = jackBody() && !jackBody().dead ? jackBody() : { x: C.terrainW / 2, y: C.terrainL / 2 };
-    const list = world.bodies.filter((b) => b.kind === 'boule' && ids.includes(b.owner) && !(carry && carry.body === b) && !st.carries.some((c) => c.b === b))
-      .sort((a, b2) => Math.hypot(a.x - head.x, a.y - head.y) - Math.hypot(b2.x - head.x, b2.y - head.y));
-    const byId = new Map(list.map((b) => [b.id, b]));
-    for (const h of handTargets(list.map((b) => ({ id: b.id, owner: b.owner, x: b.x, y: b.y })), people)) {
-      const b = byId.get(h.id);
-      b.state = 'resting'; b.vx = b.vy = b.vz = 0;
-      st.carries.push({ b, owner: h.owner, from: h.from, z0: b.z, t: -h.delay, dur: Math.min(1.4, CARRY_T + Math.hypot(b.x - h.to.x, b.y - h.to.y) * 0.05) });
-    }
-  }
-  function carryTick(dt) { // each frame: boules arcing into the hands, on the game clock
-    const st = collect;
-    if (!st || st.tok !== token || !st.carries.length) return;
-    for (const c of [...st.carries]) {
-      if (!world.bodies.includes(c.b)) { st.carries.splice(st.carries.indexOf(c), 1); continue; } // the fallback or a skip already took it
-      c.t += dt;
-      if (c.t < 0) continue;
-      const ch = cast.get(c.owner), q = ch.root.position;
-      const p = carryAt(c.from, { x: q.x, y: q.y, z: q.z + ch.height * HAND_H }, c.t, { dur: c.dur, z0: c.z0 });
-      c.b.x = p.x; c.b.y = p.y; c.b.z = p.z;
-      if (p.done) { st.carries.splice(st.carries.indexOf(c), 1); takeBoule(st, c.owner, c.b); }
-    }
-    renderer.sync(world);
-  }
-  async function runCollect(st, delay) {
-    const t = st.tok, alive = (id) => t === token && !st.skipped && !!match && !st.fb.has(id);
-    await sleep(delay);
-    later(() => { for (const id of st.ids) fallbackFor(st, id); }, COLLECT_TIMEOUT * 1000);
-    startCarries(st, st.ids.filter((id) => !gatherBusy(id) && !(jackTask && jackFetcher === id)));
+  // F60: after Next every boule on the court (dead ones in the row included) is in its owner's hands at once, then the owner
+  // walks straight to their next-mene place (goalWalk). The ring holder (and a jack fetcher) keeps going and takes his boules
+  // once free. The next mene starts when the ring is down and everybody is at a place (nextMene).
+  async function runCollect(st) {
+    const t = st.tok, alive = (id) => t === token && !st.skipped && !!match;
     const run = async (id) => {
       const ch = cast.get(id);
-      let waited = false;
-      for (let w = 0; w < 600 && alive(id) && gatherBusy(id); w++) { waited = true; await sleep(200); } // the ring carrier or a fetcher joins when free
-      if (jackTask && jackFetcher === id) { waited = true; await jackTask; }
+      for (let w = 0; w < 600 && alive(id) && gatherBusy(id); w++) await sleep(200); // the ring carrier or a fetcher joins when free
+      if (jackTask && jackFetcher === id) await jackTask;
       if (!alive(id)) return;
-      if (waited) { later(() => fallbackFor(st, id), COLLECT_TIMEOUT * 1000); startCarries(st, [id]); }
-      shadow(id, true); ch.setHolding(false); ch.setStance('watch');
-      for (let w = 0; w < 150 && alive(id) && st.carries.some((c) => c.owner === id); w++) await sleep(100); // his boules arrive in his hands
-      if (!alive(id)) return;
-      ch.setCarrying(false);
+      giveBoules(st, id);
+      shadow(id, true); ch.setHolding(false); ch.setCarrying(false); ch.setStance('watch');
       await goalWalk(st, id, () => alive(id)); // F15: straight to the next mène's spot
     };
     await Promise.all(st.ids.map((id) => run(id)));

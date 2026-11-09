@@ -1,8 +1,8 @@
-// Crowd steering and the end-of-mene plan (F14, F59). Pure geometry, no three.js.
+// Crowd steering and the end-of-mene plan (F14, F60). Pure geometry, no three.js.
 //
 // `steer` gives one walker's velocity (a unit vector scaled 0..1) for this step: seek the target, be pushed sideways
-// (and a little away) by anybody within SEP_R, and slow to a stop behind anybody directly ahead. F59: after the result the boules
-// are carried into their owners' hands (`handTargets`, `carryAt`), the ring holder drops the ring, and everybody else walks to their
+// (and a little away) by anybody within SEP_R, and slow to a stop behind anybody directly ahead. F60: after the result the boules
+// go into their owners' hands at once, the ring holder drops the ring, and everybody else walks to their
 // next-mene place (`planGoals`); the next mene starts when the ring is down and everybody is at a place (`meneEndReady`, `atPlaces`).
 
 import { waitingSlots } from './waiting.js';
@@ -11,12 +11,8 @@ export const SEP_R = 0.8; // m: others closer than this push a walker sideways
 export const MIN_GAP = 0.5; // m: walkers try never to come closer than this
 export const AHEAD_R = 1.3; // m: how far ahead a walker looks for somebody in the way
 export const BLOCK_FADE_S = 2; // s blocked on the way to the goal before a walker fades to it
-export const COLLECT_TIMEOUT = 14; // s of game time before the fallback puts every boule still on the court in its owner's hand
-export const CARRY_T = 0.7; // s a boule takes to arc from where it lies into its owner's hand
-export const CARRY_STAGGER = 0.12; // s between successive boules starting (a visible ripple, not one flash)
-export const CARRY_LIFT = 0.35; // m: how much higher than a straight line the arc rises
+export const COLLECT_TIMEOUT = 14; // s: the ring holder waits this long (plus 4) at the spot before setting the ring down anyway
 export const BOULE_R = 0.0375;
-export const HAND_H = 0.55; // fraction of a player's height: the boules are carried at about hip height
 export const AT_PLACE = 0.6; // m: a player this close to their place is at it
 export const RING_R = 0.25; // m: the circle's radius (court.js CIRCLE_R; a test keeps them equal)
 
@@ -80,30 +76,6 @@ export function planGoals(next, dims) {
   const thrower = next.players.find((p) => p.team === team && (p.isHuman || team === 1)) || next.players.find((p) => p.team === team); // keep in sync with beginMene
   const slots = waitingSlots(null, { ...dims, circle: to, dir }).filter((s) => s.zone === 'circle');
   return { to, dir, thrower: thrower ? thrower.id : null, slots };
-}
-
-// ---------------------------------------------------------------------------------------------------------------------
-// F28: collection zones and kicks. Each player gets a private disc of open court; a crowded head is cleared by nudging
-
-// F59: where the boules go. boules: [{ id, owner, x, y }]; people: [{ id, x, y, h? }] (h: the body height, m).
-// -> [{ id, owner, from: {x,y}, to: {x,y,z}, delay }]: every boule with a known owner gets that owner's hand (hip height, at their
-// position) as its target, started CARRY_STAGGER apart in the order given (ownerless boules and unknown owners are left out).
-export function handTargets(boules, people, { stagger = CARRY_STAGGER, handH = HAND_H } = {}) {
-  const at = new Map(people.map((p) => [p.id, p]));
-  const out = [];
-  for (const b of boules) {
-    const p = at.get(b.owner);
-    if (!p) continue;
-    out.push({ id: b.id, owner: b.owner, from: { x: b.x, y: b.y }, to: { x: p.x, y: p.y, z: (p.h ?? 1.75) * handH }, delay: out.length * stagger });
-  }
-  return out;
-}
-
-// Where a carried boule is `t` seconds after its start: a smooth arc from `from` (on the ground, z0) to the hand `to`, rising
-// CARRY_LIFT above the straight line. -> { x, y, z, done }; the boule is placed in the hand once done.
-export function carryAt(from, to, t, { dur = CARRY_T, lift = CARRY_LIFT, z0 = BOULE_R } = {}) {
-  const u = Math.max(0, Math.min(1, t / dur)), e = u * u * (3 - 2 * u);
-  return { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e, z: z0 + (to.z - z0) * e + lift * 4 * u * (1 - u), done: u >= 1 };
 }
 
 // Everybody is at their place: places and positions are { id -> { x, y } } maps (Map or plain object); a player without a place counts as there.

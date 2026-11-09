@@ -8,7 +8,7 @@ const { sin, cos, sqrt, atan2, min, max, abs, PI } = Math;
 const BLEND = 0.25; // s, stance-to-stance blend
 const WALK_SPEED = 1.2; // m/s
 const TURN_RATE = 4; // rad/s
-const STEER_MIN_SPEED = 0.2, STEER_DEADBAND = 0.12, STEER_TURN_RATE = 3; // F53: crowd-steered heading: ignore slower steering, dead band (rad), rate limit (rad/s)
+const STEER_MIN_SPEED = 0.2, STEER_DEADBAND = 0.12, STEER_TURN_RATE = 3, STEER_ARRIVE = 1.2; // F53: crowd-steered heading: ignore slower steering, dead band (rad), rate limit (rad/s)
 const LOOK_DEADBAND = 0.1, LOOK_RATE = 5; // F53: head look-at: retarget only past this change (rad); the head turns at most this fast (rad/s)
 
 // ---------- small vector helpers (arrays [x, y, z]) ----------
@@ -966,12 +966,23 @@ export function createCharacter(THREE, spec = {}) {
         const lx = w.leg.x - root.position.x, ly = w.leg.y - root.position.y, left = sqrt(lx * lx + ly * ly);
         // F53: the heading follows the steering only when it really moves (m >= STEER_MIN_SPEED: a blocked walker's tiny, flipping vector is
         // ignored), only past a dead band (hysteresis: once turning it goes on until nearly aligned), and at a limited rate
-        if (m >= STEER_MIN_SPEED) {
-          const want = atan2(sv.vx, sv.vy), dd = atan2(sin(want - w.heading), cos(want - w.heading));
-          if (abs(dd) > STEER_DEADBAND) w.turning = true; else if (abs(dd) < STEER_DEADBAND * 0.35) w.turning = false;
-          if (w.turning) w.heading += Math.sign(dd) * min(abs(dd), STEER_TURN_RATE * dt);
+        // F60: near the leg's end the walker aims straight at it (the rate-limited steering heading orbits a goal inside its turning
+        // circle: 2.4 m/s at 3 rad/s is a 0.8 m radius), and anybody facing well away from where they want to go turns before moving on
+        const arriving = left < STEER_ARRIVE;
+        let want = null;
+        if (arriving) want = atan2(lx, ly); else if (m >= STEER_MIN_SPEED) want = atan2(sv.vx, sv.vy);
+        let align = 1;
+        if (want !== null) {
+          const dd = atan2(sin(want - w.heading), cos(want - w.heading));
+          if (arriving) w.heading += Math.sign(dd) * min(abs(dd), TURN_RATE * 1.5 * dt);
+          else {
+            if (abs(dd) > STEER_DEADBAND) w.turning = true; else if (abs(dd) < STEER_DEADBAND * 0.35) w.turning = false;
+            if (w.turning) w.heading += Math.sign(dd) * min(abs(dd), STEER_TURN_RATE * dt);
+          }
+          align = Math.max(0, cos(atan2(sin(want - w.heading), cos(want - w.heading))));
+          if (align < 0.5) align = 0; // turn on the spot first
         }
-        const step = min(w.speed * dt * (m >= STEER_MIN_SPEED ? m : 0), left);
+        const step = min(w.speed * dt * (want !== null ? (arriving ? 1 : m) * align : 0), left);
         const dh = atan2(sin(w.heading - st.yaw), cos(w.heading - st.yaw));
         if (abs(dh) > 1e-6) setYaw(abs(dh) <= TURN_RATE * dt ? w.heading : st.yaw + Math.sign(dh) * TURN_RATE * dt);
         if (step > 1e-9) { root.position.x += sin(w.heading) * step; root.position.y += cos(w.heading) * step; w.phase += step / (4 * 0.18 * H * w.stride) * 2 * PI; }
@@ -980,14 +991,15 @@ export function createCharacter(THREE, spec = {}) {
           if (w.via.length) nextLeg(w); else w.stage = 'turn2';
         }
       } else if (w.stage === 'go') {
-        const step = min(w.speed * dt, w.dist - w.moved);
-        w.moved += step;
-        // turn towards the leg's heading while walking (a corner of a multi-leg path), then move along it
+        // position-based (a steered frame may have moved the walker off the planned line): head straight for the leg's end
+        const lx = w.leg.x - root.position.x, ly = w.leg.y - root.position.y, left = sqrt(lx * lx + ly * ly);
+        if (left > 0.01) w.heading = atan2(lx, ly);
+        const step = min(w.speed * dt, left);
         const dh = atan2(sin(w.heading - st.yaw), cos(w.heading - st.yaw));
         if (abs(dh) > 1e-6) setYaw(abs(dh) <= TURN_RATE * dt ? w.heading : st.yaw + Math.sign(dh) * TURN_RATE * dt);
         root.position.x += sin(w.heading) * step; root.position.y += cos(w.heading) * step;
         w.phase += w.speed * dt / (4 * 0.18 * H * w.stride) * 2 * PI;
-        if (w.dist - w.moved < 1e-6) {
+        if (left - step < 1e-6) {
           root.position.x = w.leg.x; root.position.y = w.leg.y;
           if (w.via.length) nextLeg(w); else w.stage = 'turn2';
         }

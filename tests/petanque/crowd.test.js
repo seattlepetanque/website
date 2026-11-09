@@ -102,40 +102,8 @@ test('F53 steer: push false (a thrower standing their ground) is not pushed side
   assert.ok(steer({ x: 0, y: 0 }, { x: 0, y: 5 }, [{ x: 0, y: 0.9 }], { push: false }).scale < 0.6);
 });
 
-// ---- F59: boules into hands, places, the next-mene gate ----
-import { handTargets, carryAt, atPlaces, CARRY_T, CARRY_STAGGER, CARRY_LIFT, HAND_H, BOULE_R } from '../../assets/js/petanque/crowd.js';
-const PEOPLE = [{ id: 'you', x: 1, y: 8, h: 1.8 }, { id: 'pierre', x: 3, y: 9 }, { id: 'marcel', x: 2, y: 11, h: 1.7 }, { id: 'odette', x: 0.5, y: 10, h: 1.6 }];
-
-test('F59 handTargets: every boule with an owner gets that owner\'s hand (hip height at their position), staggered in order', () => {
-  const bs = [];
-  for (const [i, id] of PEOPLE.map((p) => p.id).entries()) for (let k = 0; k < 3; k++) bs.push({ id: `${id}${k}`, owner: id, x: 2 + i * 0.1, y: 9 + k * 0.1 });
-  const out = handTargets(bs, PEOPLE);
-  assert.equal(out.length, 12);
-  for (const [i, h] of out.entries()) {
-    const p = PEOPLE.find((q) => q.id === h.owner), b = bs[i];
-    assert.deepEqual(h.from, { x: b.x, y: b.y });
-    assert.ok(h.to.x === p.x && h.to.y === p.y && Math.abs(h.to.z - (p.h ?? 1.75) * HAND_H) < 1e-9);
-    assert.ok(Math.abs(h.delay - i * CARRY_STAGGER) < 1e-9);
-  }
-  assert.equal(handTargets([{ id: 'x', owner: 'ghost', x: 0, y: 0 }, { id: 'y', x: 0, y: 0 }], PEOPLE).length, 0, 'no owner, no target');
-});
-
-test('F59 carryAt: starts on the ground at the boule, ends exactly in the hand, rises above the line in between, never below the ground', () => {
-  const from = { x: 2, y: 9 }, to = { x: 1, y: 8, z: 0.9 };
-  const a = carryAt(from, to, 0), z = carryAt(from, to, CARRY_T), over = carryAt(from, to, 99);
-  assert.ok(Math.abs(a.x - 2) < 1e-9 && Math.abs(a.z - BOULE_R) < 1e-9 && !a.done);
-  assert.ok(z.done && over.done && Math.abs(z.x - 1) < 1e-9 && Math.abs(z.y - 8) < 1e-9 && Math.abs(z.z - 0.9) < 1e-9);
-  assert.ok(carryAt(from, to, -1).z === a.z, 'before the start it waits on the ground');
-  let top = 0, prevD = 1e9;
-  for (let t = 0; t <= CARRY_T + 1e-9; t += 0.01) {
-    const p = carryAt(from, to, t), line = BOULE_R + (0.9 - BOULE_R) * (t / CARRY_T);
-    top = Math.max(top, p.z - line);
-    assert.ok(p.z >= BOULE_R - 1e-9);
-    const d = Math.hypot(p.x - to.x, p.y - to.y); assert.ok(d <= prevD + 1e-9, 'moves steadily toward the hand'); prevD = d;
-  }
-  assert.ok(top > CARRY_LIFT * 0.4, 'an arc, not a straight line');
-});
-
+// ---- F59/F60: places, the next-mene gate ----
+import { atPlaces } from '../../assets/js/petanque/crowd.js';
 test('F59 atPlaces: everybody within the tolerance of their place (Map or object); players without a place count as there', () => {
   const places = new Map([['a', { x: 0, y: 0 }], ['b', { x: 3, y: 3 }]]);
   assert.equal(atPlaces(new Map([['a', { x: 0.2, y: 0 }], ['b', { x: 3, y: 3.1 }], ['c', { x: 9, y: 9 }]]), places), true);
