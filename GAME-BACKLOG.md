@@ -818,9 +818,10 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F13 | done | haiku | — | Dead-jack void message gives the wrong reason |
 | F14 | done | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
 | F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
-| F16 | todo | sonnet | F04, F15, F17, F18 | Round 5 review |
+| F16 | todo | sonnet | F04, F15, F17, F18, F19 | Round 5 review |
 | F17 | done | haiku | — | Remove "lands at …" landing-distance text from the status line |
 | F18 | done | haiku | — | Breeze only occasionally, fading in and out |
+| F19 | in-progress | sonnet | — | Distant lake with an occasional floatplane taking off or landing |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -962,3 +963,10 @@ The F12 breeze plays continuously. Make it occasional: silence most of the time,
 
 ### F18 notes
 - Breeze runs through a gust envelope (0 between gusts): `AMBIENT.breeze` first [10,40] s, gap [30,90] s, duration [6,20] s, fadeIn [3,5] s, fadeOut [4,6] s; swells and rustles only during a gust; audition plays one gust. Not heard in a browser.
+
+### F19 Distant lake and floatplane (sonnet)
+A Lake Union touch: a lake in the distance down-court (between the field and the skyline/Rainier panorama), with an occasional floatplane.
+- **Lake:** a large flat water plane far beyond the trees (visible from the shoulder view below the skyline), with a simple animated water look (subtle moving normal or colour shimmer, sky-tinted, a faint shoreline), matched to the fog/haze. Cheap: one plane, small shader or animated texture.
+- **Floatplane:** a low-poly prop plane on floats (single high wing, white/red), about once per full game at a random time: either takes off (taxi, accelerate along the water with a small spray trail, lift off and climb away into the distance) or lands (descends from the distance, touches down with spray, slows). Small and far away but readable; propeller spin hinted.
+- **Sound:** a synthesized single-engine prop drone (a buzzing tone with harmonics and a little rasp) panning with the plane's screen position, rising and falling with distance (and higher revs during take-off), mixed under the game sounds via the ambience bus (respects the Ambience toggle, mute and pause).
+- Debug: `?debug&floatplane=takeoff|landing` to trigger it now, plus a camera framing it; audition button for the engine sound. Freeze with the pause clock; no per-frame allocation.
