@@ -818,7 +818,8 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F13 | done | haiku | — | Dead-jack void message gives the wrong reason |
 | F14 | done | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
 | F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
-| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25 | Round 5 review |
+| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25, F26 | Round 5 review |
+| F26 | todo | haiku | — | Slow mode: brisker fetch walks with natural arm swing (or folded arms) |
 | F17 | done | haiku | — | Remove "lands at …" landing-distance text from the status line |
 | F18 | done | haiku | — | Breeze only occasionally, fading in and out |
 | F19 | done | sonnet | — | Distant lake with an occasional floatplane taking off or landing |
@@ -827,7 +828,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F22 | done | sonnet | — | Mène-end card never hides the scoring circle or its labels |
 | F23 | todo | sonnet | F04, F25 | Rebalance: Pierre strong and well-rounded (prefers shooting); Medium opponents beatable |
 | F24 | done | sonnet | — | Bug: in quick mode the circle isn't placed at the start of a new mène |
-| F25 | in-progress | sonnet | — | Court shapes: broad, readable slopes (tilt, hills, ridges, basins) instead of noise |
+| F25 | in-progress (stopped partway; uncommitted work in terrain.js, constants.js, groundview.js, terrain tests) | sonnet | — | Court shapes: broad, readable slopes (tilt, hills, ridges, basins) instead of noise |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -1026,3 +1027,7 @@ The F05 slope field reads as noise. Real courts have a few broad features player
 
 ### F24 notes
 - Cause: the slow-mode carry ends with `renderer.setRingPose({...})`, which set `ringHeld = true` forever, so later `syncCourt`/`tickRing` never moved the ring (quick mode after any slow carry, or a new game). Fix: `applyCourt` releases the ring (`setRingPose(null)`) when nobody is carrying it. Court-state test added; the renderer flag itself isn't testable in Node. Not run through a real slow-then-quick session.
+
+### F26 Brisker, more natural walking (haiku)
+- **Pace:** in slow mode, walks to pick up or fetch boules (F02/F14 gathering, E02/F10 retrievals) use the same brisk pace as walking to the circle for a turn (match the walk-in speed constant), not the slower stroll.
+- **Arms:** while walking, arms either swing naturally opposite the legs (a typical walking swing, smaller when holding boules) or stay folded across the chest, chosen per personality and varied (e.g. Odette often folded, Pierre swinging); no stiff carry pose unless actually carrying the ring or a jack. Keep the hand/boule attachment and release accuracy; tests for bone lengths during the new walk arms.
