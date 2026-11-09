@@ -813,6 +813,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F42 | done | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
 | F43 | on-hold | sonnet | F44 | Timbers half buried where the ground is higher (F25 heights) |
 | F44 | in-progress | sonnet | F42 | User chose: revert F25 (terrain shapes) |
+| F46 | todo | sonnet | - | Scenery: grass edge near distant trees/skyline looks foggy; lake half the size and bluer; distant forest hilly with more mountains behind |
 | F45 | todo | sonnet | F35 | Setup dialog: choose partner from Pierre/Marcel/Odette (default Pierre); tighten the dialog's layout |
 | F41 | done | haiku | - | End-of-mène bar overlaps the bottom-right icon cluster and hides the Next button |
 | F33 | todo | sonnet | F04 | Nobody crouches for throws over 7.5 m |
@@ -1127,3 +1128,11 @@ F44 decision: the user chose to revert F25 (commit 8afab85). F43 is on hold; re-
 ### F45 Setup dialog: pick your partner, tighter layout (sonnet)
 User: in the "set up your game" dialog, let the player choose a partner from the three characters (Pierre, Marcel, Odette), default Pierre; the other two become the opponents. Keep the overall look. Tighten the dialog's visual appearance: it sprawls (spacing, row heights, option layout, width).
 Scope notes: the match setup currently hard-codes human+Pierre vs Marcel+Odette, so check every place that assumes it: `match`/`rules` team setup, `personalities.js` (per-character skill, left-handed Odette, Marcel as the tireur, difficulty effects), AI roles (`whoThrows`, pointer/shooter), partner suggestions and commentary lines (speaker names, "Pierre says"), figures/colours/team names in the HUD, scoreboard labels, mène-end text, and F27/F33 (Pierre-specific behaviour: make them apply to whichever character is the partner). Persist the choice with the other setup options. Tests: setup/rules with each partner; AI plays with any of the three as partner. Touches main.js/hud.js/css/personalities.js, so run after F35-F37 and the AI-speed fix are committed.
+
+### F46 Scenery polish (sonnet)
+User requests (four, all in `scenery.js`, `floatplane.js` for lake extents, sky panorama):
+1. The edge of the grass near the distant trees and cityscape has a foggy appearance: look at scene fog density/colour, the horizon blend between grass plane and treeline/skyline billboards, and fade layers; make the join crisp (grass meeting trees) without hard seams.
+2. The lake is too big: make it half the size (area or linear? take half the apparent area; keep it still large enough for the floatplane landing/takeoff path, and shift plane paths and lake-sound/ambience accordingly).
+3. The lake should be bluer (more saturated blue, still reflecting the sky).
+4. The distant forest should be hilly (undulating treeline silhouette, rolling ground under the trees) and there should be more mountains in the distance (additional ranges behind the existing Rainier/Space Needle panorama, layered with atmospheric haze).
+Verify with headless screenshots from the human shoulder view and a broadcast view; keep performance OK (instancing, no heavy geometry); respect `?figures`/reduced-motion rules. Avoid the court itself (no overlap with F42/F43 area). Runs in parallel with other work as it only touches scenery.js/floatplane.js/ambient.js if needed.
