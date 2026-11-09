@@ -8,6 +8,8 @@ const { sin, cos, sqrt, atan2, min, max, abs, PI } = Math;
 const BLEND = 0.25; // s, stance-to-stance blend
 const WALK_SPEED = 1.2; // m/s
 const TURN_RATE = 4; // rad/s
+const STEER_MIN_SPEED = 0.2, STEER_DEADBAND = 0.12, STEER_TURN_RATE = 3; // F53: crowd-steered heading: ignore slower steering, dead band (rad), rate limit (rad/s)
+const LOOK_DEADBAND = 0.1, LOOK_RATE = 5; // F53: head look-at: retarget only past this change (rad); the head turns at most this fast (rad/s)
 
 // ---------- small vector helpers (arrays [x, y, z]) ----------
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -949,9 +951,13 @@ export function createCharacter(THREE, spec = {}) {
       const l = twist(d, -st.yaw);
       ty = atan2(l[0], l[1]); tp = -atan2(l[2], sqrt(l[0] * l[0] + l[1] * l[1]));
     }
-    const k = 1 - Math.exp(-dt * 8);
-    st.lookSm.yaw += (ty - st.lookSm.yaw) * k;
-    st.lookSm.pitch += (tp - st.lookSm.pitch) * k;
+    // F53: hysteresis, so a look target that shivers (a turning or blocked body) does not make the head jitter
+    const lt = st.lookTgt || (st.lookTgt = { yaw: 0, pitch: 0 });
+    if (!st.look || abs(ty - lt.yaw) > LOOK_DEADBAND) lt.yaw = ty;
+    if (!st.look || abs(tp - lt.pitch) > LOOK_DEADBAND) lt.pitch = tp;
+    const k = 1 - Math.exp(-dt * 8), mx = LOOK_RATE * dt;
+    st.lookSm.yaw += Math.max(-mx, Math.min(mx, (lt.yaw - st.lookSm.yaw) * k));
+    st.lookSm.pitch += Math.max(-mx, Math.min(mx, (lt.pitch - st.lookSm.pitch) * k));
   }
 
   function endKick() { // F28
@@ -1000,11 +1006,17 @@ export function createCharacter(THREE, spec = {}) {
         // F14: a crowd-steered step ({ vx, vy } scaled 0..1 from crowd.js): head along it, never past the leg's end
         const sv = st.steer, m = sqrt(sv.vx * sv.vx + sv.vy * sv.vy);
         const lx = w.leg.x - root.position.x, ly = w.leg.y - root.position.y, left = sqrt(lx * lx + ly * ly);
-        if (m > 1e-6) w.heading = atan2(sv.vx, sv.vy);
-        const step = min(w.speed * dt * m, left);
+        // F53: the heading follows the steering only when it really moves (m >= STEER_MIN_SPEED: a blocked walker's tiny, flipping vector is
+        // ignored), only past a dead band (hysteresis: once turning it goes on until nearly aligned), and at a limited rate
+        if (m >= STEER_MIN_SPEED) {
+          const want = atan2(sv.vx, sv.vy), dd = atan2(sin(want - w.heading), cos(want - w.heading));
+          if (abs(dd) > STEER_DEADBAND) w.turning = true; else if (abs(dd) < STEER_DEADBAND * 0.35) w.turning = false;
+          if (w.turning) w.heading += Math.sign(dd) * min(abs(dd), STEER_TURN_RATE * dt);
+        }
+        const step = min(w.speed * dt * (m >= STEER_MIN_SPEED ? m : 0), left);
         const dh = atan2(sin(w.heading - st.yaw), cos(w.heading - st.yaw));
         if (abs(dh) > 1e-6) setYaw(abs(dh) <= TURN_RATE * dt ? w.heading : st.yaw + Math.sign(dh) * TURN_RATE * dt);
-        if (m > 1e-6) { root.position.x += sin(w.heading) * step; root.position.y += cos(w.heading) * step; w.phase += step / (4 * 0.18 * H * w.stride) * 2 * PI; }
+        if (step > 1e-9) { root.position.x += sin(w.heading) * step; root.position.y += cos(w.heading) * step; w.phase += step / (4 * 0.18 * H * w.stride) * 2 * PI; }
         if (left - step < 0.02) {
           root.position.x = w.leg.x; root.position.y = w.leg.y;
           if (w.via.length) nextLeg(w); else w.stage = 'turn2';

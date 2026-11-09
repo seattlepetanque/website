@@ -22,7 +22,7 @@ import { createClock } from './clock.js';
 import * as THREE from '../vendor/three.module.js';
 import { createCharacter, releaseOffset, bendReach, kickReach } from './character.js';
 import { planRoute, standPoint, pathLength } from './fetch.js';
-import { ringBlockers, ringGate, meneEndReady, steer, planGoals, BLOCK_FADE_S, KICK_TIMEOUT, KICK_STAGGER, ZONE_R, assignZones, collectOrder, kickList, kickOk, kickMove, isCrowded } from './crowd.js';
+import { ringBlockers, ringGate, meneEndReady, steer, planGoals, BLOCK_FADE_S, KICK_TIMEOUT, KICK_STAGGER, ZONE_R, assignZones, collectOrder, kickList, kickLineBlocked, kickMove, SLOT_NEAR } from './crowd.js';
 import { pickWaitingSlot, waitingSlots } from './waiting.js';
 import { attachModels } from './models.js';
 import { createGroundView } from './groundview.js';
@@ -1418,8 +1418,9 @@ function boot() {
     const g = apply(match, { type: 'nextMene' }).geometry;
     return { x: g.circle.x, y: g.circle.y };
   }
-  // The holder walks the ring to `to` and sets it down once nothing lies in it and nobody stands on it (ringGate; a click or
-  // key skips, and after RING_WAIT_MAX s it goes down anyway). The holder is free for their own boules after that.
+  // The holder walks the ring to `to` and DROPS it (F53: it never waits for people, only for a boule lying in it, which gets kicked
+  // out; a click or key skips, and after RING_WAIT_MAX s it goes down anyway). The holder is free for their own boules after that.
+  const RING_BOUNCE_T = 0.14; // s: the ring's one small bounce after it lands
   async function setRingDown(job, id, t, to) {
     const ch = cast.get(id), r = reachOf(ch);
     ringSkip = false; ringPlaced = false;
@@ -1438,7 +1439,17 @@ function boot() {
       while (!ringSkip && t === token && ringGate(ringBlockersAt(to, id), waited) === 'wait') { await sleep(200); waited += 0.2; }
       if (t !== token) { ringCarry = null; renderer.setRingPose(null); return; }
       if (ringSkip) { finish(); return; }
-      await ch.playBend({ kind: 'putdown', onAct: () => { ringCarry = null; ch.setCarrying(false); renderer.setRingPose({ x: to.x, y: to.y, z: terrain.sample(to.x, to.y).h + 0.006 }); } });
+      // F53: the ring is dropped, not set down: the hand lets go over the spot and it falls flat with a small bounce (no leaning down)
+      const h0 = ch.handWorldPosition(), z0 = Math.max(h0.z - 0.04, terrain.sample(to.x, to.y).h + 0.03);
+      ringCarry = null; ch.setCarrying(false);
+      const gz = terrain.sample(to.x, to.y).h + 0.006, fall = Math.sqrt(2 * Math.max(z0 - gz, 0.02) / 9.81);
+      for (let e = 0; e < fall + RING_BOUNCE_T && !ringSkip && t === token; e += 0.02) {
+        const hop = e < fall ? 0 : 0.025 * (1 - Math.pow(((e - fall) / RING_BOUNCE_T) * 2 - 1, 2));
+        renderer.setRingPose({ x: to.x, y: to.y, z: e < fall ? Math.max(gz, z0 - 4.905 * e * e) : gz + hop });
+        await sleep(20);
+      }
+      if (t !== token) { ringCarry = null; renderer.setRingPose(null); return; }
+      renderer.setRingPose({ x: to.x, y: to.y, z: gz });
       ringAt = { x: to.x, y: to.y }; markRingDown();
       if (ringSkip && ringCarry) finish();
     } finally { ringCarry = null; ringSkipFn = null; ringHolder = null; }
@@ -2281,7 +2292,9 @@ function boot() {
       if (!leg) { st.blocked.delete(id); continue; }
       const p = ch.root.position;
       if (Math.hypot(leg.x - p.x, leg.y - p.y) < 0.4) continue; // arriving: no steering, so the last step always lands
-      const v = steer({ x: p.x, y: p.y }, leg, all.filter((o) => o.id !== id));
+      // F53: the next jack thrower close to their circle stands their ground: others slow for them, they are not pushed sideways
+      const stand = !!st.plan && id === st.plan.thrower && Math.hypot(st.plan.to.x - p.x, st.plan.to.y - p.y) < 2.5;
+      const v = steer({ x: p.x, y: p.y }, leg, all.filter((o) => o.id !== id), { push: !stand });
       ch.setSteer(v);
       if (!st.goal.has(id)) continue;
       const bt = v.blocked ? (st.blocked.get(id) || 0) + dt : 0;
@@ -2313,10 +2326,11 @@ function boot() {
     goalWalk(st, id, () => st.tok === token && !st.skipped && !!match).catch((err) => console.error(err)); // F15: then on to the next spot
   }
   // ---- F28: kick to open space, then collect (GAME-PLAN 10c) ----
-  // Each player gets a private zone of open court (crowd.js assignZones). A boule is kicked there (a scripted slide: kickMove,
-  // exact end point, the body stays at rest in the world) only when the head is crowded for it (isCrowded: somebody within
-  // 1.5 m of it or its approach, or another player's boule against it) and the kick is safe (kickOk); every other boule is
-  // walked to and picked up in place. &f28 forces every safe kick and draws the zones.
+  // Each player gets a private zone of open court (crowd.js assignZones). F54: every boule of theirs is kicked there (a scripted
+  // ease-out slide, kickMove, ignoring the terrain and its stones) onto its exact slot of a tight equilateral triangle (crowd.js
+  // kickList: centres 9 cm apart); a boule already within SLOT_NEAR of its slot is slid there without a kick. The owner then stands
+  // at the zone and takes all the boules in ONE bend. Boules out of bounds or too far (and dead ones) are picked up where they
+  // lie, afterwards. &f28 draws the zones.
   const f28 = debug && params.has('f28');
   const kickReachOf = (ch) => { const r = kickReach(ch.height, ch.hand); return { x: r[0], y: r[1] }; };
   function clearZoneMarks(st) { for (const m of st.marks || []) { renderer.removeObject(m); m.geometry.dispose(); m.material.dispose(); } if (st.marks) st.marks.length = 0; }
@@ -2343,18 +2357,15 @@ function boot() {
   }
   // who is standing or going where, for the kick checks: every other person with their current goal
   const peopleFor = (st, id) => [...cast.keys()].filter((k) => k !== id).map((k) => { const q = cast.get(k).root.position, g = st.goal.get(k); return { x: q.x, y: q.y, gx: g ? g.x : undefined, gy: g ? g.y : undefined }; });
-  function kickWanted(st, id, b, target) {
-    const p = cast.get(id).root.position, ppl = peopleFor(st, id);
-    const others = world.bodies.filter((o) => o !== b && !o.dead && (o.kind === 'jack' || (o.kind === 'boule' && o.owner !== id)));
-    const live = world.bodies.filter((o) => o.kind === 'boule' && !o.dead);
-    return (f28 || isCrowded(b, { id, x: p.x, y: p.y }, ppl, live)) && kickOk(b, b, target, ppl, others);
-  }
+  // F54: the kick always happens; the kicker only waits a moment (up to KICK_LINE_WAIT s) while somebody stands on the slide's line
+  const KICK_LINE_WAIT = 1.5;
+  const lineBlocked = (st, id, b, target) => kickLineBlocked(b, target, peopleFor(st, id));
   function startSlide(st, id, b, target) {
     const z = st.zones[id];
-    const mv = kickMove({ x: b.x, y: b.y }, target, terrain, { zone: z ? { x: z.x, y: z.y, r: ZONE_R } : null, r: b.r });
+    const mv = kickMove({ x: b.x, y: b.y }, target, terrain, { zone: z ? { x: z.x, y: z.y, r: ZONE_R } : null, r: b.r, stones: false }); // F54: the slot is exact
     b.state = 'resting'; b.vx = b.vy = b.vz = 0;
     st.slides.push({ b, mv, t: 0, owner: id });
-    audio.playScuff(mv.T);
+    if (mv.d >= SLOT_NEAR) audio.playScuff(mv.T);
   }
   let f28Cam = 0;
   function kickTick(dt) { // each frame: boules sliding to their zones, on the game clock
@@ -2383,34 +2394,50 @@ function boot() {
       if (waited) later(() => fallbackFor(st, id), KICK_TIMEOUT * 1000);
       st.walkers.add(id);
       shadow(id, true); ch.setHolding(false); ch.setStance('watch');
-      await sleep(600 + 400 * ((id.charCodeAt(0) * 7) % 5) / 4); // locate: look round at the head (0.6 to 1.0 s)
-      // 1. kicks: only the boules that are crowded and safe to send; the player's own kicks farthest-from-the-zone first
+      await sleep(400 + 300 * ((id.charCodeAt(0) * 7) % 5) / 4); // locate: look round at the head (0.4 to 0.7 s)
+      // 1. F54: every boule is kicked to its slot of the triangle in the player's zone (a nearest-first tour); those already
+      // at their slot just slide there. The player then stands at the zone and takes the whole triangle in one bend.
       const zone = st.zones && st.zones[id];
-      let slid = 0, staggered = false;
+      const slotted = [];
+      let staggered = false;
       if (zone) {
-        for (const k of kickList(ownBoules(id), zone, inField)) {
+        const p0 = ch.root.position;
+        for (const k of kickList(ownBoules(id), zone, inField, { x: p0.x, y: p0.y }, (b) => !!ringSpot && !ringPlaced && !ringBlockers(ringSpot, [{ id: b.id, x: b.x, y: b.y, r: b.r }]).clear)) {
           if (!alive(id)) return;
           const b = k.boule;
-          if (!world.bodies.includes(b) || !kickWanted(st, id, b, k.target)) continue; // picked up in place later
-          if (!staggered) { staggered = true; await sleep(Math.max(0, st.order.indexOf(id) * KICK_STAGGER * 1000 - 800)); if (!alive(id)) return; }
+          if (!world.bodies.includes(b)) continue;
+          slotted.push(b);
+          if (!k.kick) { startSlide(st, id, b, k.target); continue; } // within SLOT_NEAR of its slot: no kick
+          if (!staggered) { staggered = true; await sleep(Math.max(0, st.order.indexOf(id) * KICK_STAGGER * 1000 - 500)); if (!alive(id)) return; }
           const dx = k.target.x - b.x, dy = k.target.y - b.y, d = Math.hypot(dx, dy) || 1;
           const sp = standPoint(b, { x: b.x - dx / d, y: b.y - dy / d }, kickReachOf(ch));
           sp.x -= dx / d * b.r; sp.y -= dy / d * b.r; // the toe meets the boule's near edge
           job.obstacles = () => obstaclesExcept(b);
           await walkVia(job, id, sp);
           if (!alive(id)) return;
-          if (!world.bodies.includes(b) || !kickWanted(st, id, b, k.target)) continue; // people moved: pick it up where it lies
+          if (!world.bodies.includes(b)) continue;
+          for (let w = 0; w < KICK_LINE_WAIT * 5 && alive(id) && lineBlocked(st, id, b, k.target); w++) await sleep(200); // somebody on the line: a moment
+          if (!alive(id)) return;
           ch.setHolding(false);
-          await ch.playKick({ onContact: () => { if (alive(id) && world.bodies.includes(b) && kickWanted(st, id, b, k.target)) { startSlide(st, id, b, k.target); slid++; } } });
+          await ch.playKick({ onContact: () => { if (alive(id) && world.bodies.includes(b)) startSlide(st, id, b, k.target); } });
         }
       }
-      // 2. to the zone, then pick up: the zone's boules first (nearest first), anything left in place after, dead ones last
-      if (slid && alive(id)) { job.obstacles = () => obstaclesExcept(null); await walkVia(job, id, { x: zone.x, y: zone.y }); }
+      // 2. to the zone's stand point (south of the triangle), wait for the last slide, and one bend takes all of them
+      if (slotted.length && alive(id)) {
+        const sp = standPoint({ x: zone.x, y: zone.y }, { x: zone.x, y: zone.y - 1 }, reachOf(ch)); // south of the triangle: every stand point is a zone spacing from the next
+        job.obstacles = () => obstaclesExcept(null);
+        await walkVia(job, id, sp);
+        for (let w = 0; w < 50 && alive(id) && st.slides.some((sl) => sl.owner === id); w++) await sleep(100); // the last boule arrives
+        if (!alive(id)) return;
+        shadow(id, true); ch.setHolding(false); ch.setStance('watch');
+        await ch.playBend({ kind: 'pickup', onAct: () => { if (alive(id)) for (const b of slotted) if (world.bodies.includes(b)) takeBoule(st, id, b); } });
+      }
+      // 3. anything that lies where it fell (dead, out of bounds, too far): one bend each, dead ones last
       while (alive(id)) {
         const p = ch.root.position, mine = ownBoules(id), moving = st.slides.some((s) => s.owner === id);
         const rest = mine.filter((b) => !st.slides.some((s) => s.b === b));
         if (!mine.length) break;
-        if (!rest.length && moving) { await sleep(100); continue; } // wait for the last boule to arrive
+        if (!rest.length && moving) { await sleep(100); continue; }
         const key = (b) => (inField(b) ? 0 : 1000) + Math.hypot(b.x - p.x, b.y - p.y) - (ringSpot && !ringPlaced && !ringBlockers(ringSpot, [{ id: b.id, x: b.x, y: b.y, r: b.r }]).clear ? 500 : 0); // F51: a boule in the ring's way goes first
         const b = rest.sort((a, c) => key(a) - key(c))[0];
         const sp = standPoint(b, { x: p.x, y: p.y }, reachOf(ch));
