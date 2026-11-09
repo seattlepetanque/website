@@ -813,6 +813,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F42 | done | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
 | F43 | on-hold | sonnet | F44 | Timbers half buried where the ground is higher (F25 heights) |
 | F44 | in-progress | sonnet | F42 | User chose: revert F25 (terrain shapes) |
+| F47 | todo | sonnet | F46 | Floatplane: after landing, turn away from the court and fade into the background (like the arrival); departures reversed; fade audio out too |
 | F46 | todo | sonnet | - | Scenery: grass edge near distant trees/skyline looks foggy; lake half the size and bluer; distant forest hilly with more mountains behind |
 | F45 | todo | sonnet | F35 | Setup dialog: choose partner from Pierre/Marcel/Odette (default Pierre); tighten the dialog's layout |
 | F41 | done | haiku | - | End-of-mène bar overlaps the bottom-right icon cluster and hides the Next button |
@@ -1136,3 +1137,6 @@ User requests (four, all in `scenery.js`, `floatplane.js` for lake extents, sky 
 3. The lake should be bluer (more saturated blue, still reflecting the sky).
 4. The distant forest should be hilly (undulating treeline silhouette, rolling ground under the trees) and there should be more mountains in the distance (additional ranges behind the existing Rainier/Space Needle panorama, layered with atmospheric haze).
 Verify with headless screenshots from the human shoulder view and a broadcast view; keep performance OK (instancing, no heavy geometry); respect `?figures`/reduced-motion rules. Avoid the court itself (no overlap with F42/F43 area). Runs in parallel with other work as it only touches scenery.js/floatplane.js/ambient.js if needed.
+
+### F47 Plane exit/entry choreography and audio fade (sonnet)
+User: after the plane lands it should turn away from the court and fade back into the background, similar to how it fades in from the sky when arriving. The reverse is true for departing planes (taxi in from the background, turn toward the court/lake, take off, climb out and fade). Also fade the audio out (and in) with distance/time: the engine is too loud for too long. Files: `floatplane.js`, `ambient.js` (engine gain envelope tied to the plane's distance/phase; shorter loud window, smooth fade to silence), keep F29 ambient/no-camera behaviour. Must be done after F46 (lake size/position changes in the same files) and keep the TEMP F29/F36 demo buttons working. Pure helper tests for the path/phase/gain envelope where possible.
