@@ -813,6 +813,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F42 | done | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
 | F43 | on-hold | sonnet | F44 | Timbers half buried where the ground is higher (F25 heights) |
 | F44 | in-progress | sonnet | F42 | User chose: revert F25 (terrain shapes) |
+| F45 | todo | sonnet | F35 | Setup dialog: choose partner from Pierre/Marcel/Odette (default Pierre); tighten the dialog's layout |
 | F41 | done | haiku | - | End-of-mène bar overlaps the bottom-right icon cluster and hides the Next button |
 | F33 | todo | sonnet | F04 | Nobody crouches for throws over 7.5 m |
 | F32 | in-progress | sonnet | — | Simplified in-game controls: always-on roll guide, icon cluster, hamburger menu, minimal pause screen |
@@ -1122,3 +1123,7 @@ User: lumber is half buried. Diagnosis (manager read of `render.js:247-275`, `ph
 User: the height map experiment is a failure. Fact check: there has always been a real height field (`terrain.js`: macro heightfield grid, `terrain.sample(x,y).h`, `heightGrid`; render mesh vertices and physics both use it). Before F25 (commit 8afab85) it was noisy fBm at about 0.5-1.5° slopes with a tiny amplitude; F25 replaced it with broad per-seed archetypes (tilt, ridge, basin, hills, saddle, combos) scaled to 1-2° gradient, which raised heights to about ±0.2 m and caused F34/F42/F43 side effects (strings, timbers buried). Ask the user what specifically failed (looks wrong, plays badly, too visible?) before changing; then either: (a) revert terrain.js/constants/groundview to pre-F25 (`git revert 8afab85` is a clean option, keep tests in step), (b) keep archetypes but bound the edge heights, or (c) a visual-only fix. F43 may become moot if (a). Hold until the user chooses.
 
 F44 decision: the user chose to revert F25 (commit 8afab85). F43 is on hold; re-check after the revert whether timbers are still buried (probably moot).
+
+### F45 Setup dialog: pick your partner, tighter layout (sonnet)
+User: in the "set up your game" dialog, let the player choose a partner from the three characters (Pierre, Marcel, Odette), default Pierre; the other two become the opponents. Keep the overall look. Tighten the dialog's visual appearance: it sprawls (spacing, row heights, option layout, width).
+Scope notes: the match setup currently hard-codes human+Pierre vs Marcel+Odette, so check every place that assumes it: `match`/`rules` team setup, `personalities.js` (per-character skill, left-handed Odette, Marcel as the tireur, difficulty effects), AI roles (`whoThrows`, pointer/shooter), partner suggestions and commentary lines (speaker names, "Pierre says"), figures/colours/team names in the HUD, scoreboard labels, mène-end text, and F27/F33 (Pierre-specific behaviour: make them apply to whichever character is the partner). Persist the choice with the other setup options. Tests: setup/rules with each partner; AI plays with any of the three as partner. Touches main.js/hud.js/css/personalities.js, so run after F35-F37 and the AI-speed fix are committed.
