@@ -809,6 +809,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F37 | todo | haiku | F32 | Random ambient planes only in slow mode (quick mode: none) |
 | F38 | todo | sonnet | F37 | While a plane is flying and the human isn't active, camera occasionally frames the plane |
 | F39 | todo | sonnet | F28 | Slow mode: camera follows the human walking to the ring |
+| F40 | todo | haiku | - | Sideline timbers have a slightly flickery shadow |
 | F33 | todo | sonnet | F04 | Nobody crouches for throws over 7.5 m |
 | F32 | in-progress | sonnet | — | Simplified in-game controls: always-on roll guide, icon cluster, hamburger menu, minimal pause screen |
 | F31 | done | haiku | — | Cap reported scores at the game target (13) |
@@ -1100,3 +1101,6 @@ While a plane is flying and it isn't the human's turn (AI throws, walks, fetchin
 
 ### F39 Camera follows the human walking to the ring (sonnet)
 In slow mode, when the human walks to the ring, the camera should follow them there, which it currently does not. Depends on F28 (main.js/crowd edits in flight).
+
+### F40 Flickery shadow on sideline timbers (haiku)
+User: the timbers along the court sidelines have a slightly flickery shadow. Likely shadow acne / z-fighting or shadow-map resolution/bias (`render.js` light shadow camera bounds, `shadow.bias`/`normalBias`, texel snapping as the camera/court moves). Reproduce in a screenshot, fix with bias/normalBias or fitting the shadow frustum, and verify it doesn't detach shadows from boules. Touches render.js only.
