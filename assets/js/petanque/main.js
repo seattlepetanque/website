@@ -1726,6 +1726,7 @@ function boot() {
     gateSince = 0;
   });
   const skipEvent = (ev) => {
+    if (holdSim && !isPaused() && (ev.type === 'pointerdown' || ev.key === 'Enter' || ev.key === ' ')) { nextMene(); return; } // F56: a click or key at the outcome view is Next
     if (isPaused()) return; // a drag to orbit the paused scene (or Esc) is not a skip
     if (planeCuts.skip()) renderer.setPlaneShot(false); // F38: a click or key returns from the plane shot
     if (placing && ev.timeStamp - placing.start > 350) skipPlacement();
@@ -2067,7 +2068,7 @@ function boot() {
   let scoringShown = false, closeCall = false;
   function endOfMene(note) {
     const r = match.result;
-    scoringShown = false; closeCall = false;
+    scoringShown = false; closeCall = false; nextStarted = false; meneEndWork = null;
     const j = jackBody();
     const jackOut = !j || j.dead;
     if (!jackOut) {
@@ -2134,10 +2135,18 @@ function boot() {
       if (win) note = `${closeCall ? 'Close call! ' : ''}${special}Closest: ${ownerName(win)} boule, ${gapText(win, j)} from the jack.`;
     }
     refreshHud(null);
-    startRingPickup(); // F07 (slow mode)
-    startJackReturn(); // F10 (slow mode): a dead jack is carried to its last in-bounds spot
-    gather(r.void ? null : r.team);
-    if (match.phase === 'meneEnd') startCollect(); // F02 (slow mode)
+    // F56: in a slow mène the outcome view and the card wait for the click (the sim clock is held); the ring, jack return, gathering and
+    // collecting then start from nextMene (startMeneEndWork). Otherwise (quick, instant, game over) they start now.
+    const hold = slow() && match.phase === 'meneEnd' && !(instant && !params.has('meneend'));
+    const winTeam = r.void ? null : r.team, workTok = token;
+    meneEndWork = () => {
+      if (workTok !== token || !match || (match.phase !== 'meneEnd' && match.phase !== 'gameOver')) return;
+      startRingPickup(); // F07 (slow mode)
+      startJackReturn(); // F10 (slow mode): a dead jack is carried to its last in-bounds spot
+      gather(winTeam);
+      if (match.phase === 'meneEnd') startCollect(); // F02 (slow mode)
+    };
+    if (!hold) startMeneEndWork();
     let text, detail = note;
     if (r.void) text = 'Void mène: no points';
     else {
@@ -2160,9 +2169,7 @@ function boot() {
       });
       return;
     }
-    const hold = slow() && match.phase === 'meneEnd' && !(instant && !params.has('meneend'));
-    hud.showMeneEnd({ text, detail: `${detail} Score: ${match.scores[0]} to ${match.scores[1]}. ${voices('meneWon', 'meneLost')}`.trim(), wait: hold });
-    if (hold) armNextHold(token);
+    hud.showMeneEnd({ text, detail: `${detail} Score: ${match.scores[0]} to ${match.scores[1]}. ${voices('meneWon', 'meneLost')}`.trim() });
     // F22: with the card up, frame the circle, badges and labels into whatever the card and the top HUD leave free
     if (scoringShown) renderer.fitScoring(() => {
       const cv = canvas.getBoundingClientRect(), rel = (r) => ({ l: r.left - cv.left, t: r.top - cv.top, r: r.right - cv.left, b: r.bottom - cv.top });
@@ -2176,28 +2183,24 @@ function boot() {
       if (card) { cr = rel(card.getBoundingClientRect()); free.b = Math.min(free.b, Math.max(free.t + 40, cr.t)); }
       return { free, card: cr };
     });
+    if (hold) holdSim = true, clock.pause(); // F56: the camera is on the outcome view and the card is up: the sim waits for the click
     if (instant && !params.has('meneend')) later(() => nextMene(), 0);
   }
 
-  // F55: the score card shows at once, but Next mène only appears once the ring is down and the collecting is over; then the sim clock
-  // pauses (no sepia, no pause card: players and fidgets stand still) until the click. A click or key skips the collecting and the ring walk as before.
-  let holdSim = false;
+  // F56: the score card and Next mène show as soon as the outcome view is up and the sim clock pauses (holdSim: no sepia, no pause card;
+  // players and fidgets stand still, the camera stays on the outcome). The click (Next, a canvas click or Enter/Space) releases the clock,
+  // starts the ring, jack return, gathering and collecting (meneEndWork), and nextMene carries on by itself once they are all done.
+  let holdSim = false, meneEndWork = null, nextStarted = false;
   function releaseHold() { if (!holdSim) return; holdSim = false; if (!isPaused()) clock.resume(); }
-  async function armNextHold(tok) {
-    try {
-      if (!ringTask && !ringPlaced) startRingPickup();
-      await Promise.allSettled([ringTask, jackTask, collect && collect.tok === tok ? collect.done : null]);
-    } catch (err) { console.error(err); }
-    if (tok !== token || !match || match.phase !== 'meneEnd' || ringBusy) return;
-    holdSim = true; clock.pause();
-    hud.revealNext();
-  }
+  function startMeneEndWork() { const w = meneEndWork; meneEndWork = null; if (w) w(); }
 
   // E10: the next mène starts from a new circle around the last jack (rules.js picks it), played the other way.
   // Slow mode: the last thrower walks the ring over first; quick mode: it fades to the new spot as the jack throw starts.
   async function nextMene() {
-    if (!match || match.phase !== 'meneEnd' || ringBusy) return;
+    if (!match || match.phase !== 'meneEnd' || ringBusy || nextStarted) return;
+    nextStarted = true;
     releaseHold();
+    startMeneEndWork();
     const next = apply(match, { type: 'nextMene' });
     const g = next.geometry, to = { x: g.circle.x, y: g.circle.y };
     const t = token;

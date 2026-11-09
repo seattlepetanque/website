@@ -340,14 +340,10 @@ export function createHud(root, hudEl, cb) {
     const c = card(info.text, 'pt-mene-end');
     if (info.detail) c.append(el('p', 'pt-blurb', info.detail));
     const next = button('Next mène', 'pt-btn pt-next', cb.onNext);
-    if (info.wait) next.hidden = true; // F55: the card is up at once, the button shows when the ring and the collecting are done (revealNext)
-    nextBtn = next;
     c.append(next);
     say(info.text + (info.detail ? (/[.!?]$/.test(info.text) ? ' ' : '. ') + info.detail : ''));
-    if (!info.wait) focusSoon(next);
+    focusSoon(next);
   }
-  let nextBtn = null;
-  function revealNext() { if (nextBtn && nextBtn.isConnected) { nextBtn.hidden = false; focusSoon(nextBtn); } }
 
   // E04: "Yellow card!" when a hand-placed cochonnet comes to rest out of bounds. info: { detail, button }
   function showYellowCard(info, onOk) {
@@ -373,5 +369,5 @@ export function createHud(root, hudEl, cb) {
     focusSoon(again);
   }
 
-  return { say, showSetup, hideOverlay, update, showChooser, setSuggestion, hideChooser, showHint, hideHint, showHolding, hideHolding, showPaused, showMeneEnd, revealNext, showYellowCard, showGameOver };
+  return { say, showSetup, hideOverlay, update, showChooser, setSuggestion, hideChooser, showHint, hideHint, showHolding, hideHolding, showPaused, showMeneEnd, showYellowCard, showGameOver };
 }
