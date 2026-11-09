@@ -119,12 +119,20 @@ function boot() {
   const camStyle = (human = false) => cameraStyle({ slow: slow(), human, override: (debug && params.get('cam')) || settings.camStyle || (debug && params.has('tvcam') ? 'tv' : null), tv: tvVar() }); // F01: settings.camStyle (hidden) or ?debug&cam=broadcast
   const observing = () => camStyle() === 'observer';
   const broadcasting = () => camStyle() === 'broadcast'; // F01
-  const observerView = (points, extra) => { if (humanWalk && !(extra && extra.follow)) humanWalk.cam = false; renderer.setCamera('observer', { points, ...extra }); };
+  const observerView = (points, extra) => { if (wideHold) return; if (humanWalk && !(extra && extra.follow)) humanWalk.cam = false; renderer.setCamera('observer', { points, ...extra }); };
   // F39: slow mode, the human walking to the circle: the observer follows them (walkSubject), per frame in followHumanWalk
   let humanWalk = null; // { id, goal, pts, cam, tok }
   const isHumanId = (id) => !!(match && match.players.find((q) => q.id === id && q.isHuman));
+  // F57: after Next the camera shows the whole court (wide shot) until the first player walks to the circle
+  let wideHold = false;
+  function wideShot() { wideHold = false; renderer.setCamera('wide'); wideHold = true; }
+  // F39/F57: any thrower (the human or an AI player) walking to the circle is followed in slow mode. A walker already followed keeps
+  // the camera (it re-aims at the newcomer smoothly, no cut).
   function startHumanWalk(id, goal) {
-    if (!slow() || !isHumanId(id)) return;
+    if (!slow()) return;
+    wideHold = false; // the first walker ends the wide shot: back to the regular camera behaviour
+    const prevW = humanWalk;
+    if (prevW && prevW.tok === token && prevW.cam && prevW.id !== id) { Object.assign(prevW, { id, goal: { x: goal.x, y: goal.y } }); return; }
     humanWalk = { id, goal: { x: goal.x, y: goal.y }, pts: walkSubject(cast.get(id).root.position, goal), cam: false, tok: token };
   }
   function followHumanWalk() {
@@ -937,7 +945,7 @@ function boot() {
   // ---- Game flow ----
   function toSetup() {
     userPaused = false;
-    token++; thinkToken++; pierreChoice = null;
+    token++; thinkToken++; pierreChoice = null; wideHold = false;
     match = null; pending = null;
     enableControls(false);
     clearWorld();
@@ -957,7 +965,7 @@ function boot() {
 
   function startGame(opts) {
     userPaused = false;
-    token++; thinkToken++; pierreChoice = null;
+    token++; thinkToken++; pierreChoice = null; wideHold = false;
     difficulty = opts.difficulty || 'medium';
     instant = !!opts.instant;
     partner = validPartner((debug && params.get('partner')) || opts.partner || settings.partner); // F45
@@ -976,6 +984,7 @@ function boot() {
   }
 
   function beginMene(first) {
+    wideHold = false; // F57
     clearWorld();
     resetCast();
     pending = null;
@@ -1472,7 +1481,7 @@ function boot() {
     const ch = cast.get(id), p = ch.root.position;
     const path = planRoute({ x: p.x, y: p.y }, to, job.obstacles ? job.obstacles() : obstaclesExcept(null), { outside });
     const last = path[path.length - 1] || { lift: 1 };
-    await ch.walkTo({ x: to.x, y: to.y, yaw: to.yaw, speed: FETCH_SPEED * hurry, lift: last.lift, via: path.slice(0, -1) });
+    await ch.walkTo({ x: to.x, y: to.y, yaw: to.yaw, free: !!to.free, speed: FETCH_SPEED * hurry, lift: last.lift, via: path.slice(0, -1) });
   }
   // The head camera follows the fetch loosely: it frames the fetcher and where they are going (never over an aim)
   function fetchCam(job, ids, spots = []) {
@@ -2201,6 +2210,7 @@ function boot() {
     nextStarted = true;
     releaseHold();
     startMeneEndWork();
+    if (slow() && observing()) wideShot(); // F57: the whole court with Rainier behind, held through the collecting
     const next = apply(match, { type: 'nextMene' });
     const g = next.geometry, to = { x: g.circle.x, y: g.circle.y };
     const t = token;
@@ -2427,13 +2437,17 @@ function boot() {
           if (!alive(id)) return;
           const b = k.boule;
           if (!world.bodies.includes(b)) continue;
-          const p0 = ch.root.position;
-          const stop = sidleStop({ x: p0.x, y: p0.y }, ch.yaw, b);
-          job.obstacles = () => obstaclesExcept(null);
-          if (stop.move) { await walkVia(job, id, { x: stop.x, y: stop.y }, false, KICKER_HURRY); if (!alive(id)) return; }
+                    job.obstacles = () => obstaclesExcept(null);
+          // F57: he moves forward, backwards or sideways as needed (free facing: strafing, backpedalling), turning only for a long move
+          for (let n = 0; n < 3 && alive(id) && world.bodies.includes(b); n++) {
+            const q = ch.root.position, stop = sidleStop({ x: q.x, y: q.y }, ch.yaw, b);
+            if (!stop.move) break;
+            await walkVia(job, id, { x: stop.x, y: stop.y, free: true }, false, KICKER_HURRY);
+          }
+          if (!alive(id)) return;
           if (!world.bodies.includes(b)) continue;
           let p = ch.root.position, r = tapReach({ x: p.x, y: p.y }, ch.yaw, b, { r: b.r });
-          if (!r.ok) { // arrived facing another way: a quick turn on the spot, then the tap
+          if (!r.ok) { // still not in reach (steered off): a quick turn on the spot as a last resort, then the tap
             await walkVia(job, id, { x: p.x, y: p.y, yaw: Math.atan2(b.x - p.x, b.y - p.y) }); if (!alive(id)) return;
             p = ch.root.position; r = tapReach({ x: p.x, y: p.y }, ch.yaw, b, { r: b.r });
           }

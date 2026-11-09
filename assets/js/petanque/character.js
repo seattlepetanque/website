@@ -11,6 +11,34 @@ const TURN_RATE = 4; // rad/s
 const STEER_MIN_SPEED = 0.2, STEER_DEADBAND = 0.12, STEER_TURN_RATE = 3; // F53: crowd-steered heading: ignore slower steering, dead band (rad), rate limit (rad/s)
 const LOOK_DEADBAND = 0.1, LOOK_RATE = 5; // F53: head look-at: retarget only past this change (rad); the head turns at most this fast (rad/s)
 
+// ---------- F57: free-facing locomotion ----------
+// A walker who is organising boules does not turn to face every step: he goes forward, backwards or sideways (strafing) as the move
+// needs, the body keeping a stable facing, and turns only when the move is long and the facing would have to change a lot.
+// move: { x, y } the wanted step direction (world); yaw: the body's facing now; prev: the last result (hysteresis: a mode is kept until
+// the heading is clearly past its limit); dist: the length of the move still to go (defaults to |move|).
+// -> { mode: 'forward' | 'backward' | 'left' | 'right', facing (the yaw to hold or turn to), turn (facing differs from yaw), heading,
+//      speedK (gait speed factor), dir (+1, or -1 when backing up), side (+1 right, -1 left, 0) }
+export const LOCO = Object.freeze({
+  fwd: 0.9, back: 2.25, // rad: forward within 52 degrees of the facing, backward beyond 129 degrees, sideways between
+  hyst: 0.22, // rad of extra room before a mode is given up (no flicker at a boundary)
+  align: 0.35, // rad: walking forward he lines the body up with the heading once it is off by more than this (and the move is not tiny)
+  longMove: 2.2, // m: beyond this a sideways or backward move turns to walk forward instead
+  tinyMove: 0.6, // m: a forward move this short never turns the body
+  speedK: Object.freeze({ forward: 1, left: 0.8, right: 0.8, backward: 0.7 }),
+});
+export function chooseLocomotion(move, yaw, prev = null, dist = null) {
+  const m = Math.hypot(move.x, move.y);
+  const wr = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+  if (m < 1e-6) { const mode = prev ? prev.mode : 'forward'; return { mode, facing: yaw, turn: false, heading: yaw, speedK: LOCO.speedK[mode], dir: mode === 'backward' ? -1 : 1, side: mode === 'left' ? -1 : mode === 'right' ? 1 : 0 }; }
+  const heading = Math.atan2(move.x, move.y), rel = wr(heading - yaw), a = Math.abs(rel), d = dist === null ? m : dist;
+  const fwdT = LOCO.fwd + (prev && prev.mode === 'forward' ? LOCO.hyst : 0), backT = LOCO.back - (prev && prev.mode === 'backward' ? LOCO.hyst : 0);
+  let mode = a <= fwdT ? 'forward' : a >= backT ? 'backward' : rel > 0 ? 'right' : 'left';
+  let facing = yaw, turn = false;
+  if (mode !== 'forward' && d > LOCO.longMove) { mode = 'forward'; facing = heading; turn = true; } // a long way: walk it facing forward
+  else if (mode === 'forward' && a > LOCO.align && d > LOCO.tinyMove) { facing = heading; turn = true; }
+  return { mode, facing, turn, heading, speedK: LOCO.speedK[mode], dir: mode === 'backward' ? -1 : 1, side: mode === 'left' ? -1 : mode === 'right' ? 1 : 0 };
+}
+
 // ---------- small vector helpers (arrays [x, y, z]) ----------
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -466,6 +494,7 @@ export const CARRY_ARM = { p: 0.55, ab: 0.2, p2: 1.45, ab2: 0.15 };
 export function walkPose(phase, opts = {}) {
   const p = basePose(), k = opts.stride || 1, A = 0.18 * k, s = sin(phase), c = cos(phase), lift = opts.lift || 1;
   p.footL.y = A * s; p.footR.y = -A * s;
+  if (opts.side) { p.footL.y *= 0.15; p.footR.y *= 0.15; p.footL.x += opts.side * A * s; p.footR.x -= opts.side * A * s; } // F57: strafing: the feet swing sideways
   p.footL.z = 0.035 * lift * max(0, c); p.footR.z = 0.035 * lift * max(0, -c);
   p.pz = 0.505 - 0.012 * abs(c); p.px = 0.012 * s; p.twist = 0.1 * s; p.spine = -0.1 * s * 0.6 + 0.04;
   walkArms(p, s, opts);
@@ -902,7 +931,7 @@ export function createCharacter(THREE, spec = {}) {
     if (st.mode === 'walk') { // the hands holding boules are named in right/left terms (the walk is authored for a right-hander)
       const w = st.walk, dom = !!held && held.dominant > 0, oth = !!held && held.other > 0;
       const holds = hand === 'left' ? { R: oth, L: dom } : { R: dom, L: oth };
-      return sw(walkPose(w.phase, { lift: w.lift, carry: st.carry, stride: w.stride, arms: w.style.arms, amp: w.style.amp, held: holds }));
+      return sw(walkPose(w.phase, { lift: w.lift, carry: st.carry, stride: w.stride, arms: w.style.arms, amp: w.style.amp, held: holds, side: w.side || 0 }));
     }
     if (st.mode === 'bend') {
       const b = st.bending;
@@ -1047,6 +1076,31 @@ export function createCharacter(THREE, spec = {}) {
           setYaw(goal);
           if (w.stage === 'turn1') { if (w.dist > 0.02) w.stage = 'go'; else if (w.via.length) nextLeg(w); else w.stage = 'turn2'; } else w.stage = 'done';
         } else setYaw(st.yaw + Math.sign(dy) * step);
+      } else if (w.stage === 'go' && w.free && w.lift <= 1) {
+        // F57: free facing: move toward the leg's end (or along the crowd steering), the body keeping its facing (strafe or backpedal),
+        // turning only when chooseLocomotion says the change is large; the heading smoothing and hysteresis of F53 still apply
+        const sv = st.steer, m = sv ? sqrt(sv.vx * sv.vx + sv.vy * sv.vy) : 1;
+        const lx = w.leg.x - root.position.x, ly = w.leg.y - root.position.y, left = sqrt(lx * lx + ly * ly);
+        let rest = left; { let px = w.leg.x, py = w.leg.y; for (const v of w.via) { rest += sqrt((v.x - px) ** 2 + (v.y - py) ** 2); px = v.x; py = v.y; } }
+        if (sv) {
+          if (m >= STEER_MIN_SPEED) {
+            const want = atan2(sv.vx, sv.vy), dd = atan2(sin(want - w.heading), cos(want - w.heading));
+            if (abs(dd) > STEER_DEADBAND) w.turning = true; else if (abs(dd) < STEER_DEADBAND * 0.35) w.turning = false;
+            if (w.turning) w.heading += Math.sign(dd) * min(abs(dd), STEER_TURN_RATE * dt);
+          }
+        } else if (left > 1e-6) w.heading = atan2(lx, ly);
+        const moving = !sv || m >= STEER_MIN_SPEED;
+        const lo = chooseLocomotion({ x: sin(w.heading), y: cos(w.heading) }, st.yaw, w.loco, rest);
+        w.loco = lo; w.side = lo.side;
+        const dh = atan2(sin(lo.facing - st.yaw), cos(lo.facing - st.yaw));
+        if (lo.turn && abs(dh) > 1e-6) setYaw(abs(dh) <= TURN_RATE * dt ? lo.facing : st.yaw + Math.sign(dh) * TURN_RATE * dt);
+        if (w.keepYaw) w.target.yaw = st.yaw;
+        const step = min(w.speed * lo.speedK * dt * (moving ? (sv ? m : 1) : 0), left);
+        if (step > 1e-9) { root.position.x += sin(w.heading) * step; root.position.y += cos(w.heading) * step; w.phase += lo.dir * step / (4 * 0.18 * H * w.stride) * 2 * PI; }
+        if (left - step < 0.02) {
+          root.position.x = w.leg.x; root.position.y = w.leg.y;
+          if (w.via.length) nextLeg(w); else w.stage = 'turn2';
+        }
       } else if (w.stage === 'go' && st.steer && w.lift <= 1) {
         // F14: a crowd-steered step ({ vx, vy } scaled 0..1 from crowd.js): head along it, never past the leg's end
         const sv = st.steer, m = sqrt(sv.vx * sv.vx + sv.vy * sv.vy);
@@ -1259,14 +1313,14 @@ export function createCharacter(THREE, spec = {}) {
       const first = via.length ? via.shift() : target;
       const dx = first.x - root.position.x, dy = first.y - root.position.y;
       const dist = sqrt(dx * dx + dy * dy);
-      const heading = dist > 0.02 ? atan2(dx, dy) : st.yaw;
+      const heading = dist > 0.02 && !target.free ? atan2(dx, dy) : st.yaw;
       const fx = target.x - (via.length ? via[via.length - 1].x : first.x), fy = target.y - (via.length ? via[via.length - 1].y : first.y);
-      const ty = target.yaw === undefined ? (via.length || first !== target ? atan2(fx, fy) : heading) : target.yaw;
+      const ty = target.yaw === undefined && target.free ? st.yaw : target.yaw === undefined ? (via.length || first !== target ? atan2(fx, fy) : heading) : target.yaw;
       if (first !== target) via.push({ x: target.x, y: target.y, lift: target.lift });
       const speed = target.speed || WALK_SPEED;
       st.walk = {
         target: { x: target.x, y: target.y, yaw: ty }, leg: { x: first.x, y: first.y }, via, dist, moved: 0, heading, phase: 0, stage: 'turn1',
-        resolve, speed, lift: first.lift || target.lift || 1,
+        resolve, speed, lift: first.lift || target.lift || 1, free: !!target.free, keepYaw: !!target.free && target.yaw === undefined, loco: null, side: 0,
         stride: walkStride(speed), style: walkStyle(String(spec.personality || spec.name || '').toLowerCase(), quirkOffset, walks++),
       };
       switchMode('walk');

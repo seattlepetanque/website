@@ -493,3 +493,69 @@ test('F55 collectPlan: every boule gets its owner\'s slot; the tour is a nearest
   const urgent = collectPlan(live, zones, () => true, from, (b) => b.id === 'b7');
   assert.equal(urgent.tour[0].boule.id === 'b7' || !urgent.tour.some((k) => k.boule.id === 'b7'), true, 'a boule in the ring\'s way goes first');
 });
+
+// ---- F57: free-facing locomotion ----
+import { chooseLocomotion, LOCO } from '../../assets/js/petanque/character.js';
+test('F57 chooseLocomotion: forward, backward and sideways by the angle to the facing, no turn for short moves', () => {
+  const at = (deg, d = 1) => chooseLocomotion({ x: Math.sin(deg * Math.PI / 180) * d, y: Math.cos(deg * Math.PI / 180) * d }, 0, null, d);
+  assert.equal(at(0).mode, 'forward'); assert.equal(at(0).turn, false);
+  assert.equal(at(90).mode, 'right'); assert.equal(at(90).side, 1); assert.equal(at(90).turn, false); assert.equal(at(90).facing, 0);
+  assert.equal(at(-90).mode, 'left'); assert.equal(at(-90).side, -1);
+  assert.equal(at(180).mode, 'backward'); assert.equal(at(180).dir, -1); assert.equal(at(180).turn, false);
+  assert.equal(at(150).mode, 'backward');
+  assert.ok(at(90).speedK < 1 && at(180).speedK < at(90).speedK);
+});
+test('F57 chooseLocomotion: a long move turns to walk forward; a small heading error does not turn him', () => {
+  const far = chooseLocomotion({ x: 0, y: -4 }, 0, null, 4);
+  assert.equal(far.mode, 'forward'); assert.equal(far.turn, true); assert.ok(Math.abs(Math.abs(far.facing) - Math.PI) < 1e-9);
+  const side = chooseLocomotion({ x: 4, y: 0 }, 0, null, 4);
+  assert.equal(side.turn, true); assert.ok(Math.abs(side.facing - Math.PI / 2) < 1e-9);
+  assert.equal(chooseLocomotion({ x: Math.sin(0.2), y: Math.cos(0.2) }, 0, null, 3).turn, false);
+  assert.equal(chooseLocomotion({ x: Math.sin(0.5), y: Math.cos(0.5) }, 0, null, 0.4).turn, false, 'tiny moves never turn');
+});
+test('F57 chooseLocomotion: hysteresis at the mode boundaries (no flicker) and zero vector keeps the mode', () => {
+  const ang = (a, prev) => chooseLocomotion({ x: Math.sin(a), y: Math.cos(a) }, 0, prev, 1);
+  const edge = LOCO.fwd + 0.05;
+  assert.equal(ang(edge, null).mode, 'right');
+  assert.equal(ang(edge, { mode: 'forward' }).mode, 'forward', 'forward is kept just past its limit');
+  assert.equal(ang(LOCO.back - 0.05, null).mode, 'right');
+  assert.equal(ang(LOCO.back - 0.05, { mode: 'backward' }).mode, 'backward');
+  assert.equal(chooseLocomotion({ x: 0, y: 0 }, 1, { mode: 'left' }).mode, 'left');
+  let prev = null, flips = 0, last = null;
+  for (let i = 0; i < 200; i++) { prev = ang(LOCO.fwd + Math.sin(i) * 0.1, prev); if (last && prev.mode !== last) flips++; last = prev.mode; }
+  assert.ok(flips <= 2, `a jittery vector near a boundary flips the mode only ${flips} times`);
+});
+test('F57 sidleStop: the kicker keeps his facing on short moves (no circling) and still ends in reach, 300 cases', () => {
+  const r = mulberry32(57);
+  let shortMoves = 0, turns = 0;
+  for (let i = 0; i < 300; i++) {
+    const pos = { x: r() * 3, y: r() * 3 }, yaw = r() * 6.283, b = { x: pos.x + (r() - 0.5) * 2.4, y: pos.y + (r() - 0.5) * 2.4 };
+    if (Math.hypot(pos.x - b.x, pos.y - b.y) < 0.06) continue;
+    const s = sidleStop(pos, yaw, b);
+    if (!s.move) continue;
+    assert.ok(tapReach({ x: s.x, y: s.y }, s.yaw, b).ok);
+    const walk = Math.hypot(s.x - pos.x, s.y - pos.y);
+    if (walk <= LOCO.longMove) { shortMoves++; if (s.turn) turns++; }
+    if (walk <= 0.9) assert.ok(!s.turn || Math.abs(Math.atan2(Math.sin(s.yaw - yaw), Math.cos(s.yaw - yaw))) < 1.7);
+    if (walk > LOCO.longMove) assert.equal(s.mode, 'forward');
+  }
+  assert.ok(shortMoves > 100 && turns / shortMoves < 0.6, `${turns}/${shortMoves} short moves turned`);
+});
+test('F57 simulation: the kicker turns little (no circling) over a whole collection', () => {
+  const med = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+  const totals = [];
+  for (let s = 1; s <= 6; s++) {
+    const L = layout(s, { tight: s > 3, real: true });
+    const c = createCollect(L.pl, L.boules, { head: L.head, plan: L.plan, dims: DIMS, terrain: flat });
+    const k = c.agents.find((a) => a.id === c.kicker);
+    let tot = 0, prev = k.yaw;
+    for (let i = 0; i < 60 * 60 && !c.finished; i++) {
+      c.step(1 / 60);
+      if (k.phase === 'sidle' || k.phase === 'tap') { tot += Math.abs(Math.atan2(Math.sin(k.yaw - prev), Math.cos(k.yaw - prev))); }
+      prev = k.yaw;
+    }
+    assert.ok(c.finished);
+    totals.push(tot);
+  }
+  assert.ok(med(totals) < 4 * Math.PI, `total kicker turning while tapping ${totals.map((t) => t.toFixed(1))}`);
+});

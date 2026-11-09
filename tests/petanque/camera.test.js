@@ -431,3 +431,26 @@ test('F39: the observer follows a walker smoothly (no jumps) toward the circle',
   assert.ok(maxStep < OBS.dolly.max / 60 + 1e-6, 'camera moves at most walking pace: ' + maxStep);
   assert.ok(Math.abs(f.center.y - 20) < 3, 'ends framing the circle area');
 });
+
+// ---- F57: the wide court shot ----
+import { frameCourtWide, viewPoint, WIDE } from '../../assets/js/petanque/camera.js';
+import { C as CC } from '../../assets/js/petanque/constants.js';
+for (const [name, aspect, fov] of [['landscape', 1.78, 50], ['square', 1, 50], ['portrait', 0.5, 62]]) {
+  test(`F57 wide shot (${name}): the whole court is in frame and Rainier is above the horizon line in view`, () => {
+    const f = frameCourtWide({ width: CC.terrainW, length: CC.terrainL, aspect, fov });
+    assert.ok(f.pos.y < 0 && f.pos.z > 1.5, 'behind the near end and raised');
+    for (const [x, y] of [[0, 0], [CC.terrainW, 0], [0, CC.terrainL], [CC.terrainW, CC.terrainL]]) {
+      const v = viewPoint({ x, y, z: 0 }, f, { aspect, fov });
+      assert.ok(v && Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1, `corner ${x},${y} in frame ${JSON.stringify(v)}`);
+    }
+    assert.ok(f.topEl > WIDE.rainierEl + 1, 'the 9 degree summit is inside the top of the picture');
+    const horizon = viewPoint({ x: f.pos.x, y: f.pos.y + 1e5, z: f.pos.z }, f, { aspect, fov });
+    assert.ok(horizon.y > -1 && horizon.y < 1, 'the horizon is in view');
+    const summit = viewPoint({ x: f.pos.x, y: f.pos.y + 1e5, z: f.pos.z + 1e5 * Math.tan(WIDE.rainierEl * Math.PI / 180) }, f, { aspect, fov });
+    assert.ok(summit.y < 1 && summit.y > horizon.y, 'Rainier summit visible above the horizon');
+  });
+}
+test('F57 wide shot follows the ground height', () => {
+  const f = frameCourtWide({ aspect: 1.5, fov: 50, groundAt: () => 2 });
+  assert.ok(f.pos.z > 2 + 1.5);
+});

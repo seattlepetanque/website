@@ -7,7 +7,7 @@ import { court } from './court.js';
 import { JACK_END_MARGIN } from './rules.js';
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
-import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, framePlane } from './camera.js';
+import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, framePlane, frameCourtWide } from './camera.js';
 import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeSkyPanorama, makeLake, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 import { createFloatplane } from './floatplane.js'; // F19
 
@@ -1340,6 +1340,10 @@ export function createRenderer(canvas, terrain) {
       if (opts.target) pts = pts.concat([opts.target]);
       const f = frameObserver(pts, { aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50, dt, reduced: reduce(), groundAt: (x, y) => terrain.sample(x, y).h, dir: court.dir }, obsFrame);
       obsFrame = f;
+      goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
+      goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
+    } else if (mode === 'wide') { // F57: the whole court from behind the near end, Rainier in the background
+      const f = frameCourtWide({ width: C.terrainW, length: C.terrainL, aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50, groundAt: (x, y) => terrain.sample(x, y).h });
       goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
       goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
     } else if (mode === 'plane') { // F38: a spectator's view of the floatplane

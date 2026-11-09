@@ -262,6 +262,42 @@ export function frameObserver(subject, opts, prev) {
   return { pos, tgt, yaw, pitch, fovK, side, dollyGoal, center: c, v: { y: vy, yaw: vyaw, p: vp, z: vz }, active: true };
 }
 
+// ---- F57: the wide court shot after Next ----
+// A spectator behind the near end, raised, looking down the court (+y) so the whole court is in the picture and Mount Rainier
+// (scenery.js paints it at about 9 degrees of elevation straight down-court) stands in the top of the frame. Pure.
+export const WIDE = Object.freeze({
+  rainierEl: 9, skyMargin: 3, // degrees: the painted summit and the gap kept above it
+  edge: 3.5, // degrees of slack between the near end and the bottom of the picture
+  side: 0.4, // m of slack either side of the court
+  minBack: 3, maxBack: 60, step: 0.25, // m behind the near end
+});
+
+// opts: { width, length, aspect, fov (vertical degrees), groundAt }. Returns { pos, tgt, yaw: 0, pitch (rad, looking down), back, height, topEl }:
+// topEl is the elevation (degrees) of the top edge of the picture, always above rainierEl.
+export function frameCourtWide(opts = {}) {
+  const W = opts.width || C.terrainW, L = opts.length || C.terrainL, groundAt = opts.groundAt || (() => 0);
+  const aspect = opts.aspect || 1.5, vf = (opts.fov || 50) * Math.PI / 180, deg = Math.PI / 180;
+  const vHalf = vf / 2, hHalf = Math.atan(Math.tan(vHalf) * aspect);
+  const pitch = clamp(vHalf - (WIDE.rainierEl + WIDE.skyMargin) * deg, 0.05, 0.6);
+  const aNear = pitch + vHalf - WIDE.edge * deg; // the near end's depression below the horizon
+  let back = WIDE.minBack;
+  while (back < WIDE.maxBack && Math.atan((W / 2 + WIDE.side) / back) > hHalf * 0.92) back += WIDE.step;
+  const x = W / 2, y = -back, h = back * Math.tan(aNear);
+  const pos = { x, y, z: groundAt(x, y) + h };
+  const tgt = { x, y: y + Math.cos(pitch) * 40, z: pos.z - Math.sin(pitch) * 40 };
+  return { pos, tgt, yaw: 0, pitch, back, height: h, topEl: (vHalf - pitch) / deg };
+}
+
+// Where a world point lands in that picture: { x, y } in [-1, 1] when inside (y up), or null when behind the camera.
+export function viewPoint(p, frame, { aspect = 1.5, fov = 50 } = {}) {
+  const dx = p.x - frame.pos.x, dy = p.y - frame.pos.y, dz = (p.z || 0) - frame.pos.z;
+  const cp = Math.cos(frame.pitch), sp = Math.sin(frame.pitch);
+  const fwd = dy * cp - dz * sp, up = dy * sp + dz * cp; // yaw 0: forward is +y, tilted down by pitch
+  if (fwd <= 0) return null;
+  const t = Math.tan(fov * Math.PI / 360);
+  return { x: dx / fwd / (t * aspect), y: up / fwd / t };
+}
+
 // ---- F38: the occasional plane shot ----
 // While a floatplane flies and the human is not busy, the camera cuts (render.js, mode 'plane') to a spectator beside the court
 // looking down the lake at the plane, then goes back to whatever it was doing. The spectator stands on the side away from the

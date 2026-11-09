@@ -6,6 +6,7 @@
 // and mirroring what main.js drives through the animated characters.
 
 import { waitingSlots } from './waiting.js';
+import { chooseLocomotion } from './character.js';
 
 export const SEP_R = 0.8; // m: others closer than this push a walker sideways
 export const MIN_GAP = 0.5; // m: walkers try never to come closer than this
@@ -397,29 +398,31 @@ export function tapReach(pos, yaw, boule, { reach = TAP_REACH, r = BOULE_R } = {
   return { ok: d <= reach + 1e-9 && fwd >= 0.05, leg: side >= 0 ? 'right' : 'left', x: side * k, y: fwd * k, d };
 }
 
-// The sidle: where the kicker steps to next to reach `boule`. Already in reach: stays. Otherwise to a point TAP_STAND from the boule,
-// off to one side (50 degrees round from the way he came, the nearer side), so he arrives travelling past the boule and taps it with
-// the leg on its side rather than squaring up to it; straight at it when that side point would still leave it out of reach.
-// -> { x, y, move, yaw } (yaw: his heading on arrival, the direction of the step; his own yaw when he stays; turn: true when he only
-// turns in place to the boule, which is close but behind him)
-export function sidleStop(pos, yaw, boule, { reach = TAP_REACH, stand = TAP_STAND } = {}) {
-  if (tapReach(pos, yaw, boule, { reach }).ok) return { x: pos.x, y: pos.y, move: false, yaw };
-  const dx = pos.x - boule.x, dy = pos.y - boule.y, d = Math.hypot(dx, dy);
-  if (d <= reach) return { x: pos.x, y: pos.y, move: false, turn: true, yaw: Math.atan2(-dx, -dy) }; // close but behind him: a turn in place, no step
-  const ux = d > 1e-6 ? dx / d : -Math.sin(yaw), uy = d > 1e-6 ? dy / d : -Math.cos(yaw);
-  const cands = [];
-  for (const sg of [1, -1]) {
-    const c = Math.cos(sg * SIDLE_ANGLE), n = Math.sin(sg * SIDLE_ANGLE);
-    cands.push({ x: boule.x + stand * (ux * c - uy * n), y: boule.y + stand * (ux * n + uy * c) });
+// The sidle (F57): where the kicker moves to so that `boule` is within leg reach, WITHOUT turning to it. His body keeps its facing `yaw`:
+// the stop is a point beside the boule and a little ahead of him (TAP_SIDE to one side, TAP_AHEAD in front of the boule), on whichever side
+// is nearer, or just behind it, so he arrives by a short step forward, backwards or sideways (chooseLocomotion in character.js picks the
+// gait from the move vector) and the leg on the boule's side taps it. Only a long move (more than LOCO.longMove) turns him, to walk it
+// facing forward; the stop is then recomputed for the new facing. Already in reach: stays.
+// -> { x, y, move, yaw (his facing on arrival), mode ('forward' | 'backward' | 'left' | 'right'), turn (his facing changes) }
+export const TAP_SIDE = 0.3, TAP_AHEAD = 0.15; // m: the stop point relative to the boule, in the kicker's own frame (side, ahead of the boule)
+function sidleCands(pos, yaw, boule, reach) {
+  const sy = Math.sin(yaw), cy = Math.cos(yaw), out = [];
+  for (const [sd, ah] of [[TAP_SIDE, TAP_AHEAD], [-TAP_SIDE, TAP_AHEAD], [0, 0.4], [TAP_SIDE, 0.25], [-TAP_SIDE, 0.25]]) {
+    // the kicker's frame: right = (cos yaw, -sin yaw), forward = (sin yaw, cos yaw); he stands `sd` right of the boule and `ah` behind-it-ahead
+    const q = { x: boule.x - sd * cy - ah * sy, y: boule.y + sd * sy - ah * cy };
+    if (tapReach(q, yaw, boule, { reach }).ok) out.push({ ...q, walk: Math.hypot(q.x - pos.x, q.y - pos.y) });
   }
-  cands.push({ x: boule.x + stand * ux, y: boule.y + stand * uy });
-  const opts = cands.map((q) => {
-    const h = Math.hypot(q.x - pos.x, q.y - pos.y) > 1e-6 ? Math.atan2(q.x - pos.x, q.y - pos.y) : yaw;
-    return { ...q, move: true, yaw: h, walk: Math.hypot(q.x - pos.x, q.y - pos.y) };
-  }).filter((q) => tapReach(q, q.yaw, boule, { reach }).ok);
-  opts.sort((p, q) => p.walk - q.walk);
-  const best = opts[0] || { ...cands[2], move: true, yaw: Math.atan2(cands[2].x - pos.x, cands[2].y - pos.y) };
-  return { x: best.x, y: best.y, move: true, yaw: best.yaw };
+  return out.sort((p, q) => p.walk - q.walk);
+}
+export function sidleStop(pos, yaw, boule, { reach = TAP_REACH, prev = null } = {}) {
+  if (tapReach(pos, yaw, boule, { reach }).ok) return { x: pos.x, y: pos.y, move: false, yaw, mode: prev ? prev.mode : 'forward', turn: false };
+  let face = yaw, best = sidleCands(pos, face, boule, reach)[0], lo = null;
+  for (let pass = 0; pass < 2; pass++) {
+    lo = chooseLocomotion({ x: best.x - pos.x, y: best.y - pos.y }, face, prev, Math.hypot(best.x - pos.x, best.y - pos.y));
+    if (!lo.turn) break;
+    face = lo.facing; best = sidleCands(pos, face, boule, reach)[0]; // turning anyway: arrive facing the way of the walk, the boule beside him
+  }
+  return { x: best.x, y: best.y, move: true, yaw: face, mode: lo.mode, turn: face !== yaw };
 }
 
 // The whole plan: every in-field live boule within SLOT_MAX of its owner's zone (zones: { [ownerId]: { x, y } | null }) gets its slot
@@ -490,10 +493,11 @@ export function createCollect(agents, boules, { head, plan = null, dims, scoredT
     const pos = A.map((o) => ({ x: o.x, y: o.y })), i = A.indexOf(a);
     const l = Math.hypot(to.x - a.x, to.y - a.y);
     let v = { blocked: false };
-    if (l < 0.4) { const d = Math.min(speed * dt, l); a.yaw = Math.atan2(to.x - a.x, to.y - a.y); a.x += (to.x - a.x) / l * d; a.y += (to.y - a.y) / l * d; return v; } // arriving: no steering (as main.js crowdTick), so the last step lands
+    const free = a.phase === 'sidle'; // F57: the kicker keeps his facing (strafes, backs up); a.yaw changes only when a.stop.turn
+    if (l < 0.4) { const d = Math.min(speed * dt, l); if (!free) a.yaw = Math.atan2(to.x - a.x, to.y - a.y); a.x += (to.x - a.x) / l * d; a.y += (to.y - a.y) / l * d; return v; } // arriving: no steering (as main.js crowdTick), so the last step lands
     v = steer(pos[i], to, pos.filter((_, j) => j !== i));
     const m = Math.hypot(v.vx, v.vy);
-    if (m > 0) { const d = Math.min(speed * dt * m, l); a.x += v.vx / m * d; a.y += v.vy / m * d; a.yaw = Math.atan2(v.vx, v.vy); }
+    if (m > 0) { const d = Math.min(speed * dt * m, l); a.x += v.vx / m * d; a.y += v.vy / m * d; a.yaw = free ? a.yaw : Math.atan2(v.vx, v.vy); }
     return v;
   }
   const arrived = (a, to) => Math.hypot(to.x - a.x, to.y - a.y) < 0.05;
@@ -525,9 +529,9 @@ export function createCollect(agents, boules, { head, plan = null, dims, scoredT
         a.stop = st;
         if (!st.move || arrived(a, st)) {
           a.phase = 'tap'; a.timer = 0; a.fired = false; a.cur = k;
-          if (!tapReach(a, a.yaw, k.boule).ok) { a.yaw = Math.atan2(k.boule.x - a.x, k.boule.y - a.y); a.timer = -TURN_T; } // arrived facing the wrong way (steering): a quick turn first
+          if (!tapReach(a, a.yaw, k.boule).ok) { a.phase = 'sidle'; continue; } // steering left him short: another small step (no turning)
         }
-        else walk(a, st, dt);
+        else { if (st.turn) a.yaw = st.yaw; walk(a, st, dt); }
       } else if (a.phase === 'tap') {
         a.timer += dt;
         const k = a.cur;
