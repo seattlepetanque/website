@@ -803,6 +803,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 
 | ID | Status | Model | Deps | Title |
 |---|---|---|---|---|
+| F33 | todo | sonnet | F04 | Nobody crouches for throws over 7.5 m |
 | F32 | in-progress | sonnet | — | Simplified in-game controls: always-on roll guide, icon cluster, hamburger menu, minimal pause screen |
 | F31 | done | haiku | — | Cap reported scores at the game target (13) |
 | F30 | done | haiku | F29 | Landing button: plane lands in the background, no camera change |
@@ -822,7 +823,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F13 | done | haiku | — | Dead-jack void message gives the wrong reason |
 | F14 | done | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
 | F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
-| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25, F26, F27, F28, F31, F32 | Round 5 review |
+| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25, F26, F27, F28, F31, F32, F33 | Round 5 review |
 | F26 | done | haiku | — | Slow mode: brisker fetch walks with natural arm swing (or folded arms) |
 | F27 | todo | sonnet | F04 | Pierre does what he said he'd do |
 | F28 | in-progress (step 2) | sonnet | F26 | Better end-of-mène boule collection: design done (GAME-PLAN §10c, decisions recorded); implementing |
@@ -1072,3 +1073,6 @@ If a team ever ends a mène with more points than needed (e.g. 12 + 3 = 15), the
 - **Hamburger menu:** every other in-game option button (Adjust view, Read the ground, Mode: Slow/Quick, View, Ambience, the temporary ✈ Landing button, and anything else in the controls bar) moves into a single hamburger button's submenu (a small dropdown or panel; keyboard accessible: Enter/Space opens, Esc closes, arrow keys move, focus returns to the button; closes on outside click; aria-expanded/haspopup; toggle items show their on/off state). Keep it in the top-right where the controls bar is now (or beside the icon cluster, whichever is tidier), so the scoreboard stays clean. Items that only apply on the human's turn (Adjust view, Read the ground, View) are shown disabled or hidden otherwise.
 - **Pause mode:** the paused state shows only three buttons: **Resume**, **New game** (back to setup / restart) and **End game** (leave the full-window view to the normal page, as the old Exit did). The in-game option buttons (hamburger, icon cluster) and the status/commentary strip and turn banner are hidden while paused (the sepia scene and free orbit stay). The existing paused bar on the page stays consistent with this (same three actions).
 - Update README controls text and the first-time hint if they mention the old buttons. Check at 1200×800, 500×900 and 844×390 with screenshots (menu closed, menu open, paused).
+
+### F33 Nobody crouches for throws over 7.5 m (sonnet)
+Real players stand for long throws. When the throw distance (circle centre to the planned landing spot or, before the plan exists, to the target: the jack for a boule, the intended spot for a jack throw) is over 7.5 m, every player uses the standing stance, overriding E07's per-throw choice (Pierre's 50/50) and Marcel's crouch preference; at 7.5 m or less the personalities' stances apply as now (the human always stands). The stance affects the release point (`from`), so decide it before the AI plans: compute the distance from the target first (the donnée distance is within about a metre of it), choose the stance, then plan with that stance's `from` and re-check after planning (if the planned donnée crosses 7.5 m the other way, re-plan once with the corrected stance). Apply to the preview, AI plan, throw animation and launch consistently, and to Pierre's advice planning. Files: main.js `stanceOf`/`enterCircle`, a pure helper in personalities.js (`stanceFor(spec, distance, rand)`, not touching F04's line pools) with tests: distance > 7.5 m → stand for everyone, ≤ 7.5 m → the personality's stance, stance fixed once per throw.
