@@ -813,6 +813,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F42 | done | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
 | F43 | on-hold | sonnet | F44 | Timbers half buried where the ground is higher (F25 heights) |
 | F44 | in-progress | sonnet | F42 | User chose: revert F25 (terrain shapes) |
+| F50 | in-progress | sonnet | F46 | Distant mountains smaller and rocky, no snow (Rainier unchanged) |
 | F49 | todo | sonnet | F04 | Medium AI decision slow again after F04 (345 ms quiet vs 100 ms test); time-boxed profiling and fix |
 | F48 | todo | sonnet | F35, F45 | Move Adjust view / Read the ground / View(head) out of the hamburger into translucent hold-to-use icons; pan clamped to allowed region |
 | F47 | todo | sonnet | F46 | Floatplane: after landing, turn away from the court and fade into the background (like the arrival); departures reversed; fade audio out too |
@@ -1155,3 +1156,6 @@ Details: pointer events (pointerdown/up/cancel/leave, touch-friendly, no context
 
 ### F47 addendum (takeoff route)
 User: the plane appears out of nowhere for the takeoff. It should be normally visible (opaque, sitting on the water) at the far side of the lake, then its route comes towards the court, lifts off, veers off to the side and flies away into the distance while in the air. Sent to the F47 agent as part of its work.
+
+### F50 Distant mountains rocky, smaller, no snow (sonnet)
+User: the distant mountains (the three layered ranges added in F46 in `scenery.js`) should be smaller and rocky (craggy grey-brown/blue-grey rock with haze), not snow-capped. Mount Rainier stays exactly as is (snow included). Reduce the ranges' height; remove snow dusting from them; add rocky texture/ridge detail in the painted textures. Scenery.js only.
