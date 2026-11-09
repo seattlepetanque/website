@@ -813,8 +813,8 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F42 | done | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
 | F43 | moot | sonnet | F44 | Timbers half buried where the ground is higher (F25 heights) |
 | F44 | in-progress | sonnet | F42 | User chose: revert F25 (terrain shapes) |
-| F52 | todo | sonnet | - | Court gravel colour: 50/50 grey gravel (hint of blue) or sandy (current); jack stays orange on grey, bright red on sandy |
-| F51 | todo | sonnet | F45 | End of mène: ring move and boule collection run at the same time (no waiting for the ring) |
+| F52 | in-progress | sonnet | - | Court gravel colour: 50/50 grey gravel (hint of blue) or sandy (current); jack stays orange on grey, bright red on sandy |
+| F51 | in-progress | sonnet | F45 | End of mène: ring move and boule collection run at the same time (no waiting for the ring) |
 | F50 | done | sonnet | F46 | Distant mountains smaller and rocky, no snow (Rainier unchanged) |
 | F49 | closed | sonnet | F04 | Medium AI decision slow again after F04 (345 ms quiet vs 100 ms test); time-boxed profiling and fix |
 | F48 | done | sonnet | F35, F45 | Move Adjust view / Read the ground / View(head) out of the hamburger into translucent hold-to-use icons; pan clamped to allowed region |
@@ -852,7 +852,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F20 | done | sonnet | — | Better hands, relaxed arms while holding boules, richer idle animation |
 | F21 | done | haiku | — | Remove the coloured team rings around boules |
 | F22 | done | sonnet | — | Mène-end card never hides the scoring circle or its labels |
-| F23 | todo | sonnet | F04, F25 | Rebalance: Pierre strong and well-rounded (prefers shooting); Medium opponents beatable |
+| F23 | in-progress | sonnet | F04, F25 | Rebalance: Pierre strong and well-rounded (prefers shooting); Medium opponents beatable |
 | F24 | done | sonnet | — | Bug: in quick mode the circle isn't placed at the start of a new mène |
 | F25 | done | sonnet | — | Court shapes: broad, readable slopes (tilt, hills, ridges, basins) instead of noise |
 
