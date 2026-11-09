@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { steer, stepAgents, createGather, GATHER_TIMEOUT, MIN_GAP } from '../../assets/js/petanque/crowd.js';
+import { steer, stepAgents, createGather, planGoals, GATHER_TIMEOUT, MIN_GAP } from '../../assets/js/petanque/crowd.js';
+import { createMatch, defaultPlayers, apply } from '../../assets/js/petanque/rules.js';
+import { court, setCourt, resetCourt } from '../../assets/js/petanque/court.js';
+import { waitingSlots } from '../../assets/js/petanque/waiting.js';
+import { C } from '../../assets/js/petanque/constants.js';
 
 const minPair = (as) => {
   let m = Infinity;
@@ -79,4 +83,31 @@ test('blocked on the way to the goal for over 2 s after the fallback: fades to t
   assert.ok(g.finished);
   assert.ok(['done', 'faded'].includes(g.agents[0].phase));
   assert.ok(Math.hypot(g.agents[0].x, g.agents[0].y - 3) < 0.06);
+});
+
+test('F15: the next circle and waiting slots are known from the mène result, before nextMene runs', () => {
+  resetCourt();
+  let m = createMatch({ target: 13, players: defaultPlayers(), firstJackTeam: 0 });
+  m = { ...m, phase: 'meneEnd', jack: { x: 2.3, y: 9.2 }, boules: [], result: { void: true } };
+  const dims = { terrainW: C.terrainW, terrainL: C.terrainL, jackMinDist: C.jackMinDist, jackMaxDist: C.jackMaxDist };
+  const plan = planGoals(apply(m, { type: 'nextMene' }), dims); // computed with the court still at the old circle
+  assert.ok(Math.abs(court.circle.x - 2) < 1e-9 && court.dir === 1, 'court not yet moved');
+  assert.ok(Math.hypot(plan.to.x - court.circle.x, plan.to.y - court.circle.y) > 3, 'the new circle is elsewhere');
+  assert.equal(plan.slots.length, 6);
+  const next = apply(m, { type: 'nextMene' });
+  setCourt(next.geometry.circle, next.geometry.dir); // what nextMene does later
+  const after = waitingSlots(null, { terrainW: C.terrainW, terrainL: C.terrainL, jackMinDist: C.jackMinDist, jackMaxDist: C.jackMaxDist, circle: court.circle, dir: court.dir }).filter((s) => s.zone === 'circle');
+  assert.deepEqual(plan.slots, after, 'the same slots as after the court moves');
+  assert.ok(plan.thrower && next.players.some((p) => p.id === plan.thrower && p.team === next.jackTeam));
+  resetCourt();
+});
+
+test('F15: a crowded gathering whose boules are all out of reach ends by the fallback, nobody overlapping at the goals', () => {
+  const goals = [{ x: -1, y: 5 }, { x: -1, y: 5.8 }, { x: 5, y: 5 }, { x: 5, y: 5.8 }];
+  const as = goals.map((goal, i) => ({ id: 'p' + i, x: 2 + (i % 2) * 0.3, y: 3 + Math.floor(i / 2) * 0.3, goal, boules: [{ id: 'b' + i, x: 2.1, y: 3.2 }, { id: 'c' + i, x: 2.2, y: 3.1 }, { id: 'd' + i, x: 2.1, y: 3.0 }] })); // everybody starts together, wants the same boules
+  const g = createGather(as);
+  for (let i = 0; i < 60 * 60 && !g.finished; i++) g.step(1 / 60);
+  assert.ok(g.finished, 'completes');
+  assert.ok(g.agents.every((a) => a.boules.length === 0), 'no boule left on the ground');
+  assert.ok(minPair(g.agents) >= 0.6, `final spacing ${minPair(g.agents).toFixed(2)} m`);
 });

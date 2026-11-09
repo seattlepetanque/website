@@ -5,6 +5,8 @@
 // small whole-process model (seek nearest own boule, bend, next boule, goal) with the 20 s fallback: used by the tests
 // and mirroring what main.js drives through the animated characters.
 
+import { waitingSlots } from './waiting.js';
+
 export const SEP_R = 0.8; // m: others closer than this push a walker sideways
 export const MIN_GAP = 0.5; // m: walkers try never to come closer than this
 export const AHEAD_R = 1.3; // m: how far ahead a walker looks for somebody in the way
@@ -99,4 +101,15 @@ export function createGather(agents, { speed = 1.35, timeout = GATHER_TIMEOUT, p
     g.finished = A.every((a) => a.phase === 'done' || a.phase === 'faded');
   };
   return g;
+}
+
+// F15: where everybody goes for the next mène, from the state `nextMene` will produce (known as soon as the mène result is).
+// next: rules `apply(match, { type: 'nextMene' })`; dims: { terrainW, terrainL, jackMinDist, jackMaxDist }.
+// -> { to, dir, thrower, slots }: the new circle, the jack thrower's id (they walk to the circle) and the waiting slots behind it.
+export function planGoals(next, dims) {
+  const g = next.geometry, dir = g.dir ?? 1, to = { x: g.circle.x, y: g.circle.y };
+  const team = next.jackTeam;
+  const thrower = next.players.find((p) => p.team === team && (p.isHuman || team === 1)) || next.players.find((p) => p.team === team); // keep in sync with beginMene
+  const slots = waitingSlots(null, { ...dims, circle: to, dir }).filter((s) => s.zone === 'circle');
+  return { to, dir, thrower: thrower ? thrower.id : null, slots };
 }

@@ -817,7 +817,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F12 | done | sonnet | — | Ambient park sounds with stereo movement |
 | F13 | done | haiku | — | Dead-jack void message gives the wrong reason |
 | F14 | done | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
-| F15 | todo | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
+| F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
 | F16 | todo | sonnet | F04, F15 | Round 5 review |
 
 ### F01 Sports-broadcast follow camera (sonnet)
@@ -945,3 +945,6 @@ Fix the F14 gaps: (1) once a player has their boules, they walk straight to thei
 
 ### F16 Round 5 review (sonnet)
 Tests, build, full-match test, integration across modes and directions for all round 5 features (broadcast camera, gathering, roles, terrain view, measuring, ring carry, dead-jack ring spot, holding banner, ambience, tactics expansion), README update, screenshots, and a "Round 5 remaining issues" list.
+
+### F15 notes
+- `planGoals()` in crowd.js and `planNext()` in main.js compute the next circle, jack thrower and slots as soon as the result is known; players walk straight to the nearest free slot after their last pick-up (steered, fade if blocked 2 s); the next jack thrower waits for the ring (`plan.ringDown`). The 25 s screenshot: Marcel was the ring carrier (collects after `nextMene`, by design) and the fallback had frozen players already walking; `fallbackFor` now skips those. Skip puts free players at their slots. Debug `&f02next=N`, `&f02skip=N`. Tests for early goals and a crowded fallback. Full match with real clicks not run.

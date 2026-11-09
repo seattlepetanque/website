@@ -22,7 +22,7 @@ import { createClock } from './clock.js';
 import * as THREE from '../vendor/three.module.js';
 import { createCharacter, releaseOffset, bendReach } from './character.js';
 import { planRoute, standPoint, pathLength } from './fetch.js';
-import { steer, GATHER_TIMEOUT, BLOCK_FADE_S } from './crowd.js';
+import { steer, planGoals, GATHER_TIMEOUT, BLOCK_FADE_S } from './crowd.js';
 import { pickWaitingSlot, waitingSlots } from './waiting.js';
 import { attachModels } from './models.js';
 import { createGroundView } from './groundview.js';
@@ -2092,6 +2092,7 @@ function boot() {
         await carryRing(nc.placed);
         if (nc.moved && t === token) { say2('Too little court ahead of the ring: it is carried back…'); ringHolder = ringWho(); await carryRing(to, true); }
       } catch (err) { console.error(err); renderer.setRingPose(null); ringCarry = null; }
+      if (collect && collect.plan) collect.plan.ringDown = true; // F15: the next jack thrower may walk to the circle
       try { await finishCollect(); } catch (err) { console.error(err); } // F02: the rest of the collecting
       ringBusy = false;
       if (t !== token) return;
@@ -2128,9 +2129,46 @@ function boot() {
   }
   function startCollect(delay = 2600) {
     if (!slow() || collect || !match || match.phase !== 'meneEnd') return;
-    const st = { tok: token, ids: match.players.map((p) => p.id), skipped: false, finished: false, held: new Map(), picked: false, walkers: new Set(), goal: new Map(), blocked: new Map(), fb: new Set() };
+    const st = { tok: token, ids: match.players.map((p) => p.id), skipped: false, finished: false, held: new Map(), picked: false, walkers: new Set(), goal: new Map(), blocked: new Map(), fb: new Set(), goalStarted: new Set(), plan: planNext() };
     collect = st;
     st.done = runCollect(st, delay).catch((err) => console.error(err)).then(() => { st.finished = true; });
+  }
+  // F15: the next mène's circle and waiting slots depend only on the final jack spot, so they are known as soon as the result
+  // is. Each player walks to their own spot straight after picking up their boules; the next jack thrower goes to the new
+  // circle once the ring is down (plan.ringDown, set by nextMene).
+  function planNext() {
+    if (!match || match.phase !== 'meneEnd') return null;
+    const pl = planGoals(apply(match, { type: 'nextMene' }), { terrainW: C.terrainW, terrainL: C.terrainL, jackMinDist: C.jackMinDist, jackMaxDist: C.jackMaxDist });
+    return { ...pl, taken: [], ringDown: false };
+  }
+  function slotFor(st, id) { // the nearest free waiting slot behind the new circle
+    const pl = st.plan, pos = cast.get(id).root.position;
+    const free = pl.slots.filter((s) => !pl.taken.some((o) => Math.hypot(o.x - s.x, o.y - s.y) < 0.6));
+    free.sort((a, b) => Math.hypot(a.x - pos.x, a.y - pos.y) - Math.hypot(b.x - pos.x, b.y - pos.y));
+    const s = free[0] || homeAt(id);
+    pl.taken.push({ x: s.x, y: s.y }); claims.set(id, { x: s.x, y: s.y });
+    return { x: s.x, y: s.y, yaw: Math.atan2(pl.to.x - s.x, pl.to.y + 5 * pl.dir - s.y) };
+  }
+  // Steered walk to the player's next-mène spot (the circle for the jack thrower, once the ring is down); blocked for
+  // more than BLOCK_FADE_S they fade to it (crowdTick). `live` says whether the walk is still wanted.
+  async function goalWalk(st, id, live) {
+    const pl = st.plan, ch = cast.get(id);
+    if (!pl || st.goalStarted.has(id)) return;
+    st.goalStarted.add(id);
+    let g;
+    if (id === pl.thrower) {
+      claims.delete(id);
+      for (let w = 0; w < 900 && live() && !pl.ringDown; w++) await sleep(200);
+      if (!live()) return;
+      g = { x: pl.to.x, y: pl.to.y, yaw: baseYaw(pl.dir) };
+    } else g = slotFor(st, id);
+    const job = { id, tok: st.tok, cancelled: false, scripted: false, obstacles: () => obstaclesExcept(null) };
+    ch.setCarrying(false); ch.setHolding(false); ch.setStance('watch');
+    st.walkers.add(id); st.goal.set(id, g);
+    await walkVia(job, id, g);
+    st.goal.delete(id); st.walkers.delete(id);
+    if (st.tok !== token) return;
+    ch.setStance('watch'); shadow(id, id === pl.thrower);
   }
   const gatherBusy = (id) => ringHolder === id || (fetchJob && fetchJob.id === id); // still on the ring (F07) or a fetch
   // Each frame: the gathering walkers steer round everybody else (crowd.js); blocked goal walkers fade after BLOCK_FADE_S
@@ -2166,12 +2204,13 @@ function boot() {
     return rest.length;
   }
   function fallbackFor(st, id) { // GATHER_TIMEOUT s passed: stop where they stand with their boules in hand
-    if (st.tok !== token || st.skipped || st.fb.has(id) || gatherBusy(id)) return;
+    if (st.tok !== token || st.skipped || st.fb.has(id) || st.goalStarted.has(id) || gatherBusy(id)) return; // (already on the way to the next spot: leave them)
     st.fb.add(id); st.walkers.delete(id);
     const ch = cast.get(id), p = ch.root.position;
     giveBoules(st, id);
     ch.setPlacement(p.x, p.y); ch.setCarrying(false); // ends a walk or bend in place
     renderer.sync(world); renderer.clearMeasure();
+    goalWalk(st, id, () => st.tok === token && !st.skipped && !!match).catch((err) => console.error(err)); // F15: then on to the next spot
   }
   async function runCollect(st, delay) {
     const t = st.tok, alive = (id) => t === token && !st.skipped && !!match && !st.fb.has(id);
@@ -2199,8 +2238,10 @@ function boot() {
         if (!alive(id)) return;
         await ch.playBend({ kind: 'pickup', onAct: () => { if (alive(id)) takeBoule(st, id, b); } });
       }
-      if (alive(id)) ch.setCarrying(false);
+      if (!alive(id)) return;
+      ch.setCarrying(false);
       st.walkers.delete(id);
+      await goalWalk(st, id, () => alive(id)); // F15: straight to the next mène's spot
     };
     await Promise.all(st.ids.map((id) => run(id)));
   }
@@ -2214,7 +2255,12 @@ function boot() {
       st.walkers.delete(id);
       if (gatherBusy(id) || (jackTask && jackFetcher === id)) continue; // carrying the ring or the jack: leave them to it
       ch.setCarrying(false);
-      placeAt(id, p.x, p.y);
+      const pl = st.plan;
+      let g = st.goal.get(id) || null;
+      if (!g && pl && id !== pl.thrower && !st.goalStarted.has(id)) { g = slotFor(st, id); st.goalStarted.add(id); }
+      st.goal.delete(id);
+      if (g) { placeAt(id, g.x, g.y, g.yaw); ch.setStance('watch'); shadow(id, false); } // F15: everyone is at their next spot
+      else placeAt(id, p.x, p.y);
     }
     renderer.sync(world); renderer.clearMeasure();
     st.finished = true;
@@ -2223,28 +2269,15 @@ function boot() {
     const st = collect;
     if (st && st.tok === token && !st.finished) await st.done;
   }
-  // The next mène's players go to their spots: everyone but the jack thrower (who walks to the circle as the turn begins)
-  // takes a free waiting slot behind the new circle. The ring carrier, who holds no boules yet, goes too.
+  // The next mène's players go to their spots (F15: normally they are there already). Anybody not yet sent (the ring carrier
+  // who held no boules, a skipped gathering) goes now, steered like the rest; the jack thrower walks in as the turn begins.
   function walkToSpots(next) {
     const st = collect;
-    if (!st || st.tok !== token || !slow()) return;
-    const team = next.jackTeam;
-    const thrower = next.players.find((p) => p.team === team && (p.isHuman || team === 1)) || next.players.find((p) => p.team === team);
-    const taken = [];
+    if (!st || st.tok !== token || !slow() || !st.plan) return;
     spotsKept = token;
     for (const p of next.players) {
-      const id = p.id;
-      if (thrower && id === thrower.id) { claims.delete(id); continue; }
-      const ch = cast.get(id), pos = ch.root.position;
-      const free = waitingSlots(null).filter((s) => s.zone === 'circle' && !taken.some((o) => Math.hypot(o.x - s.x, o.y - s.y) < 0.6));
-      free.sort((a, b) => Math.hypot(a.x - pos.x, a.y - pos.y) - Math.hypot(b.x - pos.x, b.y - pos.y));
-      const s = free[0] || homeAt(id);
-      taken.push({ x: s.x, y: s.y }); claims.set(id, { x: s.x, y: s.y });
-      const yaw = Math.atan2(court.circle.x - s.x, court.circle.y + 5 * court.dir - s.y);
-      const job = { id, tok: token, cancelled: false, scripted: false, obstacles: () => obstaclesExcept(null) };
-      ch.setCarrying(false); ch.setHolding(false);
-      st.walkers.add(id); st.goal.set(id, { x: s.x, y: s.y, yaw });
-      walkVia(job, id, { x: s.x, y: s.y, yaw }).then(() => { st.goal.delete(id); st.walkers.delete(id); ch.setStance('watch'); shadow(id, false); }).catch((err) => console.error(err));
+      if (p.id === st.plan.thrower) { claims.delete(p.id); continue; }
+      goalWalk(st, p.id, () => st.tok === token).catch((err) => console.error(err));
     }
   }
 
@@ -2365,6 +2398,8 @@ function boot() {
       gather(null);
       startRingPickup();
       startCollect(+params.get('f02delay') || 600);
+      if (params.has('f02skip')) later(() => skipCollect(), +params.get('f02skip') * 1000); // &f02skip=seconds: a click or key (F15)
+      if (params.has('f02next')) later(() => nextMene(), +params.get('f02next') * 1000); // &f02next=seconds: the player continues (F15: the ring goes down, the jack thrower walks in)
       renderer.setCamera('head', { target: { x: 2.3, y: 9 }, points: [{ x: -1, y: 6 }, { x: 5.5, y: 12 }] });
       if (fetchFreezeAt) (async () => {
         for (let i = 0; i < fetchFreezeAt * 60; i++) { fetchPump = true; tickCast(1 / 60); fetchPump = false; renderer.sync(world); await null; await null; }
