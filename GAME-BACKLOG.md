@@ -803,6 +803,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 
 | ID | Status | Model | Deps | Title |
 |---|---|---|---|---|
+| F34 | in-progress | haiku | F25 | String lines partly buried in the ground |
 | F33 | todo | sonnet | F04 | Nobody crouches for throws over 7.5 m |
 | F32 | in-progress | sonnet | — | Simplified in-game controls: always-on roll guide, icon cluster, hamburger menu, minimal pause screen |
 | F31 | done | haiku | — | Cap reported scores at the game target (13) |
@@ -823,7 +824,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F13 | done | haiku | — | Dead-jack void message gives the wrong reason |
 | F14 | done | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
 | F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
-| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25, F26, F27, F28, F31, F32, F33 | Round 5 review |
+| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25, F26, F27, F28, F31, F32, F33, F34 | Round 5 review |
 | F26 | done | haiku | — | Slow mode: brisker fetch walks with natural arm swing (or folded arms) |
 | F27 | todo | sonnet | F04 | Pierre does what he said he'd do |
 | F28 | in-progress (step 2) | sonnet | F26 | Better end-of-mène boule collection: design done (GAME-PLAN §10c, decisions recorded); implementing |
@@ -1076,3 +1077,6 @@ If a team ever ends a mène with more points than needed (e.g. 12 + 3 = 15), the
 
 ### F33 Nobody crouches for throws over 7.5 m (sonnet)
 Real players stand for long throws. When the throw distance (circle centre to the planned landing spot or, before the plan exists, to the target: the jack for a boule, the intended spot for a jack throw) is over 7.5 m, every player uses the standing stance, overriding E07's per-throw choice (Pierre's 50/50) and Marcel's crouch preference; at 7.5 m or less the personalities' stances apply as now (the human always stands). The stance affects the release point (`from`), so decide it before the AI plans: compute the distance from the target first (the donnée distance is within about a metre of it), choose the stance, then plan with that stance's `from` and re-check after planning (if the planned donnée crosses 7.5 m the other way, re-plan once with the corrected stance). Apply to the preview, AI plan, throw animation and launch consistently, and to Pierre's advice planning. Files: main.js `stanceOf`/`enterCircle`, a pure helper in personalities.js (`stanceFor(spec, distance, rand)`, not touching F04's line pools) with tests: distance > 7.5 m → stand for everyone, ≤ 7.5 m → the personality's stance, stance fixed once per throw.
+
+### F34 String lines partly buried (haiku)
+The string lines are drawn as flat lines at a fixed height (about z = 0.012, noted in D10), but F25's broad slopes now raise the ground by up to about ±0.2 m, so parts of the strings sit under the terrain (and elsewhere z-fight). Fix: drape the lines on the terrain: build each string as a thin ribbon/strip following `terrain.sample(x, y).h` along its length at fine spacing (every ~10 cm), a few millimetres above the surface, with `polygonOffset` (and a slight depth bias) so it never z-fights, correct fog and shadow behaviour, and sharp corners. Also check the other ground overlays (jack range zone lines, placement zone, scoring circle, Read-the-ground overlay, divot decals, throwing circle) sit above the new terrain heights the same way. Screenshots on steep seeds (ridge, tilt, basin) from the shoulder and head views.
