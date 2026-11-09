@@ -803,7 +803,8 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 
 | ID | Status | Model | Deps | Title |
 |---|---|---|---|---|
-| F34 | in-progress | haiku | F25 | String lines partly buried in the ground |
+| F34 | review | haiku | F25 | String lines partly buried in the ground (implemented; steep seeds unverified) |
+| F35 | todo | haiku | F32 | Drop the "tir" label: always name the throw by loft |
 | F33 | todo | sonnet | F04 | Nobody crouches for throws over 7.5 m |
 | F32 | in-progress | sonnet | — | Simplified in-game controls: always-on roll guide, icon cluster, hamburger menu, minimal pause screen |
 | F31 | done | haiku | — | Cap reported scores at the game target (13) |
@@ -812,7 +813,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F01 | done | sonnet | — | Sports-broadcast follow camera for the roving view |
 | F02 | done | sonnet | F07 | After a mène, players collect their boules from the head and walk to their spots |
 | F03 | done | sonnet | — | Teams keep roles (pointer and shooter) instead of alternating throwers |
-| F04 | in-progress | sonnet | F03 | Tactics expansion: design done (GAME-PLAN §12.12, decisions recorded); step 2 implement |
+| F04 | done | sonnet | F03 | Tactics expansion: design done (GAME-PLAN §12.12, decisions recorded); step 2 implement |
 | F05 | done | sonnet | — | Slope and firmness fields tuned, plus an optional "Read the ground" analysis view |
 | F06 | done | haiku | — | Surface-to-surface measuring: circle to the rival boule's near edge, all distances to 0.1 cm |
 | F07 | done | sonnet | — | Last thrower picks up the ring straight away and carries it toward the jack |
@@ -1080,3 +1081,6 @@ Real players stand for long throws. When the throw distance (circle centre to th
 
 ### F34 String lines partly buried (haiku)
 The string lines are drawn as flat lines at a fixed height (about z = 0.012, noted in D10), but F25's broad slopes now raise the ground by up to about ±0.2 m, so parts of the strings sit under the terrain (and elsewhere z-fight). Fix: drape the lines on the terrain: build each string as a thin ribbon/strip following `terrain.sample(x, y).h` along its length at fine spacing (every ~10 cm), a few millimetres above the surface, with `polygonOffset` (and a slight depth bias) so it never z-fights, correct fog and shadow behaviour, and sharp corners. Also check the other ground overlays (jack range zone lines, placement zone, scoring circle, Read-the-ground overlay, divot decals, throwing circle) sit above the new terrain heights the same way. Screenshots on steep seeds (ridge, tilt, basin) from the shoulder and head views.
+
+### F35 Remove "tir" terminology from the throw readout (haiku)
+User: remove the "tir" shooting terminology, always show the categorisation by loft (roulette < 20°, demi-portée 20-45°, plombée > 45°). Change `styleForLoft` in `donnee.js` to ignore `snapped`, update the readout/hud text and tests. Check `main.js:1135` (`choice.style === 'tir'`) and the AI's own `tir` style in `tactics.js` still work (the AI's internal style names are not user-facing; leave them unless they leak into UI text). Depends on F32 because hud/main are being edited there.
