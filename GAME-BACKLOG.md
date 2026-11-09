@@ -808,7 +808,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F36 | done | haiku | F32 | Temporary ✈ Takeoff demo button in the hamburger menu (next to Landing; remove later) |
 | F37 | done | haiku | F32 | Random ambient planes only in slow mode (quick mode: none) |
 | F38 | todo | sonnet | F37 | While a plane is flying and the human isn't active, camera occasionally frames the plane |
-| F39 | todo | sonnet | F28 | Slow mode: camera follows the human walking to the ring |
+| F39 | done-unverified | sonnet | F28 | Slow mode: camera follows the human walking to the ring |
 | F40 | done | haiku | - | Sideline timbers have a slightly flickery shadow |
 | F42 | done | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
 | F43 | moot | sonnet | F44 | Timbers half buried where the ground is higher (F25 heights) |
@@ -1183,3 +1183,5 @@ F51 outcome: implemented (ring carried straight to the next circle after the res
 F52 outcome: committed; the agent was stopped after about 2.5 h without a final report, verified by the manager (323/323 tests, hugo build, screenshots of ?gravel=grey and ?gravel=sand at scratchpad f52v). Observations for review: the grey court reads quite dark and flat, closer to asphalt than gravel (maybe lighten, add more pebble/speckle texture and a bit more blue); the small orange/red jack is hard to spot at the shoulder view on both variants (check contrast, maybe a slightly larger jack or a light ring). User to judge on port 1500.
 
 F27 outcome: done in ai.js only (root cause: main.js's pierreChoice cache was declared but never set). The partner's advice decision records its plan per team keyed to the court state; the partner's own decision then follows that family/intent/style (shot target within 0.2 m), once, with no random tactical error. Works for any partner (F45). Tests: f27.test.js (3 partners x 6 layouts), no tolerance changes.
+
+F39 outcome: implemented (camera.js walkSubject + OBS.walkLead 3 m; main.js startHumanWalk/followHumanWalk driven per frame in slow mode for the human's walk to the circle and the human jack thrower's walk to the new circle; ends when the human arrives, aims, a ball is in flight, or on skip; quick/instant unchanged). Tests 329/329. NOT verified live (headless runs never showed a mid-walk frame): please watch a slow-mode game and check the follow is smooth and ends in the shoulder view.

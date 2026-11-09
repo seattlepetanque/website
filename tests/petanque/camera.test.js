@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { frameMoving, cameraFromFrame, CAM, frameObserver, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS, broadcastGoal, frameBroadcast, BC } from '../../assets/js/petanque/camera.js';
+import { frameMoving, cameraFromFrame, CAM, frameObserver, walkSubject, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS, broadcastGoal, frameBroadcast, BC } from '../../assets/js/petanque/camera.js';
 import { createBody } from '../../assets/js/petanque/physics.js';
 
 const OPTS = { aspect: 1.6, fov: 50, dt: 1 / 60 };
@@ -407,4 +407,27 @@ test('F48: holding a direction pans at a steady rate and stops at the edge', asy
   for (let i = 0; i < 400; i++) v = panViewOffset(v, 1, 1, 1 / 60); // right and down for 6+ s
   assert.equal(v.yaw, VIEW_PAN.maxYaw);
   assert.equal(v.pitch, VIEW_PAN.maxPitch); // down looks down: positive pitch
+});
+
+test('F39: walkSubject leads the walker toward the goal and settles on the goal', () => {
+  const far = walkSubject({ x: 0, y: 0 }, { x: 0, y: 10 }, 3);
+  assert.deepEqual(far, [{ x: 0, y: 0 }, { x: 0, y: 3 }]);
+  const near = walkSubject({ x: 1, y: 9 }, { x: 0, y: 10 }, 3);
+  assert.deepEqual(near[1], { x: 0, y: 10 });
+  const out = [{ x: 9, y: 9 }, { x: 9, y: 9 }];
+  assert.equal(walkSubject({ x: 2, y: 2 }, { x: 2, y: 2 }, 3, out), out);
+  assert.deepEqual(out, [{ x: 2, y: 2 }, { x: 2, y: 2 }]);
+});
+
+test('F39: the observer follows a walker smoothly (no jumps) toward the circle', () => {
+  const ground = () => 0, goal = { x: 6, y: 20 };
+  let pos = { x: 1, y: 2 }, f = null, prev = null, maxStep = 0;
+  for (let i = 0; i < 60 * 9; i++) {
+    pos = { x: pos.x + (goal.x - pos.x) * 0.004, y: Math.min(goal.y, pos.y + 2.4 / 60) };
+    f = frameObserver(walkSubject(pos, goal), { dt: 1 / 60, aspect: 1.6, fov: 50, groundAt: ground }, f);
+    if (prev) maxStep = Math.max(maxStep, Math.hypot(f.pos.x - prev.pos.x, f.pos.y - prev.pos.y, f.pos.z - prev.pos.z));
+    prev = f;
+  }
+  assert.ok(maxStep < OBS.dolly.max / 60 + 1e-6, 'camera moves at most walking pace: ' + maxStep);
+  assert.ok(Math.abs(f.center.y - 20) < 3, 'ends framing the circle area');
 });

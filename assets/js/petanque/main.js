@@ -1,7 +1,7 @@
 // Game loop: terrain, world, renderer, rules, AI, toss input (donnée throw), audio and HUD wired together.
 import { C } from './constants.js';
 import { court, setCourt, resetCourt, baseYaw, ahead } from './court.js';
-import { cameraStyle, tvVariant, clampViewOffset, panViewOffset } from './camera.js';
+import { cameraStyle, tvVariant, clampViewOffset, panViewOffset, walkSubject } from './camera.js';
 import { createDirector } from './director.js';
 import { mulberry32 } from './rng.js';
 import { createTerrain } from './terrain.js';
@@ -119,7 +119,22 @@ function boot() {
   const camStyle = (human = false) => cameraStyle({ slow: slow(), human, override: (debug && params.get('cam')) || settings.camStyle || (debug && params.has('tvcam') ? 'tv' : null), tv: tvVar() }); // F01: settings.camStyle (hidden) or ?debug&cam=broadcast
   const observing = () => camStyle() === 'observer';
   const broadcasting = () => camStyle() === 'broadcast'; // F01
-  const observerView = (points, extra) => renderer.setCamera('observer', { points, ...extra });
+  const observerView = (points, extra) => { if (humanWalk && !(extra && extra.follow)) humanWalk.cam = false; renderer.setCamera('observer', { points, ...extra }); };
+  // F39: slow mode, the human walking to the circle: the observer follows them (walkSubject), per frame in followHumanWalk
+  let humanWalk = null; // { id, goal, pts, cam, tok }
+  const isHumanId = (id) => !!(match && match.players.find((q) => q.id === id && q.isHuman));
+  function startHumanWalk(id, goal) {
+    if (!slow() || !isHumanId(id)) return;
+    humanWalk = { id, goal: { x: goal.x, y: goal.y }, pts: walkSubject(cast.get(id).root.position, goal), cam: false, tok: token };
+  }
+  function followHumanWalk() {
+    const w = humanWalk;
+    if (!w) return;
+    const p = cast.get(w.id).root.position;
+    if (w.tok !== token || pending || flying || !observing() || !match || Math.hypot(p.x - w.goal.x, p.y - w.goal.y) < 0.05) { humanWalk = null; return; }
+    walkSubject(p, w.goal, undefined, w.pts);
+    if (!w.cam) { w.cam = true; renderer.setCamera('observer', { points: w.pts, follow: true }); } // later frames only move the points
+  }
   const watchCircle = () => observerView([{ x: court.circle.x, y: court.circle.y }, ahead(5)]); // somebody about to throw
   const aimView = () => (observing() && match ? watchCircle() : shoulderView());
   const KEEP_YAW = 35 * DEG; // E12 (see setAdjust); the pan limits live in camera.js (VIEW_PAN, F48)
@@ -655,6 +670,7 @@ function boot() {
     } else {
       const t = token;
       circleWalk = { id, yaw, tok: t, start: performance.now() }; // E02: a click or key skips the walk
+      startHumanWalk(id, c); // F39
       arrival = ch.walkTo({ x: c.x, y: c.y, yaw, speed: CAST_SPEED }).then(() => {
         if (circleWalk && circleWalk.id === id) circleWalk = null;
         if (t === token && inCircle === id) ch.yaw = faceYaw(id);
@@ -703,6 +719,7 @@ function boot() {
     if (thrower) shoulderCam.hand = thrower.hand; // a left-hander's shoulder camera sits behind the left shoulder
     const w = flying && !flying.dead ? flying : jackBody();
     crowdTick(dt); // F14
+    followHumanWalk(); // F39
     kickTick(dt); // F28
     for (const ch of cast.values()) {
       const p = ch.root.position;
@@ -2213,6 +2230,7 @@ function boot() {
     const job = { id, tok: st.tok, cancelled: false, scripted: false, obstacles: () => obstaclesExcept(null) };
     ch.setCarrying(false); ch.setHolding(false); ch.setStance('watch');
     st.walkers.add(id); st.goal.set(id, g);
+    if (id === pl.thrower) startHumanWalk(id, g); // F39: the human's walk to the new circle
     await walkVia(job, id, g);
     st.goal.delete(id); st.walkers.delete(id);
     if (st.tok !== token) return;

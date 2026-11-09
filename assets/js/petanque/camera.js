@@ -175,8 +175,21 @@ export const OBS = Object.freeze({
   fill: 0.5, // the subject's angular size as a fraction of the view
   minFovK: 0.75, maxFovK: 1.3,
   edge: 0.6, // fraction of the half-field beyond which the boosted pan cap applies
+  walkLead: 3, // m: F39, how far ahead of the walking human the frame reaches
   reducedTime: 2.5, reducedPan: 0.12, // reduced motion: slower pans, no dolly, no zoom
 });
+
+// F39: what the observer watches while the human walks to the circle: the walker plus a look-ahead point `lead` m along the
+// way (the circle itself once within `lead`), so the pan leads them in and the frame settles on the circle at the end.
+// pos/goal: { x, y }. Returns [{x, y}, {x, y}]; `out` (optional, same shape) is filled in place so main can keep one live array.
+export function walkSubject(pos, goal, lead = OBS.walkLead, out = null) {
+  const dx = goal.x - pos.x, dy = goal.y - pos.y, d = Math.hypot(dx, dy);
+  const k = d <= lead || d === 0 ? 1 : lead / d;
+  const r = out || [{ x: 0, y: 0 }, { x: 0, y: 0 }];
+  r[0].x = pos.x; r[0].y = pos.y;
+  r[1].x = pos.x + dx * k; r[1].y = pos.y + dy * k;
+  return r;
+}
 
 // The camera style, read in one place (E27 hooks a TV camera in here): 'observer' | 'tv' | 'game'.
 // `game` is the shoulder/head/flight set of cameras. The human's own turn always uses the shoulder view and quick
