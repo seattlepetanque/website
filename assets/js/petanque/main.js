@@ -15,7 +15,7 @@ import { settings } from './settings.js';
 import { chooseThrowAsync, chooseJackThrow, chooseJackPlacement, whoThrows } from './ai.js';
 import { createTossInput } from './toss.js';
 import {
-  SKILL, scaledSkill, coneFor, coneEnvelope, executeThrow, solveLaunch, predictRoll, predictRollBand, styleForLoft, releaseFrom, snapAim, fitToBudget,
+  SKILL, scaledSkill, coneFor, coneEnvelope, executeThrow, predictRollBand, styleForLoft, releaseFrom, snapAim, fitToBudget,
 } from './donnee.js';
 import { createAudio } from './audio.js';
 import { createClock } from './clock.js';
@@ -1123,21 +1123,11 @@ function boot() {
     shoulderCam.yaw = aimYaw;
   }
 
-  // Status line while an AI shows its spot: the factual label and distance, then the player's own line.
-  // The distance is where the throw lands (the donnée); a jack rolls on after landing, so its line also gives the
-  // distance it should come to rest at (noiseless prediction), and the settled distance is reported afterwards.
+  // Status line while an AI shows its spot: the factual label, then the player's own line.
   function spotText(player, choice, kind) {
     const key = choice.labelKey || { event: kind === 'jack' ? 'spotJack' : 'spotPoint' };
-    const dist = (q) => Math.hypot(q.x - court.circle.x, q.y - court.circle.y);
     const target = key.target === 'jack' ? 'the jack' : player.team === 1 ? 'your boule' : 'their boule';
-    let tail = '.';
-    if (choice.donnee && kind === 'jack' && choice.from) {
-      const tp = solveLaunch({ from: choice.from, landing: choice.donnee, loft: choice.loft, terrain: world.terrain });
-      const path = predictRoll({ world, terrain, throwParams: tp, from: choice.from, kind: 'jack' });
-      const end = path[path.length - 1];
-      tail = ` (lands at ${dist(choice.donnee).toFixed(1)} m, should roll to about ${dist(end).toFixed(1)} m).`;
-    } else if (choice.donnee) tail = ` (lands at ${dist(choice.donnee).toFixed(1)} m).`;
-    const facts = (choice.label || `${player.name} picks ${player.id === 'odette' ? 'her' : 'his'} spot`) + tail;
+    const facts = (choice.label || `${player.name} picks ${player.id === 'odette' ? 'her' : 'his'} spot`) + '.';
     // the tactical reason (D13) first, then the generic line for the event
     const why = choice.why;
     const quip = (why && why.code !== 'mistake' && talk.say(player.id, 'why.' + why.code, { target, ...why })) || talk.say(player.id, key.event, { target });

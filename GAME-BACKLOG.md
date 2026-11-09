@@ -819,7 +819,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F14 | done | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
 | F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
 | F16 | todo | sonnet | F04, F15, F17 | Round 5 review |
-| F17 | todo | haiku | — | Remove "lands at …" landing-distance text from the status line |
+| F17 | done | haiku | — | Remove "lands at …" landing-distance text from the status line |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -952,3 +952,6 @@ Tests, build, full-match test, integration across modes and directions for all r
 
 ### F17 Remove the landing-distance status (haiku)
 The status/commentary shows where a throw is planned to land, e.g. "Marcel points a demi-portée (lands at 4.4 m)" and "Marcel throws the cochonnet (lands at 6.1 m, should roll to about 7.2 m)". Remove the landing (and "should roll to") distances from these lines everywhere (AI spot text, jack throw text, spotText/labels in main.js and any in ai.js/personalities.js); keep the rest of the line (who, which throw, the personality quote). Results after the throw (e.g. "Jack is 7.3 m out", "18.3 cm from the jack") stay.
+
+### F17 notes
+- `spotText` no longer adds "(lands at … m[, should roll to about … m])"; unused `solveLaunch`/`predictRoll` imports dropped. "Max reach" hint and post-throw results unchanged.
