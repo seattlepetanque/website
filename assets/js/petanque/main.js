@@ -169,17 +169,14 @@ function boot() {
   modeBtn.addEventListener('click', () => { settings.mode = settings.mode === 'quick' ? 'slow' : 'quick'; });
   settings.onChange(syncModeBtn);
   const viewBtn = mkBtn(bar, 'View: Shoulder', 'pc-view');
-  // TEMP F29: remove after review. Floatplane landing on demand, camera framed on it like ?debug&floatplane=landing.
-  // The camera goes back to normal when the landing ends (frame loop) or when the next turn starts (nextTurn, humanTurn).
-  let fpTempCam = false;
-  const releaseLandingCam = () => { if (fpTempCam) { fpTempCam = false; renderer.floatplane.debugFrame = false; } };
+  // TEMP F29: remove after review. Floatplane landing on demand, in the background with no camera change.
   const landingBtn = mkBtn(bar, '✈ Landing', 'pc-landing');
   landingBtn.setAttribute('aria-label', 'Start a floatplane landing');
   landingBtn.title = 'Watch the floatplane come in to land (temporary)';
   landingBtn.addEventListener('click', () => {
     const fp = renderer.floatplane;
-    if (fp.active || !fp.trigger('landing')) return; // one plane at a time
-    fpTempCam = true; fp.debugFrame = true;
+    if (fp.active) return; // one plane at a time
+    fp.trigger('landing');
   });
   // END TEMP F29
   bar.append(audio.createMuteButton());
@@ -938,7 +935,6 @@ function boot() {
   }
 
   function humanTurn(kind, playerId, text) {
-    releaseLandingCam(); // TEMP F29
     pending = { kind, playerId };
     hideHolding(); // F11: aiming starts, so the who-holds banner goes
     renderer.clearMeasure(); // aiming starts: the between-throws lines go (D07)
@@ -1664,7 +1660,6 @@ function boot() {
   // Pick who throws next, from rules.nextTeam()
   function nextTurn() {
     if (fetchGate()) { later(nextTurn, 300); return; } // D11: wait while a fetcher is still in view
-    releaseLandingCam(); // TEMP F29: the next turn needs the camera
     const team = nextTeam(match);
     if (team === null) return; // mène already ended
     const avail = playersWithBoules(match, team);
@@ -2358,7 +2353,6 @@ function boot() {
     if (!pausedNow) { try { tickCast(dt); } catch (err) { console.error('[tickCast]', err); } } // E21: a throw in a release callback must not stop the loop
     renderer.sync(world);
     syncGv(pausedNow ? 0 : dt);
-    if (fpTempCam && !renderer.floatplane.active) releaseLandingCam(); // TEMP F29: landing done, back to the normal camera
     { // F19: the floatplane keeps game time (none while paused or between games) and feeds its engine to the ambience
       const fp = renderer.floatplane;
       fp.schedule(match && !pausedNow && playing ? dt : 0, match, reduceMotion());

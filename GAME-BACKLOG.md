@@ -803,6 +803,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 
 | ID | Status | Model | Deps | Title |
 |---|---|---|---|---|
+| F30 | done | haiku | F29 | Landing button: plane lands in the background, no camera change |
 | F29 | done (temporary) | haiku | F19 | Temporary button to trigger a floatplane landing (remove later) |
 | F01 | done | sonnet | — | Sports-broadcast follow camera for the roving view |
 | F02 | done | sonnet | F07 | After a mène, players collect their boules from the head and walk to their spots |
@@ -1045,3 +1046,6 @@ Step 2, implement: a kick animation in character.js, the kick roll (physics or s
 
 ### F29 Temporary floatplane landing button (haiku)
 Top priority, temporary. Add a small in-game button (controls bar, e.g. "✈ Landing") that triggers the F19 floatplane landing immediately (same as `?debug&floatplane=landing`, including framing the camera on it, then returning to the normal camera when it's done). Mark it clearly in code as temporary (`// TEMP F29: remove after review`) so it's easy to delete later.
+
+### F30 Landing button stays ambient (haiku)
+Top priority. The F29 button should just start the floatplane landing in the background, exactly as it happens naturally once per game: no camera framing, no interruption of play. Remove `fp.debugFrame = true` and the `releaseLandingCam`/`fpTempCam` camera handling from the button; keep the `TEMP F29` marking.
