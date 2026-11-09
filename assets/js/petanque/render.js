@@ -1,4 +1,5 @@
 // three.js renderer for the pétanque game. World axes: x across, y along, z up.
+import { stripGeometry } from './strip.js';
 import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
 import { court } from './court.js';
@@ -302,22 +303,12 @@ export function createRenderer(canvas, terrain) {
   // F34: each string is a thin strip (1.6 cm) draped on the terrain: both edges sampled every ~10 cm and lifted a few mm,
   // so slopes of up to ±0.2 m never bury it. The offset keeps it clear of the ground at grazing angles.
   const stringMat = new THREE.MeshBasicMaterial({
-    color: '#ffffff', fog: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    color: '#ffffff', fog: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   });
   const STRING_W = 0.016, STRING_LIFT = 0.004;
   const W = C.terrainW, L = C.terrainL;
   const addString = (x0, y0, x1, y1) => {
-    const len = Math.hypot(x1 - x0, y1 - y0), dx = (x1 - x0) / len, dy = (y1 - y0) / len;
-    const nx = -dy * STRING_W / 2, ny = dx * STRING_W / 2, ext = STRING_W / 2; // each strip runs half a width past its ends: square corners
-    const n = Math.max(2, Math.ceil((len + 2 * ext) / 0.1)), pos = [], idx = [];
-    for (let i = 0; i <= n; i++) {
-      const t = -ext + (len + 2 * ext) * i / n, x = x0 + dx * t, y = y0 + dy * t;
-      for (const s of [-1, 1]) {
-        const px = x + s * nx, py = y + s * ny;
-        pos.push(px, py, terrain.sample(px, py).h + STRING_LIFT);
-      }
-      if (i < n) idx.push(2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 1, 2 * i + 3, 2 * i + 2);
-    }
+    const { pos, idx } = stripGeometry(x0, y0, x1, y1, STRING_W, STRING_LIFT, (x, y) => terrain.sample(x, y).h);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setIndex(idx);

@@ -810,7 +810,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F38 | todo | sonnet | F37 | While a plane is flying and the human isn't active, camera occasionally frames the plane |
 | F39 | todo | sonnet | F28 | Slow mode: camera follows the human walking to the ring |
 | F40 | todo | haiku | - | Sideline timbers have a slightly flickery shadow |
-| F42 | in-progress | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
+| F42 | done | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
 | F43 | todo | sonnet | F42 | Timbers half buried where the ground is higher (F25 heights) |
 | F44 | todo | sonnet | F42, F43 | Height map experiment (F25) judged a failure: revisit/revert terrain shapes |
 | F41 | todo | haiku | - | End-of-mène bar overlaps the bottom-right icon cluster and hides the Next button |
