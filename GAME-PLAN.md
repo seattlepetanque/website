@@ -207,6 +207,12 @@ Design only (F28 step 1); nothing here is implemented. It replaces the walk-to-e
 5. Is 14 s the right limit before the fallback, and should the human player be able to skip only their own collection rather than everyone's?
 6. When a kicked boule is near the lines of a very tight court corner, may two players share a zone, or should the player simply walk, as today?
 
+#### 10c decisions (2026-11-08)
+- **Kick:** a gentle side-of-the-foot nudge (scripted slide, exact endpoints).
+- **Effects:** a soft gravel-scuff sound only (no dust puff).
+- **When:** only when the head is crowded. A player walks straight to a boule and picks it up when nobody (another player, the ring holder, or a live boule belonging to someone else's pickup) is within about 1.5 m of it or its approach; otherwise they kick it to their zone first. Zones are computed either way so a crowded head always has somewhere to go.
+- **Settled without asking:** zones are visible only in debug; two players may share a zone in a tight corner as the design says; the 14 s limit stands and a click or key skips the whole collection.
+
 ## 11. Later: terrain styles (not scheduled)
 
 Choosable terrains, each a preset over the terrain and physics constants: mostly sandy; sandy with noticeable rocks; spread gravel on hard pack; spread gravel on soft pack. Each has a dry and a wet version (wet: darker colour, different rolling resistance and landing dig, less bounce). Picked on the setup screen.

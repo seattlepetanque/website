@@ -824,7 +824,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25, F26, F27, F28, F31 | Round 5 review |
 | F26 | in-progress | haiku | — | Slow mode: brisker fetch walks with natural arm swing (or folded arms) |
 | F27 | todo | sonnet | F04 | Pierre does what he said he'd do |
-| F28 | in-progress (design) | sonnet | — | Better end-of-mène boule collection: kick boules to open space, then pick up (design first) |
+| F28 | in-progress (step 2) | sonnet | F26 | Better end-of-mène boule collection: design done (GAME-PLAN §10c, decisions recorded); implementing |
 | F17 | done | haiku | — | Remove "lands at …" landing-distance text from the status line |
 | F18 | done | haiku | — | Breeze only occasionally, fading in and out |
 | F19 | done | sonnet | — | Distant lake with an occasional floatplane taking off or landing |
