@@ -820,7 +820,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
 | F16 | todo | sonnet | F04, F15, F17, F18 | Round 5 review |
 | F17 | done | haiku | — | Remove "lands at …" landing-distance text from the status line |
-| F18 | in-progress | haiku | — | Breeze only occasionally, fading in and out |
+| F18 | done | haiku | — | Breeze only occasionally, fading in and out |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -959,3 +959,6 @@ The status/commentary shows where a throw is planned to land, e.g. "Marcel point
 
 ### F18 Breeze only occasionally (haiku)
 The F12 breeze plays continuously. Make it occasional: silence most of the time, then a gust that fades in over a few seconds, lasts ~6–20 s with its gentle swells, and fades out; gaps of ~30–90 s between gusts (random). Leaf rustles only during a gust. Tunables in `AMBIENT.breeze` (gap, duration, fade times). Keep the audition button (plays one gust).
+
+### F18 notes
+- Breeze runs through a gust envelope (0 between gusts): `AMBIENT.breeze` first [10,40] s, gap [30,90] s, duration [6,20] s, fadeIn [3,5] s, fadeOut [4,6] s; swells and rustles only during a gust; audition plays one gust. Not heard in a browser.

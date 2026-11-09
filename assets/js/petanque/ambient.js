@@ -6,8 +6,11 @@ export const AMBIENT = {
   level: 0.10, // the whole ambience bus (linear, into the game master). Boule knocks peak ~0.3-1 there.
   lookahead: 3, // s scheduled ahead
   bird: { gap: [3, 22], tailChance: 0.15, tailGap: [25, 45], answerChance: 0.35, answerDelay: [0.7, 2.2], maxVoices: 4, gain: 0.5 },
-  breeze: { gain: 0.07, swellGain: [0.35, 1], swellEvery: [4, 9], freq: [350, 950], q: 0.7, panRange: 0.6 },
-  rustle: { every: [14, 40], gain: 0.22, dur: [0.5, 1.1] },
+  // breeze: silent between gusts. A gust fades in, holds for `duration` with its swells, then fades out.
+  // `first` is the first gust after start, `gap` the silence between gusts (all s).
+  breeze: { gain: 0.07, swellGain: [0.35, 1], swellEvery: [4, 9], freq: [350, 950], q: 0.7, panRange: 0.6,
+    first: [10, 40], gap: [30, 90], duration: [6, 20], fadeIn: [3, 5], fadeOut: [4, 6] },
+  rustle: { every: [14, 40], gain: 0.22, dur: [0.5, 1.1] }, // rustles fall only inside a gust (every = mean spacing)
   plane: { every: [120, 300], first: [50, 130], dur: [22, 30], gain: 0.9, tone: 0.1 },
 };
 
@@ -44,8 +47,8 @@ export function createAmbient(ctx, dest) {
   const setPan = (n, v, t, tc) => { if (n.pan) n.pan.setTargetAtTime(v, t, tc); };
 
   let active = false, timer = 0;
-  let nextBird = 0, nextSwell = 0, nextRustle = 0, nextPlane = 0;
-  let breeze = null; // { src, g, bp, pan }
+  let nextBird = 0, nextGust = 0, nextPlane = 0;
+  let breeze = null; // live chain: { src, bp, g, pan, env }
   const birdEnds = []; // end times of live bird voices (cap)
 
   // ---- birds ----
@@ -113,18 +116,35 @@ export function createAmbient(ctx, dest) {
   }
 
   // ---- breeze ----
+  // noise -> band-pass -> swell gain -> pan -> gust envelope -> out. The envelope is 0 between gusts, so the
+  // noise can keep looping silently; all level changes are ramps (no clicks).
+  function breezeChain(t, out, dur) {
+    const c = { src: noise(t, dur), bp: ctx.createBiquadFilter(), g: ctx.createGain(), pan: panner(0), env: ctx.createGain() };
+    c.bp.type = 'bandpass'; c.bp.frequency.value = rr(A.breeze.freq); c.bp.Q.value = A.breeze.q;
+    c.g.gain.value = A.breeze.gain * 0.3;
+    c.env.gain.value = 0;
+    c.src.connect(c.bp).connect(c.g).connect(c.pan).connect(c.env).connect(out);
+    return c;
+  }
   function startBreeze(t) {
-    const src = noise(t, 0), bp = ctx.createBiquadFilter(), g = ctx.createGain(), pan = panner(0);
-    bp.type = 'bandpass'; bp.frequency.value = rr(A.breeze.freq); bp.Q.value = A.breeze.q;
-    g.gain.value = A.breeze.gain * 0.3;
-    src.connect(bp).connect(g).connect(pan).connect(bus);
-    breeze = { src, g, bp, pan };
-    nextSwell = t;
+    breeze = breezeChain(t, bus, 0);
   }
   function stopBreeze() {
     if (!breeze) return;
     try { breeze.src.stop(ctx.currentTime + 1); } catch (e) { /* ignore */ }
     breeze = null;
+  }
+  // One gust starting at t: fade in, swells and rustles through the hold, fade out. Returns its end time.
+  function gust(t, c, out, hold) {
+    const B = A.breeze, fi = rr(B.fadeIn), fo = rr(B.fadeOut), h = hold || rr(B.duration);
+    const holdStart = t + fi, holdEnd = holdStart + h, end = holdEnd + fo;
+    c.env.gain.setValueAtTime(0, t);
+    c.env.gain.linearRampToValueAtTime(1, holdStart);
+    c.env.gain.setValueAtTime(1, holdEnd);
+    c.env.gain.linearRampToValueAtTime(0, end);
+    for (let s = holdStart; s < holdEnd; s += rr(B.swellEvery)) swell(s, c);
+    for (let r = holdStart + rnd(0.5, 3); r < holdEnd; r += rr(A.rustle.every)) rustle(r, out);
+    return end;
   }
   function swell(t, tg = breeze) {
     if (!tg) return;
@@ -185,11 +205,9 @@ export function createAmbient(ctx, dest) {
         nextBird += Math.random() < A.bird.tailChance ? rr(A.bird.tailGap) : rr(A.bird.gap);
       }
       if (breeze) {
-        if (nextSwell < now) nextSwell = now;
-        while (nextSwell < horizon) { swell(nextSwell); nextSwell += rr(A.breeze.swellEvery); }
+        if (nextGust < now) nextGust = now + 0.1;
+        while (nextGust < horizon) nextGust = gust(nextGust, breeze, bus) + rr(A.breeze.gap);
       }
-      if (nextRustle < now) nextRustle = now + rr(A.rustle.every);
-      while (nextRustle < horizon) { rustle(nextRustle, bus); nextRustle += rr(A.rustle.every); }
       if (nextPlane < now) nextPlane = now + rr(A.plane.first);
       if (nextPlane < horizon && planeEnd < nextPlane) { plane(nextPlane, bus); nextPlane += rr(A.plane.every) + rr(A.plane.dur); }
     } catch (e) { /* ignore */ }
@@ -205,12 +223,13 @@ export function createAmbient(ctx, dest) {
       bus.gain.setTargetAtTime(on ? A.level : 0, t, on ? 1.5 : 0.15);
       if (on) {
         startBreeze(t);
+        nextGust = t + rr(A.breeze.first);
         if (!timer) timer = setInterval(tick, 400);
         tick();
       } else {
         stopBreeze();
         if (timer) { clearInterval(timer); timer = 0; }
-        nextBird = nextRustle = nextPlane = 0;
+        nextBird = nextGust = nextPlane = 0;
       }
     } catch (e) { /* ignore */ }
   }
@@ -222,14 +241,9 @@ export function createAmbient(ctx, dest) {
         const sp = NAMES[Math.floor(Math.random() * NAMES.length)], pan = rnd(-0.9, 0.9);
         const dur = bird(t, audBus, sp, pan, rnd(0.05, 0.5), 1);
         bird(t + dur + 1, audBus, sp, -Math.sign(pan || 1) * 0.7, 0.7, 1.08);
-      } else if (name === 'breeze') {
-        const b = { g: ctx.createGain(), bp: ctx.createBiquadFilter(), pan: panner(0) };
-        b.bp.type = 'bandpass'; b.bp.frequency.value = rr(A.breeze.freq); b.bp.Q.value = A.breeze.q;
-        b.g.gain.value = A.breeze.gain * 0.3;
-        const src = noise(t, 12);
-        src.connect(b.bp).connect(b.g).connect(b.pan).connect(audBus);
-        swell(t, b);
-        rustle(t + 5, audBus);
+      } else if (name === 'breeze') { // one full gust, stopping after its fade out
+        const c = breezeChain(t, audBus, 0);
+        c.src.stop(gust(t, c, audBus) + 0.2);
       } else if (name === 'plane') {
         plane(t, audBus);
         planeEnd = 0;
