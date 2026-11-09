@@ -818,10 +818,11 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F13 | done | haiku | — | Dead-jack void message gives the wrong reason |
 | F14 | done | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
 | F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
-| F16 | todo | sonnet | F04, F15, F17, F18, F19 | Round 5 review |
+| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20 | Round 5 review |
 | F17 | done | haiku | — | Remove "lands at …" landing-distance text from the status line |
 | F18 | done | haiku | — | Breeze only occasionally, fading in and out |
 | F19 | in-progress | sonnet | — | Distant lake with an occasional floatplane taking off or landing |
+| F20 | in-progress | sonnet | — | Better hands, relaxed arms while holding boules, richer idle animation |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -970,3 +971,9 @@ A Lake Union touch: a lake in the distance down-court (between the field and the
 - **Floatplane:** a low-poly prop plane on floats (single high wing, white/red), about once per full game at a random time: either takes off (taxi, accelerate along the water with a small spray trail, lift off and climb away into the distance) or lands (descends from the distance, touches down with spray, slows). Small and far away but readable; propeller spin hinted.
 - **Sound:** a synthesized single-engine prop drone (a buzzing tone with harmonics and a little rasp) panning with the plane's screen position, rising and falling with distance (and higher revs during take-off), mixed under the game sounds via the ambience bus (respects the Ambience toggle, mute and pause).
 - Debug: `?debug&floatplane=takeoff|landing` to trigger it now, plus a camera framing it; audition button for the engine sound. Freeze with the pause clock; no per-frame allocation.
+
+### F20 Hands, relaxed arms, idle animation (sonnet)
+- **Hands:** E16's mitten hands read like raised middle fingers. Redesign them so they read as hands at this scale: a palm with a thumb and a suggestion of fingers (e.g. a flattened palm box plus a short thumb capsule, fingers as one rounded block or 2–4 short capsules), still cheap, with the palm-roll from E16 and held boules sitting in the palm. Check from the shoulder, observer and broadcast close-ups.
+- **Arms while holding:** standing around holding boules, arms should hang relaxed at the sides (boules cupped at the hip) or sit akimbo (hands on hips), not held out in a carry pose. E16's `heldArms()` forces the carry pose; replace it with a relaxed hold and switch to the carry pose only while walking briskly. Personality: Marcel tends to akimbo, Odette arms by her sides or folded with boules, Pierre fidgets.
+- **Idle animation:** while waiting or watching, everyone moves a little all the time (breathing, weight shifts, small head turns tracking play, an occasional step) and, now and then, an interesting gesture: checking the boules in hand, wiping a boule on the trousers, shading the eyes to look at the head, a shrug, chatting gestures toward a teammate, tossing a boule from hand to hand (Pierre). Randomised timing per character, never in sync; respect reduced motion (subtler) and pause. Build on character.js's existing quirks (C12) without breaking release-point accuracy or tests.
+- Screenshots of the new hands close up and of idle poses.
