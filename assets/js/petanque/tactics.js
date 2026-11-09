@@ -28,7 +28,7 @@ export const profiles = {
   // dropOK (willingness to drop; scales the drop margin)
   marcel: { id: 'marcel', lambda0: 0.30, appetite: 0.5, awareness: 1.0, gate: 1.5, jackShy: 0.6, promote: 0.8, defend: 1.4, dropOK: 1.0, taste: { roulette: 0.22, demi: 0.06 } },
   odette: { id: 'odette', lambda0: 0.15, appetite: 1.3, awareness: 1.0, gate: 0.7, jackShy: 0, promote: 0.6, defend: 0.8, dropOK: 1.0, taste: { demi: 0.02 } },
-  pierre: { id: 'pierre', lambda0: 0.05, appetite: 1.6, awareness: 0.5, gate: 0.5625, jackShy: 0, promote: 1.5, defend: 0.4, dropOK: 0.5, taste: { demi: 0.04, tir: 0.08 } },
+  pierre: { id: 'pierre', lambda0: 0.12, appetite: 1.6, awareness: 1.0, gate: 0.5625, jackShy: 0, promote: 1.5, defend: 0.4, dropOK: 0.5, taste: { demi: 0.04, tir: 0.08 } }, // F23: shoot-leaning but sound
   advice: { id: 'advice', lambda0: 0.15, appetite: 1.0, awareness: 1.0, gate: 0.9, jackShy: 0, promote: 1.0, defend: 1.0, dropOK: 1.0, taste: {} }, // "You": neutral
 };
 // The partner's advice (Pierre by default): half their own temperament, half neutral
@@ -49,6 +49,7 @@ export const DIFFICULTY = {
   hard: { eps: 0.02, pw: 1.0, cap: 10, jackGain: 0.8, baMul: 1, noiseMul: 1, promote: 'on', promoteAlign: 20, promoteGain: 0.5, defense: true, spread: 1, drop: 'AB' },
 };
 export const PROMOTE_DRAW = 0.25;
+const FAR_HIT = 0.4; // F23: a long jack is only a long shot below this analytic hit chance (was 0.3 before Pierre's skill was raised)
 
 // Evaluator weights (12.4); wG is scaled by the principle weight
 export function evalParams(diff) {
@@ -582,7 +583,7 @@ export function plan(sit, cfg = DEFAULT_CFG, { loose = false } = {}) {
     // 12.12.1: a shot must beat the best point by a margin (personality gate / 4, R1 +0.2 per boule down, R2 -0.1 per boule up)
     // (the analytic hit chance runs under the sims, so the comparison uses it scaled up by SHOT_CALIB)
     const pCal = Math.min(0.9, pHit * SHOT_CALIB), Acal = pCal * G - (1 - pCal) * miss;
-    const far = !cfg.noMargin && dj > 9.5 && pHit < 0.3 && G < 2; // a long jack: the shot is a long shot unless the target is worth the whole mène
+    const far = !cfg.noMargin && dj > 9.5 && pHit < FAR_HIT && G < 2; // a long jack: the shot is a long shot unless the target is worth the whole mène
     if (!loose && (far || (!cfg.noMargin && Acal < Apoint + shootMargin))) {
       if (far) sit.farJack = sit.farJack || { dist: dj };
       out.dropped.push({ code: far ? 'farJack' : 'takePoint', ...info });
