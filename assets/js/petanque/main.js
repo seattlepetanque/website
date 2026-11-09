@@ -27,7 +27,7 @@ import { pickWaitingSlot, waitingSlots } from './waiting.js';
 import { attachModels } from './models.js';
 import { createGroundView } from './groundview.js';
 import { isPhone } from './scenery.js';
-import { PERSONALITIES, CAST_IDS, specFor, pickStance, createCommentary, whoKind, composeSuggestion } from './personalities.js';
+import { PERSONALITIES, CAST_IDS, specFor, pickStance, stanceFor, STAND_BEYOND, createCommentary, whoKind, composeSuggestion } from './personalities.js';
 
 let TEAM_NAMES = teamNamesFor('pierre'); // F45: reset in startGame for the chosen partner
 const TEAM_TROUSERS = ['#23396b', '#8a5a2b']; // navy for your team, bronze for the opponents (F45: by team, whoever is on it)
@@ -311,10 +311,24 @@ function boot() {
   // Stance of each player's current throw: picked when they step into the circle (enterCircle), used by the preview,
   // the AI plan, the throw pose and the launch alike
   const throwStance = {};
+  const throwRoll = {}; // F33: the one random draw per throw behind a crouch-or-stand choice (reused if the stance is re-decided)
   const stanceOf = (id) => throwStance[id] || SPECS[id].stance;
-  function handFrom(id, loft, yaw) {
+  // F33: the stance for a throw of `distance` m (undefined = not known yet), from the throw's fixed roll
+  const stanceAtDistance = (id, distance) => stanceFor(SPECS[id], distance, () => throwRoll[id] ?? 0);
+  // Distance from the circle to a point ({x, y}); NaN without one
+  const circleDist = (p) => (p ? Math.hypot(p.x - court.circle.x, p.y - court.circle.y) : NaN);
+  // F33: after planning, make the stance match the planned donnée distance; true when it changed (the plan must be redone)
+  function restance(id, choice) {
+    if (!choice || !choice.donnee) return false;
+    const want = stanceAtDistance(id, circleDist(choice.donnee));
+    if (want === stanceOf(id)) return false;
+    throwStance[id] = want;
+    if (inCircle === id) cast.get(id).setStance(want);
+    return true;
+  }
+  function handFrom(id, loft, yaw, stance = stanceOf(id)) {
     const spec = SPECS[id];
-    const o = releaseOffset({ height: spec.height, stance: stanceOf(id), loft, yaw, hand: spec.hand, model: cast.get(id).isMesh ? spec.model : null });
+    const o = releaseOffset({ height: spec.height, stance, loft, yaw, hand: spec.hand, model: cast.get(id).isMesh ? spec.model : null });
     return { x: court.circle.x + o.x, y: court.circle.y + o.y, z: terrain.sample(court.circle.x, court.circle.y).h + o.z };
   }
   function releasePoint(player, loft) {
@@ -658,7 +672,12 @@ function boot() {
     shadow(id, true);
     for (const [oid, och] of cast) if (oid !== id && oid !== inCircle && !och.busy) och.setStance('watch');
     if (stanceKept === id) stanceKept = null; // E17: beginTurn's walk to the circle already picked this throw's stance
-    else throwStance[id] = pickStance(SPECS[id], stanceRand); // once per throw: the same stance for the plan, the pose and the launch
+    else { // once per throw: the same stance for the plan, the pose and the launch (F33: standing beyond 7.5 m; for a boule the
+      // jack is the estimate of the target, a jack throw is re-checked after planning)
+      const spec = SPECS[id], jk = jackBody();
+      throwRoll[id] = spec.stances && spec.stances.length > 1 ? stanceRand() : 0; // draws exactly as pickStance did
+      throwStance[id] = stanceAtDistance(id, !jack && jk && !jk.dead ? circleDist(jk) : undefined);
+    }
     ch.setStance(stanceOf(id));
     if (jack) ch.setHeldBoules(null); // E23: a jack throw shows no boules in the hands
     ch.setHolding(jack ? 'jack' : 'boule', jack ? undefined : teamColor(id));
@@ -1148,6 +1167,7 @@ function boot() {
     let choice;
     try {
       choice = chooseJackThrow({ world, difficulty, rand: aiRand, player, from: base, geometry: match && match.geometry });
+      if (restance(player.id, choice)) choice = chooseJackThrow({ world, difficulty, rand: aiRand, player, from: base, geometry: match && match.geometry }); // F33
     } catch (err) { // never stall the game: a plain lob to about 8 m
       console.error(err);
       choice = { label: `${player.name} throws the cochonnet`, throwParams: { yaw: baseYaw(), speed: 5, loft: 0.9, backspin: 10, sidespin: 0 } };
@@ -1216,6 +1236,7 @@ function boot() {
         cached || chooseThrowAsync({ world, match, player, difficulty, rand: aiRand, from: base }),
         sleep(AI_MIN_THINK),
       ]);
+      if (restance(player.id, choice)) choice = await chooseThrowAsync({ world, match, player, difficulty, rand: aiRand, from: base }); // F33: re-plan once with the corrected stance
       await clock.resumed(); // D12: a decision that finishes while paused waits for Resume
     } catch (err) {
       console.error(err);
@@ -1239,7 +1260,9 @@ function boot() {
   function aiBase(player) {
     const jk = jackBody(), c = court.circle;
     const yaw = jk && !jk.dead ? Math.atan2(jk.x - c.x, jk.y - c.y) : baseYaw();
-    return { x: c.x, y: c.y, release: (l) => handFrom(player.id, l, yaw) };
+    // F33: advice is planned for a throw at the jack: standing beyond 7.5 m, else the stance the thrower has now
+    const stance = jk && !jk.dead && circleDist(jk) > STAND_BEYOND ? 'stand' : stanceOf(player.id);
+    return { x: c.x, y: c.y, release: (l) => handFrom(player.id, l, yaw, stance) };
   }
 
   // Your partner looks at the court and tells you what they would do

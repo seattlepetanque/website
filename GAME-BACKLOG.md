@@ -822,7 +822,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F46 | done | sonnet | - | Scenery: grass edge near distant trees/skyline looks foggy; lake half the size and bluer; distant forest hilly with more mountains behind |
 | F45 | done | sonnet | F35 | Setup dialog: choose partner from Pierre/Marcel/Odette (default Pierre); tighten the dialog's layout |
 | F41 | done | haiku | - | End-of-mène bar overlaps the bottom-right icon cluster and hides the Next button |
-| F33 | todo | sonnet | F04 | Nobody crouches for throws over 7.5 m |
+| F33 | done-unverified | sonnet | F04 | Nobody crouches for throws over 7.5 m |
 | F32 | in-progress | sonnet | — | Simplified in-game controls: always-on roll guide, icon cluster, hamburger menu, minimal pause screen |
 | F31 | done | haiku | — | Cap reported scores at the game target (13) |
 | F30 | done | haiku | F29 | Landing button: plane lands in the background, no camera change |
@@ -1185,3 +1185,5 @@ F52 outcome: committed; the agent was stopped after about 2.5 h without a final 
 F27 outcome: done in ai.js only (root cause: main.js's pierreChoice cache was declared but never set). The partner's advice decision records its plan per team keyed to the court state; the partner's own decision then follows that family/intent/style (shot target within 0.2 m), once, with no random tactical error. Works for any partner (F45). Tests: f27.test.js (3 partners x 6 layouts), no tolerance changes.
 
 F39 outcome: implemented (camera.js walkSubject + OBS.walkLead 3 m; main.js startHumanWalk/followHumanWalk driven per frame in slow mode for the human's walk to the circle and the human jack thrower's walk to the new circle; ends when the human arrives, aims, a ball is in flight, or on skip; quick/instant unchanged). Tests 329/329. NOT verified live (headless runs never showed a mid-walk frame): please watch a slow-mode game and check the follow is smooth and ends in the shoulder view.
+
+F33 outcome: stanceFor(spec, distance, rand) in personalities.js (STAND_BEYOND = 7.5: everyone stands beyond 7.5 m, no random draw; Pierre's 50/50 unchanged below). main.js enterCircle uses the distance to the jack for boule throws and restance() re-plans once after planning if the stance does not match the planned donnee distance; aiBase plans standing for far jacks. Tests 330/330. Not checked in a running game: please watch a long throw (over 7.5 m) and confirm nobody crouches.

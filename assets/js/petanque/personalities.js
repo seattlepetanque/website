@@ -60,6 +60,16 @@ export function pickStance(spec, rand) {
   return options[Math.min(options.length - 1, Math.floor(rand() * options.length))];
 }
 
+// F33: nobody crouches for a throw longer than this (metres, circle centre to the planned landing spot / target)
+export const STAND_BEYOND = 7.5;
+
+// The stance for one throw given its distance: standing for everyone beyond STAND_BEYOND (no draw from `rand`),
+// else the personality's pickStance. Pass an undefined/NaN distance when the target is not known yet.
+export function stanceFor(spec, distance, rand) {
+  if (Number.isFinite(distance) && distance > STAND_BEYOND) return 'stand';
+  return pickStance(spec, rand);
+}
+
 // ---------- commentary pools ----------
 // Events: spotPoint, spotShoot, spotJack (as the AI picks its spot), jackPlace (as it places your invalid jack), good (takes or extends the point), great
 // (biberon), carreau, miss, dead (dead boule), oppScores (an opponent just took the point), ownScores (your
