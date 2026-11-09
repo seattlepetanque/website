@@ -813,6 +813,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F42 | done | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
 | F43 | on-hold | sonnet | F44 | Timbers half buried where the ground is higher (F25 heights) |
 | F44 | in-progress | sonnet | F42 | User chose: revert F25 (terrain shapes) |
+| F51 | todo | sonnet | F45 | End of mène: ring move and boule collection run at the same time (no waiting for the ring) |
 | F50 | done | sonnet | F46 | Distant mountains smaller and rocky, no snow (Rainier unchanged) |
 | F49 | todo | sonnet | F04 | Medium AI decision slow again after F04 (345 ms quiet vs 100 ms test); time-boxed profiling and fix |
 | F48 | done | sonnet | F35, F45 | Move Adjust view / Read the ground / View(head) out of the hamburger into translucent hold-to-use icons; pan clamped to allowed region |
@@ -1159,3 +1160,6 @@ User: the plane appears out of nowhere for the takeoff. It should be normally vi
 
 ### F50 Distant mountains rocky, smaller, no snow (sonnet)
 User: the distant mountains (the three layered ranges added in F46 in `scenery.js`) should be smaller and rocky (craggy grey-brown/blue-grey rock with haze), not snow-capped. Mount Rainier stays exactly as is (snow included). Reduce the ranges' height; remove snow dusting from them; add rocky texture/ridge detail in the painted textures. Scenery.js only.
+
+### F51 Ring move and boule collection in parallel (sonnet)
+User: the movement of the ring and the collection of boules can happen at the same time; no need to wait for the ring. Today (F28 `runCollect` in `main.js`) the ring holder / jack thrower waits as before and collection is staggered around it. Make the ring relocation (the holder carrying/placing the ring, F22/F24 ring flow) run concurrently with all players' locate/kick/walk/pick-up, only keeping what's needed for correctness (the ring must not be placed on a boule or person: pick the new ring spot by `court.circle`/`nextCircle`, which is already known at mène end; the jack-thrower must still wait for the ring and for their own boules before the next mène starts, i.e. the next mène starts when both are finished). Keep the 14 s fallback and click/key skip, quick mode unchanged, no stuck-ring regressions (F24). Run after F45 (main.js). Tests: pure sequencing helper if possible.
