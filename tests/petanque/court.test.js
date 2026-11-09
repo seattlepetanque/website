@@ -184,3 +184,27 @@ test('F10: the ring after a dead jack is centred near its last in-bounds spot', 
     assert.ok(n.circle.x >= 0 && n.circle.x <= W && Math.abs(n.circle.x - spot.x) <= 1.5);
   }
 });
+
+test('F24: after a mène the court circle and dir are exactly nextCircle of the last jack, from either mène end', () => {
+  const W = C.terrainW, L = C.terrainL;
+  try {
+    for (const dir of [1, -1]) {
+      for (const jack of [{ x: 2.3, y: 9.2 }, { x: 1.1, y: L - 2 }, { x: 3.4, y: 2.5 }, { x: 2.0, y: 7.0, dead: true, spot: { x: 2.2, y: L - 0.3 } }]) {
+        const circle = dir > 0 ? { x: 2, y: 1 } : { x: 2, y: L - 1 };
+        resetCourt(); setCourt(circle, dir);
+        const base = createMatch({ target: 13, players: undefined });
+        const m = { ...base, phase: 'meneEnd', jack, boules: [], result: { void: true }, geometry: { ...base.geometry, circle: { ...circle }, dir } };
+        const spot = jack.dead && jack.spot ? jack.spot : jack;
+        const want = nextCircle(spot, court.dir, { width: m.geometry.width, length: m.geometry.length });
+        const next = apply(m, { type: 'nextMene' });
+        assert.deepEqual(next.geometry.circle, { x: want.circle.x, y: want.circle.y });
+        assert.equal(next.geometry.dir, want.dir);
+        assert.equal(want.dir, -dir, 'play turns to the other end');
+        setCourt(next.geometry.circle, next.geometry.dir); // what main.js applyCourt does in quick, slow and instant mode alike
+        assert.equal(court.circle.x, want.circle.x); assert.equal(court.circle.y, want.circle.y);
+        assert.equal(court.throwFrom.x, want.circle.x); assert.equal(court.throwFrom.y, want.circle.y);
+        assert.equal(court.dir, want.dir);
+      }
+    }
+  } finally { resetCourt(); }
+});

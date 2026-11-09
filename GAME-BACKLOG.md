@@ -826,7 +826,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F21 | done | haiku | — | Remove the coloured team rings around boules |
 | F22 | done | sonnet | — | Mène-end card never hides the scoring circle or its labels |
 | F23 | todo | sonnet | F04, F25 | Rebalance: Pierre strong and well-rounded (prefers shooting); Medium opponents beatable |
-| F24 | in-progress | sonnet | — | Bug: in quick mode the circle isn't placed at the start of a new mène |
+| F24 | done | sonnet | — | Bug: in quick mode the circle isn't placed at the start of a new mène |
 | F25 | in-progress | sonnet | — | Court shapes: broad, readable slopes (tilt, hills, ridges, basins) instead of noise |
 
 ### F01 Sports-broadcast follow camera (sonnet)
@@ -1023,3 +1023,6 @@ The F05 slope field reads as noise. Real courts have a few broad features player
 - **Telling the player:** expose the chosen archetype and its main direction (e.g. "court slopes downhill toward the far end and to the left"), shown subtly in the F05 Read-the-ground legend, and maybe a line of Pierre or Marcel commentary at the first mène ("Watch it, it all runs left here").
 - **Consistency:** keep `perceived()` consistent (the AI sees the same broad shape), re-run measure-throws briefly, and keep divots and firmness untouched.
 - **Tests:** each archetype's gradient field is coherent (the gradient direction varies slowly: e.g. average angular change between neighbouring cells below a threshold), max gradient within range, the dominant-feature share holds, deterministic per seed. Screenshots of the Read-the-ground view for a few archetypes.
+
+### F24 notes
+- Cause: the slow-mode carry ends with `renderer.setRingPose({...})`, which set `ringHeld = true` forever, so later `syncCourt`/`tickRing` never moved the ring (quick mode after any slow carry, or a new game). Fix: `applyCourt` releases the ring (`setRingPose(null)`) when nobody is carrying it. Court-state test added; the renderer flag itself isn't testable in Node. Not run through a real slow-then-quick session.

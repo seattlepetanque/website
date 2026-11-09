@@ -657,8 +657,18 @@ export function createRenderer(canvas, terrain) {
   }
   // D07 mène end: soft disc on the jack holding every scoring boule, numbered badges and distance labels.
   // o: { radius, fill, edge, items: [{ x, y, n }], rival: { x, y, r, label } | null } (the rival gets a label only)
+  // F22: showScoring remembers its arguments; fitScoring (below) rebuilds it with the result card as an obstacle
+  let scoringArgs = null, scoringFit = null;
   function showScoring(jack, o) {
+    scoringArgs = { jack, o }; scoringFit = null;
+    return buildScoring(jack, o, null);
+  }
+  // returns { pts: world points (ground) the view must show: circle, boules, badges and label corners }
+  function buildScoring(jack, o, obst) {
     clearMeasure();
+    const pts = [];
+    for (let k = 0; k < 24; k++) pts.push({ x: jack.x + Math.cos(k * Math.PI / 12) * o.radius, y: jack.y + Math.sin(k * Math.PI / 12) * o.radius });
+    for (const q of o.others || []) pts.push({ x: q.x - (q.r || 0.037), y: q.y - (q.r || 0.037) }, { x: q.x + (q.r || 0.037), y: q.y + (q.r || 0.037) });
     scoring.add(groundRing(jack.x, jack.y, 0, o.radius, o.fill, 0.3, 0.014, 2));
     const hw = Math.min(0.009, Math.max(0.0035, o.radius * 0.05)); // E17: a tiny circle gets a thin line, never an inflated one
     scoring.add(groundRing(jack.x, jack.y, o.radius - hw, o.radius + hw, o.edge, 0.95, 0.018, 3)); // centred on the radius
@@ -679,6 +689,7 @@ export function createRenderer(canvas, terrain) {
         if (m >= 0 && k === 0) break;
       }
       badges.push(best);
+      pts.push({ x: best.x - BR, y: best.y - BR }, { x: best.x + BR, y: best.y + BR });
       const spr = badgeSprite(String(it.n), o.edge, '#fff');
       spr.position.set(best.x, best.y, terrain.sample(best.x, best.y).h + 0.09);
       scoring.add(spr);
@@ -695,6 +706,7 @@ export function createRenderer(canvas, terrain) {
         const dx = Math.max(Math.abs(cx - q.x) - LW / 2, 0), dy = Math.max(Math.abs(cy - q.y) - LH / 2, 0);
         if (dx * dx + dy * dy < q.r * q.r) return true;
       }
+      if (obst && obst(cx, cy, LW / 2, LH / 2)) return true; // F22: under the result card
       return boxes.some((b) => Math.abs(b.x - cx) < LW + 0.01 && Math.abs(b.y - cy) < LH + 0.01);
     };
     const placeLabel = (b, text, bg, border) => {
@@ -715,12 +727,71 @@ export function createRenderer(canvas, terrain) {
         }
       }
       boxes.push({ x: pick.x, y: pick.y });
+      pts.push({ x: pick.x - LW / 2, y: pick.y - LH / 2 }, { x: pick.x + LW / 2, y: pick.y + LH / 2 });
       const spr = labelSprite(text, '#fff', bg, border);
       spr.position.set(pick.x, pick.y, terrain.sample(pick.x, pick.y).h + 0.1);
       scoring.add(spr);
     };
     for (const it of o.items) if (it.label) placeLabel(it, it.label, o.dark, o.color);
     if (o.rival && o.rival.label) placeLabel(o.rival, o.rival.label, 'rgba(110,110,110,0.88)', '#e8e8e8');
+    return { pts };
+  }
+  // F22: frame the whole scoring view (circle, boules, badges, labels) into the screen region the HUD and the result card
+  // leave free. measure() -> { free: {l,t,r,b}, card: {l,t,r,b} | null } in canvas pixels. A near top-down camera at
+  // elevation el; the target and distance are solved by projecting the content into the free box, and the labels are
+  // re-placed with the card rect as an obstacle. Re-runs on resize.
+  function fitScoring(measure, el = 1.38) {
+    if (!scoringArgs) return;
+    scoringFit = { measure, el };
+    solveScoring(true);
+  }
+  function solveScoring(cut) {
+    const { jack, o } = scoringArgs, { measure, el } = scoringFit;
+    const W = canvas.clientWidth || 1, H = canvas.clientHeight || 1;
+    const m = measure(), fr = m.free || { l: 0, t: 0, r: W, b: H };
+    const pad = Math.max(10, Math.min(W, H) * 0.03);
+    const box = { l: fr.l + pad, t: fr.t + pad, r: fr.r - pad, b: fr.b - pad };
+    const cam = camera.clone(); cam.aspect = W / H; cam.updateProjectionMatrix();
+    const place = (tx, ty, dist) => {
+      const gz = terrain.sample(tx, ty).h;
+      cam.position.set(tx, ty - court.dir * Math.cos(el) * dist, gz + Math.sin(el) * dist);
+      cam.up.set(0, 0, 1); cam.lookAt(tx, ty, gz); cam.updateMatrixWorld(true);
+    };
+    const v = new THREE.Vector3();
+    const px = (x, y) => { v.set(x, y, terrain.sample(x, y).h).project(cam); return { x: (v.x + 1) / 2 * W, y: (1 - v.y) / 2 * H }; };
+    const bounds = (pts) => {
+      let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+      for (const p of pts) { const q = px(p.x, p.y); l = Math.min(l, q.x); r = Math.max(r, q.x); t = Math.min(t, q.y); b = Math.max(b, q.y); }
+      return { l, t, r, b };
+    };
+    const hitsCard = (cx, cy, hw, hh) => {
+      if (!m.card) return false;
+      const c = m.card, g = 8;
+      const xs = [], ys = [];
+      for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { const q = px(cx + sx * hw, cy + sy * hh); xs.push(q.x); ys.push(q.y); }
+      return Math.min(...xs) < c.r + g && Math.max(...xs) > c.l - g && Math.min(...ys) < c.b + g && Math.max(...ys) > c.t - g;
+    };
+    let tx = jack.x, ty = jack.y, dist = 1.4, pts = scoringArgs.pts || [{ x: jack.x, y: jack.y }];
+    for (let pass = 0; pass < 3; pass++) { // labels depend on the camera and the camera on the labels
+      place(tx, ty, dist);
+      pts = buildScoring(jack, o, hitsCard).pts;
+      for (let it = 0; it < 24; it++) {
+        place(tx, ty, dist);
+        const bb = bounds(pts), bw = bb.r - bb.l, bh = bb.b - bb.t;
+        const s = Math.max(bw / (box.r - box.l), bh / (box.b - box.t));
+        const dx = (box.l + box.r) / 2 - (bb.l + bb.r) / 2, dy = (box.t + box.b) / 2 - (bb.t + bb.b) / 2;
+        if (Math.abs(s - 1) < 0.01 && Math.abs(dx) < 1 && Math.abs(dy) < 1) break;
+        // shift the target by the measured screen response of a 0.1 m step in x and y
+        const c0 = px(tx, ty), cx = px(tx + 0.1, ty), cy = px(tx, ty + 0.1);
+        const a = (cx.x - c0.x) / 0.1, b = (cy.x - c0.x) / 0.1, c = (cx.y - c0.y) / 0.1, d = (cy.y - c0.y) / 0.1, det = a * d - b * c || 1e-6;
+        // want the content to move by (dx, dy): move the target the other way
+        tx -= (d * dx - b * dy) / det * 0.8; ty -= (-c * dx + a * dy) / det * 0.8;
+        dist = Math.max(0.9, Math.min(16, dist * (s > 1 ? s : Math.max(s, 0.9)) ** 0.9));
+      }
+    }
+    scoringArgs.pts = pts;
+    const fitOpts = { now: true, target: { x: jack.x, y: jack.y }, exact: { x: tx, y: ty, dist }, el };
+    if (cut) setCamera('head', fitOpts); else { opts = fitOpts; computeGoal(0, true); cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt); }
   }
   function labelSprite(text, color, bg, border) {
     const cv = makeCanvas(160, 64), g = cv.getContext('2d');
@@ -743,6 +814,7 @@ export function createRenderer(canvas, terrain) {
   // must stay clear of. The label sits beyond its boule, away from the jack, unless that lands on a neighbour or on
   // the other label, in which case the nearest clear direction round the boule is used.
   function showMeasure(jack, items, others = []) {
+    scoringFit = null; scoringArgs = null;
     clearMeasure();
     const jz = terrain.sample(jack.x, jack.y).h;
     const taken = []; // centres of labels already placed
@@ -1248,6 +1320,12 @@ export function createRenderer(canvas, terrain) {
       goal.tgt.set(b.x + heading.x * 2.5, b.y + heading.y * 2.5, Math.max(0, b.z * 0.4));
     } else if (mode === 'head') {
       const t = opts.target || { x: 2, y: 8 };
+      if (opts.exact) { // F22: a camera solved by fitScoring: target and distance given
+        const e = opts.exact, el2 = opts.el || 1.38, gz = groundZ(e);
+        goal.tgt.set(e.x, e.y, gz);
+        goal.pos.set(e.x, e.y - court.dir * Math.cos(el2) * e.dist, gz + Math.sin(el2) * e.dist);
+        return;
+      }
       // frame the target plus any listed points (nearby live boules) with a margin
       let x0 = t.x, x1 = t.x, y0 = t.y, y1 = t.y;
       for (const p of opts.points || []) {
@@ -1497,6 +1575,7 @@ export function createRenderer(canvas, terrain) {
     // keep the court in view on tall (phone) screens
     camera.fov = camera.aspect < 1 ? 62 : 50;
     camera.updateProjectionMatrix();
+    if (scoringFit && scoringArgs && mode === 'head' && opts.exact) solveScoring(false); // F22: re-fit the circle into the new free region
   }
   let ro = null;
   if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(resize); ro.observe(canvas); }
@@ -1552,5 +1631,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, clearMeasure, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  return { sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
 }

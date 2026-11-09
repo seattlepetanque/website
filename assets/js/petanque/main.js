@@ -1244,6 +1244,9 @@ function boot() {
   }
   // The circle and direction become the new ones: aim, camera and zones follow (court.js is the single source)
   function applyCourt(circle, dir, fade) {
+    // F24: a slow-mode put-down leaves the ring pose "held" (render.js ignores the circle while it is), so a later quick-mode
+    // move or a new game never moved it. Nobody is carrying it here, so release it (still at the old spot) before the court moves.
+    if (!ringCarry) renderer.setRingPose(null);
     setCourt(circle, dir);
     aimYaw = baseYaw(); throwerYaw = aimYaw; shoulderCam.yaw = aimYaw;
     shoulderCam.viewYaw = 0; shoulderCam.viewPitch = 0;
@@ -2054,6 +2057,19 @@ function boot() {
       return;
     }
     hud.showMeneEnd({ text, detail: `${detail} Score: ${match.scores[0]} to ${match.scores[1]}. ${voices('meneWon', 'meneLost')}`.trim() });
+    // F22: with the card up, frame the circle, badges and labels into whatever the card and the top HUD leave free
+    if (scoringShown) renderer.fitScoring(() => {
+      const cv = canvas.getBoundingClientRect(), rel = (r) => ({ l: r.left - cv.left, t: r.top - cv.top, r: r.right - cv.left, b: r.bottom - cv.top });
+      const card = root.querySelector('.pt-overlay.pt-mene-end .pt-card');
+      const free = { l: 0, t: 0, r: cv.width, b: cv.height };
+      for (const n of root.querySelectorAll('.pt-board, .pc-bar')) {
+        const r = n.getBoundingClientRect();
+        if (r.height > 0 && r.bottom < cv.top + cv.height * 0.4) free.t = Math.max(free.t, r.bottom - cv.top);
+      }
+      let cr = null;
+      if (card) { cr = rel(card.getBoundingClientRect()); free.b = Math.min(free.b, Math.max(free.t + 40, cr.t)); }
+      return { free, card: cr };
+    });
     if (instant && !params.has('meneend')) later(() => nextMene(), 0);
   }
 
@@ -2348,7 +2364,7 @@ function boot() {
 
   if (debug) {
     window.__petanque = {
-      world, terrain, renderer, seed, reset: toSetup, startGame,
+      world, terrain, renderer, seed, reset: toSetup, startGame, court,
       audio,
       setPlaying, clock,
       get paused() { return pausedNow; },
@@ -2372,6 +2388,21 @@ function boot() {
   } else if (debug && params.has('aispot')) {
     // Real-time game where Marcel throws the jack first: screenshot while he shows his spot
     startGame({ target: 7, difficulty: 'medium', firstJackTeam: 1 });
+  } else if (debug && params.has('mescenario')) {
+    // F22: ?debug&play&mescenario=small|big|close[&mdir=-1]: a mène end with a fixed layout, to check the result card against the scoring view
+    startGame({ target: 7, difficulty: 'medium', firstJackTeam: 0 });
+    token++; pending = null; clearWorld();
+    const jb = createBody('jack', { team: -1, x: 2.3, y: 9.2 }); jb.z = jb.r; world.add(jb);
+    const lay = { small: [[0, 0.11, 0.1], [1, -0.4, 0.3], [1, 0.5, -0.5], [0, -0.7, -0.4]],
+      big: [[0, 0.1, 0.08], [0, -0.12, 0.12], [0, 0.02, -0.18], [0, 0.22, -0.1], [0, -0.26, -0.05], [1, 0.0, 0.62], [1, -0.7, -0.3]],
+      close: [[0, 0.16, 0.0], [1, -0.16 - 0.007, 0], [0, 0.6, 0.5], [1, -0.5, -0.6]] }[params.get('mescenario')] || [];
+    for (const [t, dx, dy] of lay) { const b = createBody('boule', { team: t, x: 2.3 + dx, y: 9.2 + dy }); b.z = b.r; world.add(b); }
+    renderer.sync(world);
+    match = { ...match, phase: 'meneEnd', jack: { x: 2.3, y: 9.2 }, boules: [], result: meneResult(jb, world.bodies.filter((b) => b.kind === 'boule')) };
+    lastThrowerId = 'marcel';
+    for (const id of cast.keys()) placeAt(id, homeAt(id).x, homeAt(id).y, homeYaw(id));
+    setPlaying(true);
+    endOfMene('');
   } else if (debug && params.has('mene2')) {
     // ?debug&mene2[&ringcarry][&timerframes]: the first mène is over (jack at 2.3, 9.2, so the ring is carried back to 11 m) and the second begins: quick mode shows
     // the human's jack turn toward y = 0; &ringcarry (slow mode) shows the last thrower carrying the ring there

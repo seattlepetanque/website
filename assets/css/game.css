@@ -152,7 +152,7 @@ html.petanque-playing main { overflow: visible; }
 .petanque.is-playing {
   --st: env(safe-area-inset-top, 0px); --sr: env(safe-area-inset-right, 0px);
   --sb: env(safe-area-inset-bottom, 0px); --sl: env(safe-area-inset-left, 0px);
-  --pt-glass: color-mix(in srgb, var(--paper, #fffaf0) 88%, transparent);
+  --pt-glass: color-mix(in srgb, var(--paper, #fffaf0) 97%, transparent);
   position: fixed; inset: 0; z-index: 1000; width: 100%; max-width: none; margin: 0;
   height: 100vh; height: 100dvh;
   padding: calc(var(--st) + .4rem) calc(var(--sr) + .4rem) calc(var(--sb) + .4rem) calc(var(--sl) + .4rem);
@@ -229,7 +229,19 @@ html.petanque-playing main { overflow: visible; }
 }
 .petanque.is-playing .pt-overlay.pt-mene-end { align-items: flex-end; }
 .petanque.is-playing .pt-card { max-height: 100%; overflow-y: auto; padding: .9rem 1.1rem; background: var(--pt-glass); }
-.petanque.is-playing .pt-mene-end .pt-card { max-height: 45%; padding: .6rem 1rem; }
+/* F22: the mène-end card is a slim, slightly see-through bar along the bottom (headline and button on one row, a two-line
+   detail under the headline); main frames the scoring circle into the space above it */
+.petanque.is-playing .pt-mene-end .pt-card {
+  max-width: none; max-height: 30%; padding: .4rem .8rem; text-align: left; overflow: hidden;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "title btn" "blurb btn"; align-items: center; column-gap: 1rem;
+  background: color-mix(in srgb, var(--paper, #fffaf0) 97%, transparent);
+}
+.petanque.is-playing .pt-mene-end .pt-card-title { grid-area: title; margin: 0; font-size: 1.05rem; }
+.petanque.is-playing .pt-mene-end .pt-blurb {
+  grid-area: blurb; margin: 0; font-size: .82rem; line-height: 1.25;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+}
+.petanque.is-playing .pt-mene-end .pt-next { grid-area: btn; min-height: 2.4rem; padding: .3rem 1rem; }
 .petanque.is-playing .pt-mene-end .pt-card-title, .petanque.is-playing .pt-card-title { font-size: 1.2rem; }
 .petanque.is-playing .pt-blurb { margin-bottom: .6rem; font-size: .9rem; }
 
@@ -281,13 +293,18 @@ html.petanque-playing main { overflow: visible; }
   .petanque.is-playing .pt-turn { flex: 0 0 auto; }
   .petanque.is-playing .petanque-status { flex: 1 1 12rem; min-width: 0; }
   .petanque.is-playing .pt-fieldset { margin-bottom: .4rem; }
-  .petanque.is-playing .pt-mene-end .pt-card { max-height: 60%; }
+  .petanque.is-playing .pt-mene-end .pt-card { max-height: 45%; }
 }
 /* narrow portrait: stack the scoreboard's mène line above the teams (already in the page rule), shrink further */
 @media (max-width: 34rem) {
   .petanque.is-playing { padding: calc(var(--st) + .3rem) calc(var(--sr) + .3rem) calc(var(--sb) + .3rem) calc(var(--sl) + .3rem); border-width: 0; }
   .petanque.is-playing .pt-overlay { top: 0; left: 0; right: 0; aspect-ratio: auto; padding: .5rem; }
   .petanque.is-playing .pt-board { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .2rem .3rem; }
+  /* F22: a smaller stacked card on a phone */
+  .petanque.is-playing .pt-mene-end .pt-card { display: block; text-align: center; padding: .35rem .6rem; max-height: 32%; }
+  .petanque.is-playing .pt-mene-end .pt-card-title { font-size: .95rem; margin: 0 0 .15rem; }
+  .petanque.is-playing .pt-mene-end .pt-blurb { font-size: .75rem; -webkit-line-clamp: 3; line-clamp: 3; margin-bottom: .3rem; }
+  .petanque.is-playing .pt-mene-end .pt-next { min-height: 2.25rem; width: 100%; }
   .petanque.is-playing .pt-mene { grid-column: 1 / -1; grid-row: 1; text-align: center; }
   .petanque.is-playing .pt-team { padding: .1rem .35rem; }
   .petanque.is-playing .pt-team-head { font-size: .78rem; }
