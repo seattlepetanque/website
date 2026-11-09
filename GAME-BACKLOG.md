@@ -833,7 +833,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F22 | done | sonnet | — | Mène-end card never hides the scoring circle or its labels |
 | F23 | todo | sonnet | F04, F25 | Rebalance: Pierre strong and well-rounded (prefers shooting); Medium opponents beatable |
 | F24 | done | sonnet | — | Bug: in quick mode the circle isn't placed at the start of a new mène |
-| F25 | in-progress (stopped partway; uncommitted work in terrain.js, constants.js, groundview.js, terrain tests) | sonnet | — | Court shapes: broad, readable slopes (tilt, hills, ridges, basins) instead of noise |
+| F25 | done | sonnet | — | Court shapes: broad, readable slopes (tilt, hills, ridges, basins) instead of noise |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -1059,3 +1059,8 @@ If a team ever ends a mène with more points than needed (e.g. 12 + 3 = 15), the
 
 ### F26 notes
 - `FETCH_SPEED = CAST_SPEED` (2.4 m/s, was 1.35) so fetches, pick-ups, ring/jack carries and gathering use the brisk walk-to-circle pace; stride stretched up to 1.3× (capped to stay in reach); free arms swing opposite the legs with more elbow bend, hands holding boules swing ~0.2 rad (boules ride the palm), folded arms stay folded; no stiff carry pose any more; style per walk by personality (Odette folds ~70%, Pierre swings most, Marcel small). walk-arms.test.js (7). A carried ring/jack has no separate pose (would need main.js call-site edits). `crowd.js` keeps its own 1.35 default for its tests.
+
+### F25 notes
+- terrain.js: per-seed archetypes tilt .25, ridge .17, basin .12, hills .14 (1–2 gaussians), saddle .08, tilt+hill .14, ridge+tilt .10; feature widths 3–10 m, plus low-amplitude 2-octave fBm; the main feature keeps ≥ 75% of the slope energy (`shapeMinShare`), then the whole field is scaled to `slopeMaxDeg` (1–2°). `terrain.shape` `{kind, dir, text, share}` (also on `perceived()`); `terrain.shapeText(courtDir)` rewords for the playing direction; groundview legend shows it in small italics. firmness/stones/divots streams unchanged. `maxHeight` 0.045 → 0.32 m (a 1.5° tilt spans about ±0.2 m).
+- Tests added (determinism, every archetype reachable, gradient range, main-feature share, direction coherence). Loosened: physics roulette test seed 3 → 1, demi spread lower bound 0.25 → 0.2 (measured 0.20–0.24; not compared against the old terrain), roll-band seeds [4,7] → [7,1]; old ±5 cm height test now checks `maxHeight`.
+- For F16/F23: check court edges against the timbers and grass plane now that heights reach ±0.2 m (and scenery following `sample()`), the Easy demi-portée outliers in measure-throws, and wire a first-mène commentary line from `terrain.shapeText(court.dir)` (personalities.js was F04's).

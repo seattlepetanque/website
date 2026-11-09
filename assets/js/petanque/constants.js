@@ -80,14 +80,13 @@ export const C = Object.freeze({
   slopeMaxDeg: 1.5, // default max local gradient, degrees (valid range slopeMinDeg..slopeLimitDeg)
   slopeMinDeg: 1,
   slopeLimitDeg: 2,
-  macroAmp: 0.025, // max |h| from noise, m
-  macroOctaves: Object.freeze([
-    Object.freeze({ freq: 0.25, amp: 0.55 }),
-    Object.freeze({ freq: 0.7, amp: 0.3 }),
-    Object.freeze({ freq: 1.8, amp: 0.15 }),
-  ]),
-  crownMax: 0.012, // optional crown/hollow magnitude
-  maxHeight: 0.045, // hard clamp on macro height (within +-5 cm)
+  // F25: the macro field is a composition of broad features (tilt, ridge, basin, hills, saddle, combinations)
+  // plus a little low-frequency fBm; shapeWeights are the per-seed archetype odds.
+  shapeWeights: Object.freeze({ tilt: 0.25, ridge: 0.17, basin: 0.12, hills: 0.14, saddle: 0.08, 'tilt+hill': 0.14, 'ridge+tilt': 0.1 }),
+  shapeMinShare: 0.75, // the main feature keeps at least this share of the slope energy over the court
+  shapeFbm: 0.2, // fBm gradient amplitude relative to the main feature's
+  shapeSecond: 0.35, // second feature's gradient amplitude relative to the main feature's (before the share check)
+  maxHeight: 0.32, // hard clamp on macro height (a 1.5 degree tilt eased over ~20 m spans about +-0.2 m)
   jitterAmp: 0.0015,
   jitterFreq: 45,
 

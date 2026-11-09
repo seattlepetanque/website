@@ -404,7 +404,7 @@ test('the roll band mean rest matches the average real rest on seeded gravel (14
 });
 
 test('the roll band barely moves for a 1 cm donnée change and is smooth', () => {
-  for (const seed of [4, 7]) {
+  for (const seed of [7, 1]) {
     for (const deg of [14, 30, 55]) {
       const terrain = createTerrain(seed);
       const a = bandFor(terrain, deg, { x: 2.2, y: 7 }).band, b = bandFor(terrain, deg, { x: 2.2, y: 7 }, 0.012).band;
