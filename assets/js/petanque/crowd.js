@@ -421,3 +421,33 @@ export function createCollect(agents, boules, { head, plan = null, dims, scoredT
   };
   return c;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// F51: at the end of a mène the ring is carried to its next spot while every player collects their boules. The spot is known
+// as soon as the result is (nextCircle), so the holder walks straight there; the ring goes down only when nothing lies in it
+// and nobody stands on it, and the next mène starts when the ring is down AND the collecting is over. Pure decisions here;
+// main.js runs the walks.
+// ---------------------------------------------------------------------------------------------------------------------
+export const RING_R = 0.25; // m: the circle's radius (court.js CIRCLE_R; a test keeps them equal)
+export const RING_BOULE_CLEAR = 0.15; // m: a boule this much (edge to edge) outside the ring does not stop it going down
+export const RING_PERSON_CLEAR = 0.6; // m: a person nearer than this to the ring's centre stops it going down
+export const RING_WAIT_MAX = KICK_TIMEOUT + 4; // s the holder waits at the spot before putting it down anyway (the fallback has emptied the court by then)
+
+// What stops the ring being set down at `spot`: live boules (not the jack) lying in or against it, people other than the holder
+// standing on it. boules: [{ id, x, y, r? }]; people: [{ id, x, y }].
+// -> { boules: [id], people: [id], clear: boolean }
+export function ringBlockers(spot, boules = [], people = [], holder = null, { ringR = RING_R, bouleClear = RING_BOULE_CLEAR, personClear = RING_PERSON_CLEAR } = {}) {
+  const bs = boules.filter((b) => Math.hypot(b.x - spot.x, b.y - spot.y) < ringR + (b.r ?? BOULE_R) + bouleClear).map((b) => b.id);
+  const ps = people.filter((p) => p.id !== holder && Math.hypot(p.x - spot.x, p.y - spot.y) < personClear).map((p) => p.id);
+  return { boules: bs, people: ps, clear: !bs.length && !ps.length };
+}
+
+// The holder is at the spot with the ring: 'go' (put it down), 'wait' (something is in it) or 'force' (waited too long, or skipped).
+export function ringGate(blockers, waited, { max = RING_WAIT_MAX, skipped = false } = {}) {
+  if (skipped) return 'force';
+  if (blockers.clear) return 'go';
+  return waited >= max ? 'force' : 'wait';
+}
+
+// The next mène may start (nextMene) when the ring is down and the collecting is over (a skip finishes the collecting at once).
+export const meneEndReady = ({ ringDown, collectDone }) => !!ringDown && !!collectDone;

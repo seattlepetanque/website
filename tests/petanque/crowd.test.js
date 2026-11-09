@@ -314,3 +314,38 @@ test('F28 crowded-head simulation: ten seeded layouts (incl. all twelve within 1
   assert.ok(kicksSeen > 0, 'the forced runs do kick');
   assert.ok(med(tc) <= med(tg) + 3, `median ${med(tc).toFixed(1)} s vs walking to every boule ${med(tg).toFixed(1)} s`);
 });
+
+// ---- F51: ring and collection in parallel ----
+import { ringBlockers, ringGate, meneEndReady, RING_R, RING_WAIT_MAX } from '../../assets/js/petanque/crowd.js';
+import { CIRCLE_R } from '../../assets/js/petanque/court.js';
+
+test('F51: ring radius matches the court circle and the wait outlasts the collect fallback', () => {
+  assert.equal(RING_R, CIRCLE_R);
+  assert.ok(RING_WAIT_MAX > KICK_TIMEOUT);
+});
+
+test('F51: ringBlockers finds boules in the ring and people on it, not the holder or far things', () => {
+  const spot = { x: 3, y: 10 };
+  const clear = ringBlockers(spot, [{ id: 'a', x: 3.8, y: 10 }], [{ id: 'p', x: 4, y: 10 }, { id: 'h', x: 3, y: 10.1 }], 'h');
+  assert.deepEqual(clear, { boules: [], people: [], clear: true });
+  const bad = ringBlockers(spot, [{ id: 'in', x: 3.1, y: 10.1 }, { id: 'edge', x: 3.4, y: 10 }, { id: 'far', x: 3.9, y: 10 }], [{ id: 'p', x: 3.3, y: 10.2 }], 'h');
+  assert.deepEqual(bad.boules, ['in', 'edge']);
+  assert.deepEqual(bad.people, ['p']);
+  assert.equal(bad.clear, false);
+});
+
+test('F51: ringGate waits while blocked, goes when clear, forces after the wait or a skip', () => {
+  const blocked = { boules: ['x'], people: [], clear: false }, clear = { boules: [], people: [], clear: true };
+  assert.equal(ringGate(clear, 0), 'go');
+  assert.equal(ringGate(blocked, 0), 'wait');
+  assert.equal(ringGate(blocked, RING_WAIT_MAX - 0.1), 'wait');
+  assert.equal(ringGate(blocked, RING_WAIT_MAX), 'force');
+  assert.equal(ringGate(blocked, 0, { skipped: true }), 'force');
+});
+
+test('F51: the next mène needs both the ring down and the collecting over', () => {
+  assert.equal(meneEndReady({ ringDown: true, collectDone: false }), false);
+  assert.equal(meneEndReady({ ringDown: false, collectDone: true }), false);
+  assert.equal(meneEndReady({ ringDown: true, collectDone: true }), true);
+  assert.equal(meneEndReady({}), false);
+});

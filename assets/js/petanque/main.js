@@ -1,6 +1,6 @@
 // Game loop: terrain, world, renderer, rules, AI, toss input (donnée throw), audio and HUD wired together.
 import { C } from './constants.js';
-import { court, setCourt, resetCourt, baseYaw, ahead, nextCircle } from './court.js';
+import { court, setCourt, resetCourt, baseYaw, ahead } from './court.js';
 import { cameraStyle, tvVariant, clampViewOffset, panViewOffset } from './camera.js';
 import { createDirector } from './director.js';
 import { mulberry32 } from './rng.js';
@@ -22,7 +22,7 @@ import { createClock } from './clock.js';
 import * as THREE from '../vendor/three.module.js';
 import { createCharacter, releaseOffset, bendReach, kickReach } from './character.js';
 import { planRoute, standPoint, pathLength } from './fetch.js';
-import { steer, planGoals, BLOCK_FADE_S, KICK_TIMEOUT, KICK_STAGGER, ZONE_R, assignZones, collectOrder, kickList, kickOk, kickMove, isCrowded } from './crowd.js';
+import { ringBlockers, ringGate, meneEndReady, steer, planGoals, BLOCK_FADE_S, KICK_TIMEOUT, KICK_STAGGER, ZONE_R, assignZones, collectOrder, kickList, kickOk, kickMove, isCrowded } from './crowd.js';
 import { pickWaitingSlot, waitingSlots } from './waiting.js';
 import { attachModels } from './models.js';
 import { createGroundView } from './groundview.js';
@@ -836,7 +836,7 @@ function boot() {
   let bcastDelay = 1800; // ms from the stop to the next turn (longer when a reaction shot plays)
 
   function clearWorld() {
-    cancelFetch(); carry = null; jackFetch = null; placing = null; gateSince = 0; lastThrowerId = null; ringTask = null; jackTask = null; jackFetcher = null; ringHolder = null; ringCarry = null; collect = null; // D11, F07, F02
+    cancelFetch(); carry = null; jackFetch = null; placing = null; gateSince = 0; lastThrowerId = null; ringTask = null; jackTask = null; jackFetcher = null; ringHolder = null; ringCarry = null; ringPlaced = false; collect = null; // D11, F07, F02
     world.bodies.length = 0;
     world.events.length = 0;
     terrain.resetDivots();
@@ -1303,7 +1303,7 @@ function boot() {
   // in it), carries it to about 1 m from the cochonnet on the circle's side and waits there holding it during the scoring.
   // The next mene sets it down (carryRing). Hooks: F10 returns a dead jack's last in-bounds spot from `ringJackSpot`;
   // F02 (others collecting boules meanwhile) can run beside `ringTask`, which is the promise of this walk.
-  let ringAt = null, ringTask = null, ringHolder = null, ringSkip = false, ringSkipFn = null;
+  let ringAt = null, ringTask = null, ringHolder = null, ringSkip = false, ringSkipFn = null, ringPlaced = false; // ringPlaced: F51, the ring is down at the next circle
   const ringJackSpot = () => { // F10: a dead jack's last in-bounds spot, else where it lies
     const j = match && match.jack;
     if (j && j.dead && j.spot) return { x: j.spot.x, y: j.spot.y };
@@ -1344,7 +1344,7 @@ function boot() {
   function startRingPickup() { // from endOfMene, after the throw settled
     if (!slow() || ringTask || !match || match.phase !== 'meneEnd') return;
     const t = token;
-    ringHolder = ringWho();
+    ringHolder = ringWho(); ringPlaced = false;
     ringTask = ringToJack(ringHolder, t).catch((err) => { console.error(err); ringCarry = null; renderer.setRingPose(null); });
   }
   async function ringToJack(id, t) {
@@ -1360,47 +1360,43 @@ function boot() {
     if (ringDrop(t)) return;
     await ch.playBend({ kind: 'pickup', onAct: () => { ringCarry = id; ch.setCarrying(true); followRing(); } });
     if (ringDrop(t)) return;
-    const j = ringJackSpot() || { x: from.x, y: from.y + 6 * court.dir };
-    const dx = from.x - j.x, dy = from.y - j.y, d = Math.hypot(dx, dy) || 1; // the circle's side of the jack
-    const spot = { x: j.x + (dx / d), y: j.y + (dy / d) };
-    await walkVia(job, id, { x: spot.x, y: spot.y, yaw: Math.atan2(j.x - spot.x, j.y - spot.y) });
-    ringDrop(t);
+    // F51: straight on to the next mène's circle (known now: rules' nextMene geometry) and down, beside everybody's boule collection
+    await setRingDown(job, id, t, ringDest());
   }
-  // The ring goes down at `to` (the holder carries it from wherever they wait). A click or key skips the walk.
-  async function carryRing(to, again = false) { // again: the E28 correction, the holder picks the ring up where it was set down
-    const t = token;
-    if (!ringTask && !again) startRingPickup();
-    if (ringTask) await ringTask;
-    ringTask = null;
-    if (t !== token) return;
-    const id = ringHolder || ringWho();
+  // F51: where the ring goes for the next mène (E28: round the jack, moved back if the front lacks room; rules.js applies nextCircle)
+  function ringDest() {
+    const g = apply(match, { type: 'nextMene' }).geometry;
+    return { x: g.circle.x, y: g.circle.y };
+  }
+  // The holder walks the ring to `to` and sets it down once nothing lies in it and nobody stands on it (ringGate; a click or
+  // key skips, and after RING_WAIT_MAX s it goes down anyway). The holder is free for their own boules after that.
+  async function setRingDown(job, id, t, to) {
     const ch = cast.get(id), r = reachOf(ch);
-    const job = { id, tok: t, cancelled: false, scripted: false, obstacles: () => obstaclesExcept(null) };
-    ringSkip = false;
+    ringSkip = false; ringPlaced = false;
     const finish = () => { // skipped: straight to the end state
       ringCarry = null; ch.setCarrying(false);
       placeAt(id, to.x - r.x, to.y - r.y, 0);
       renderer.setRingPose({ x: to.x, y: to.y, z: terrain.sample(to.x, to.y).h + 0.006 });
-      ringAt = { x: to.x, y: to.y };
+      ringAt = { x: to.x, y: to.y }; markRingDown();
     };
     ringSkipFn = () => { ringSkip = true; placeAt(id, to.x - r.x, to.y - r.y, 0); };
     try {
-      if (again) { // walk to the ring just put down, bend and take it up
-        const from = ringAt;
-        await walkVia(job, id, { x: from.x - r.x, y: from.y - r.y, yaw: 0 });
-        if (t !== token) { ringCarry = null; renderer.setRingPose(null); return; }
-        if (!ringSkip) await ch.playBend({ kind: 'pickup', onAct: () => { ringCarry = id; ch.setCarrying(true); followRing(); } });
-      }
       if (!ringCarry) { ringCarry = id; ch.setCarrying(true); followRing(); }
-      fetchCam(job, [id], [to]);
       await walkVia(job, id, { x: to.x - r.x, y: to.y - r.y, yaw: 0 });
+      if (t !== token) { ringCarry = null; renderer.setRingPose(null); return; }
+      let waited = 0;
+      while (!ringSkip && t === token && ringGate(ringBlockersAt(to, id), waited) === 'wait') { await sleep(200); waited += 0.2; }
       if (t !== token) { ringCarry = null; renderer.setRingPose(null); return; }
       if (ringSkip) { finish(); return; }
       await ch.playBend({ kind: 'putdown', onAct: () => { ringCarry = null; ch.setCarrying(false); renderer.setRingPose({ x: to.x, y: to.y, z: terrain.sample(to.x, to.y).h + 0.006 }); } });
-      ringAt = { x: to.x, y: to.y };
+      ringAt = { x: to.x, y: to.y }; markRingDown();
       if (ringSkip && ringCarry) finish();
     } finally { ringCarry = null; ringSkipFn = null; ringHolder = null; }
   }
+  const ringBlockersAt = (spot, holder) => ringBlockers(spot,
+    world.bodies.filter((b) => b.kind === 'boule' && !b.dead && !(carry && carry.body === b)).map((b) => ({ id: b.id, x: b.x, y: b.y, r: b.r })),
+    [...cast.keys()].map((k) => { const q = cast.get(k).root.position; return { id: k, x: q.x, y: q.y }; }), holder);
+  function markRingDown() { ringPlaced = true; if (collect && collect.plan) collect.plan.ringDown = true; } // F15: the next jack thrower may walk to the circle
   function dropDead(body, slot) { // set a dead ball down in the row (or its jack spot): out of play, nobody's
     const s = slot || (body.kind === 'jack' ? deadJackSpot() : deadRowSlot(rowCount()));
     placeDeadBall(world, body, s.x, s.y);
@@ -2125,7 +2121,6 @@ function boot() {
     if (!match || match.phase !== 'meneEnd' || ringBusy) return;
     const next = apply(match, { type: 'nextMene' });
     const g = next.geometry, to = { x: g.circle.x, y: g.circle.y };
-    const nc = nextCircle(ringJackSpot() || match.jack, court.dir, { width: g.width, length: g.length }); // E28: placed round the jack, then moved back if the front lacks room
     const t = token;
     hud.hideOverlay();
     const fadeOut = changeover() && !collect; // F02, quick mode: boules and players fade to their places
@@ -2136,13 +2131,14 @@ function boot() {
       if (t !== token) return;
     }
     if (slow()) {
+      // F51: the ring has been on its way since the result (setRingDown) beside the boule collection; the mène starts when both are done
       ringBusy = true;
-      say2('The circle is moved to where the cochonnet finished…');
       try {
-        ringHolder = ringHolder || ringWho();
         if (jackTask) await jackTask; // F10
-        await carryRing(nc.placed);
-        if (nc.moved && t === token) { say2('Too little court ahead of the ring: it is carried back…'); ringHolder = ringWho(); await carryRing(to, true); }
+        if (!ringTask && !ringPlaced) startRingPickup();
+        if (ringTask && !ringPlaced) say2('The circle is moved to where the cochonnet finished…');
+        if (ringTask) await ringTask;
+        ringTask = null;
       } catch (err) { console.error(err); renderer.setRingPose(null); ringCarry = null; }
       if (collect && collect.plan) collect.plan.ringDown = true; // F15: the next jack thrower may walk to the circle
       try { await finishCollect(); } catch (err) { console.error(err); } // F02: the rest of the collecting
@@ -2210,7 +2206,7 @@ function boot() {
     let g;
     if (id === pl.thrower) {
       claims.delete(id);
-      for (let w = 0; w < 900 && live() && !pl.ringDown; w++) await sleep(200);
+      for (let w = 0; w < 900 && live() && !pl.ringDown && !ringPlaced; w++) await sleep(200);
       if (!live()) return;
       g = { x: pl.to.x, y: pl.to.y, yaw: baseYaw(pl.dir) };
     } else g = slotFor(st, id);
@@ -2325,6 +2321,7 @@ function boot() {
     await sleep(delay);
     later(() => { for (const id of st.ids) fallbackFor(st, id); }, KICK_TIMEOUT * 1000);
     planZones(st);
+    const ringSpot = slow() && match ? ringDest() : null;
     const run = async (id) => {
       const ch = cast.get(id), job = { id, tok: t, cancelled: false, scripted: false };
       let waited = false;
@@ -2362,7 +2359,7 @@ function boot() {
         const rest = mine.filter((b) => !st.slides.some((s) => s.b === b));
         if (!mine.length) break;
         if (!rest.length && moving) { await sleep(100); continue; } // wait for the last boule to arrive
-        const key = (b) => (inField(b) ? 0 : 1000) + Math.hypot(b.x - p.x, b.y - p.y);
+        const key = (b) => (inField(b) ? 0 : 1000) + Math.hypot(b.x - p.x, b.y - p.y) - (ringSpot && !ringPlaced && !ringBlockers(ringSpot, [{ id: b.id, x: b.x, y: b.y, r: b.r }]).clear ? 500 : 0); // F51: a boule in the ring's way goes first
         const b = rest.sort((a, c) => key(a) - key(c))[0];
         const sp = standPoint(b, { x: p.x, y: p.y }, reachOf(ch));
         job.obstacles = () => obstaclesExcept(b);
@@ -2552,6 +2549,7 @@ function boot() {
       world.bodies.length = 0;
       const jb2 = createBody('jack', { team: -1, x: 2.3, y: 9.2 }); jb2.z = jb2.r; world.add(jb2);
       const spots = [[1.6, 8.7], [3.0, 9.8], [2.0, 10.3], [3.3, 8.6], [1.2, 9.6], [2.7, 9.0], [3.4, 10.4], [1.5, 7.9], [2.4, 8.4]];
+      if (params.has('f51')) spots[5] = [2.4, 9.3]; // &f51: a boule against the jack, in the ring's way
       let k = 0;
       for (const p of match.players) for (let n = 0; n < 3 && k < spots.length + 3; n++, k++) {
         const b = createBody('boule', { team: p.team, x: (spots[k] || [0, 0])[0], y: (spots[k] || [0, 0])[1] }); b.owner = p.id; b.z = b.r; world.add(b);
