@@ -803,6 +803,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 
 | ID | Status | Model | Deps | Title |
 |---|---|---|---|---|
+| F31 | in-progress | haiku | — | Cap reported scores at the game target (13) |
 | F30 | done | haiku | F29 | Landing button: plane lands in the background, no camera change |
 | F29 | done (temporary) | haiku | F19 | Temporary button to trigger a floatplane landing (remove later) |
 | F01 | done | sonnet | — | Sports-broadcast follow camera for the roving view |
@@ -820,10 +821,10 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F13 | done | haiku | — | Dead-jack void message gives the wrong reason |
 | F14 | done | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
 | F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
-| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25, F26, F27, F28 | Round 5 review |
-| F26 | todo | haiku | — | Slow mode: brisker fetch walks with natural arm swing (or folded arms) |
+| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25, F26, F27, F28, F31 | Round 5 review |
+| F26 | in-progress | haiku | — | Slow mode: brisker fetch walks with natural arm swing (or folded arms) |
 | F27 | todo | sonnet | F04 | Pierre does what he said he'd do |
-| F28 | todo | sonnet | — | Better end-of-mène boule collection: kick boules to open space, then pick up (design first) |
+| F28 | in-progress (design) | sonnet | — | Better end-of-mène boule collection: kick boules to open space, then pick up (design first) |
 | F17 | done | haiku | — | Remove "lands at …" landing-distance text from the status line |
 | F18 | done | haiku | — | Breeze only occasionally, fading in and out |
 | F19 | done | sonnet | — | Distant lake with an occasional floatplane taking off or landing |
@@ -1049,3 +1050,6 @@ Top priority, temporary. Add a small in-game button (controls bar, e.g. "✈ Lan
 
 ### F30 Landing button stays ambient (haiku)
 Top priority. The F29 button should just start the floatplane landing in the background, exactly as it happens naturally once per game: no camera framing, no interruption of play. Remove `fp.debugFrame = true` and the `releaseLandingCam`/`fpTempCam` camera handling from the button; keep the `TEMP F29` marking.
+
+### F31 Cap reported scores at the target (haiku)
+If a team ever ends a mène with more points than needed (e.g. 12 + 3 = 15), the scores stored and shown must never exceed the game target: clamp each team's score to `match.target` (13 in a normal game, 7 in the quick game) when scoring a mène (rules.js `endMene` / the scores array), so the scoreboard, mène-end card, game-over panel and winner logic all show at most the target (e.g. "13 to 8", not "15 to 8"). The winner is still decided by reaching the target. Tests: 12 + 3 gives 13; 6 + 6 in a 7-point game gives 7; normal scoring is unchanged.
