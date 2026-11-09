@@ -394,22 +394,60 @@ function makeWrapTexture(haze) {
     wrapDraw(X(az), cw, (x) => { g.globalAlpha = 0.96; g.drawImage(c2, x - cx0, Y(el) - cy0); g.globalAlpha = 1; });
   }
 
-  // distant blue ridges (Olympics to the west, Cascades to the east), fading out behind the players
-  const ridgeAt = (az) => {
-    const a = Math.abs(az);
-    const k = Math.max(0, Math.min(1, (a - 40) / 25)) * Math.max(0, Math.min(1, (150 - a) / 40));
-    return 0.3 + k * (2.4 + 1.1 * Math.sin(az * 0.21 + 1) + 0.7 * Math.sin(az * 0.63) + 0.35 * Math.sin(az * 1.9 + az * az * 0.002));
-  };
-  g.fillStyle = mix('#9db4cc', haze, 0.4);
-  g.beginPath(); g.moveTo(0, yb);
-  for (let a = -180; a <= 180; a += 0.4) g.lineTo(X(a), Y(ridgeAt(a)));
-  g.lineTo(W, yb); g.closePath(); g.fill();
+  // distant mountain ranges (Olympics to the west, Cascades to the east), three layers deep: each farther range is taller,
+  // paler and hazier. Jagged (a few octaves of sines with integer cycles round the circle so the wrap closes) and fading
+  // out behind the players, where the treeline is tallest anyway.
+  const sines = (az, terms) => terms.reduce((acc, [k, amp, ph]) => acc + amp * Math.sin(az * k * Math.PI / 180 + ph), 0);
+  const ranges = [
+    // far: tall, pale | middle | near blue ridge
+    { col: mix('#a9bdd6', haze, 0.62), top: 7.5, lo: 1.2, from: 26, to: 160, terms: [[3, 0.55, 0.4], [5, 0.4, 2.1], [9, 0.3, 4.0], [17, 0.2, 1.1], [31, 0.12, 3.3], [57, 0.08, 0.2]], snow: true },
+    { col: mix('#8aa3c0', haze, 0.5), top: 5.2, lo: 0.8, from: 32, to: 158, terms: [[4, 0.5, 1.4], [7, 0.4, 5.0], [13, 0.3, 2.2], [23, 0.2, 0.7], [41, 0.1, 3.9]], snow: false },
+    { col: mix('#7d98b6', haze, 0.38), top: 3.3, lo: 0.5, from: 38, to: 152, terms: [[5, 0.5, 2.6], [8, 0.4, 0.3], [15, 0.3, 4.4], [29, 0.2, 1.9], [47, 0.1, 5.1]], snow: false },
+  ];
+  ranges.forEach((rg, ri) => {
+    const prof = (az) => {
+      const a = Math.abs(az);
+      const k = Math.max(0, Math.min(1, (a - rg.from) / 30)) * Math.max(0, Math.min(1, (rg.to + 18 - a) / 28));
+      const n = Math.max(0, 0.55 + sines(az, rg.terms) / 1.4); // 0..~1.3, jagged peaks and saddles
+      return BASE_EL + 0.25 + k * (rg.lo + (rg.top - rg.lo) * Math.min(1, n * (0.8 + 0.2 * Math.sin(az * 0.07 + ri))));
+    };
+    g.fillStyle = rg.col;
+    g.beginPath(); g.moveTo(0, yb);
+    for (let a = -180; a <= 180; a += 0.25) g.lineTo(X(a), Y(prof(a)));
+    g.lineTo(W, yb); g.closePath(); g.fill();
+    if (rg.snow) { // a dusting of snow on the tallest peaks (clipped to the silhouette)
+      g.save(); g.clip();
+      g.fillStyle = 'rgba(247,250,255,0.8)';
+      g.beginPath(); g.moveTo(0, 0);
+      for (let a = -180; a <= 180; a += 0.25) g.lineTo(X(a), Math.min(Y(BASE_EL), Math.max(Y(prof(a)), Y(rg.top * 0.62 + 0.5 * Math.sin(a * 2.7)))) );
+      g.lineTo(W, 0); g.closePath(); g.fill();
+      g.restore();
+    }
+    // layered haze: a veil thickening towards the foot of each range
+    const hv = g.createLinearGradient(0, Y(rg.top), 0, Y(BASE_EL + 0.4));
+    hv.addColorStop(0, 'rgba(' + hazeRgb(haze) + ',0)'); hv.addColorStop(1, 'rgba(' + hazeRgb(haze) + ',' + (0.5 - ri * 0.08) + ')');
+    g.globalCompositeOperation = 'source-atop';
+    g.fillStyle = hv; g.fillRect(0, Y(rg.top), W, Y(BASE_EL + 0.4) - Y(rg.top));
+    g.globalCompositeOperation = 'source-over';
+  });
 
   // treeline: how tall it stands depends on direction: full behind and at the sides, low towards the city and
   // mountain (those are painted in the detail strip over the top of it)
   const env = (az) => {
     const a = Math.abs(az), k = Math.max(0, Math.min(1, (a - 38) / 80));
     return 0.28 + 0.72 * k * k * (3 - 2 * k);
+  };
+  // rolling ground under the trees: each row stands on its own set of low hills (integer cycles round the circle, so it
+  // closes), gentler towards the city and Rainier. Farther rows have bigger, softer swells.
+  const hillTerms = [
+    [[2, 0.55, 0.3], [3, 0.45, 2.0], [6, 0.3, 4.1], [11, 0.18, 1.2], [19, 0.1, 5.0]],
+    [[2, 0.5, 1.9], [4, 0.4, 0.5], [7, 0.3, 3.7], [13, 0.17, 2.8], [23, 0.1, 0.9]],
+    [[3, 0.4, 4.2], [5, 0.35, 1.1], [9, 0.25, 2.4], [16, 0.14, 5.5], [27, 0.08, 3.0]],
+  ];
+  const HILL_AMP = [1.0, 0.7, 0.4]; // degrees of elevation of the hilltops over the flats
+  const hillAt = (ri, az) => {
+    const k = 0.3 + 0.7 * Math.max(0, Math.min(1, (Math.abs(az) - 25) / 45));
+    return HILL_AMP[ri] * k * Math.max(0, 0.5 + sines(az, hillTerms[ri]) * 0.7);
   };
   const rows = [
     // far, hazy, taller | mid | near, dark
@@ -418,32 +456,42 @@ function makeWrapTexture(haze) {
     { col: '#1d3f2c', hmin: 1.1, hmax: 3.0, wmin: 0.7, wmax: 1.5, base: BASE_EL, maple: 0.1, step: 0.55 },
   ];
   rows.forEach((row, ri) => {
+    const baseAt = (az) => row.base + hillAt(ri, az);
+    // the hill itself first (so the trees stand on its rim), then the trees
+    g.fillStyle = row.col;
+    g.beginPath(); g.moveTo(0, yb);
+    for (let a = -180; a <= 180; a += 0.25) g.lineTo(X(a), Y(baseAt(a)));
+    g.lineTo(W, yb); g.closePath(); g.fill();
     for (let a = -182; a < 182; a += row.step * (0.4 + rand() * 0.9)) {
       const e = env(a), kind = rand() < 0.55 ? 'fir' : 'cedar';
       let h = (row.hmin + (row.hmax - row.hmin) * Math.pow(rand(), 1.3)) * e;
       if (ri === 2 && rand() < 0.05) h *= 1.5;
       const w = row.wmin + rand() * (row.wmax - row.wmin);
-      const hp = Math.abs(Y(h + row.base) - Y(row.base));
+      const bAz = baseAt(a) - 0.04; // sink the trunk a touch into the hill
+      const hp = Math.abs(Y(h + bAz) - Y(bAz));
       const wp = w * W / 360 * (kind === 'cedar' ? 1.25 : 0.9) * (0.6 + 0.4 * e);
       const shade = rand() * 0.18 - 0.09;
       const col = mix(row.col, shade > 0 ? '#5f8a50' : '#0c1f15', Math.abs(shade) * (ri === 0 ? 0.6 : 1));
-      const x = X(a), base = Y(row.base);
+      const x = X(a), base = Y(bAz);
       wrapDraw(x, wp, (xx) => {
         if (rand() < row.maple * e * 1.6) paintMaple(g, xx, base, wp * 1.35, hp * 0.7, mix('#3f6a2c', row.col, ri === 2 ? 0.1 : 0.4), rand);
         else paintConifer(g, xx, base, wp, hp, col, kind, rand);
       });
     }
-    // fill below the trees, then a haze veil over this row (stronger further away)
-    g.fillStyle = row.col; g.fillRect(0, Y(row.base), W, yb - Y(row.base) + 1);
-    const vg = g.createLinearGradient(0, Y(row.base + 1.2), 0, Y(row.base));
-    vg.addColorStop(0, 'rgba(' + hazeRgb(haze) + ',0)'); vg.addColorStop(1, 'rgba(' + hazeRgb(haze) + ',' + (0.35 - ri * 0.1) + ')');
-    g.fillStyle = vg; g.fillRect(0, Y(row.base + 1.2), W, Y(row.base) - Y(row.base + 1.2));
+    // a soft haze veil on the hillside above this row's flats (stronger further away), following the hills
+    g.save();
+    g.globalCompositeOperation = 'source-atop';
+    const vg = g.createLinearGradient(0, Y(row.base + 1.4), 0, Y(row.base));
+    vg.addColorStop(0, 'rgba(' + hazeRgb(haze) + ',0)'); vg.addColorStop(1, 'rgba(' + hazeRgb(haze) + ',' + (0.3 - ri * 0.09) + ')');
+    g.fillStyle = vg; g.fillRect(0, Y(row.base + 1.4), W, Y(row.base) - Y(row.base + 1.4));
+    g.restore();
   });
-  // ground haze below the base line
-  const hz = g.createLinearGradient(0, Y(1.6), 0, yb);
-  hz.addColorStop(0, 'rgba(' + hazeRgb(haze) + ',0)'); hz.addColorStop(1, 'rgba(' + hazeRgb(haze) + ',0.55)');
-  g.fillStyle = hz; g.fillRect(0, Y(1.6), W, yb - Y(1.6));
-  g.fillStyle = haze; g.fillRect(0, yb - 1, W, H - yb + 1);
+  // below the base line: the nearest row's dark foliage right down to the grass (the grass plane meets the trees crisply
+  // there instead of through a pale band), with only a whisper of haze
+  g.fillStyle = rows[2].col; g.fillRect(0, yb - 1, W, H - yb + 1);
+  const hz = g.createLinearGradient(0, yb - 3, 0, yb + (H - yb));
+  hz.addColorStop(0, 'rgba(' + hazeRgb(haze) + ',0.18)'); hz.addColorStop(1, 'rgba(' + hazeRgb(haze) + ',0.18)');
+  g.fillStyle = hz; g.fillRect(0, yb - 1, W, H - yb + 1);
   return cv;
 }
 
@@ -601,11 +649,9 @@ function makeDetailTexture(haze) {
   // Space Needle: about twice the height of the typical tower
   paintNeedle(g, X(4.5), yb + 2, yb - Y(BASE_EL + 6.3), haze);
 
-  // ground haze and the fog band, matching scene.fog so the grass fades straight into it
-  const hgz = g.createLinearGradient(0, Y(1.4), 0, yb);
-  hgz.addColorStop(0, 'rgba(' + hz + ',0)'); hgz.addColorStop(1, 'rgba(' + hz + ',0.55)');
-  g.fillStyle = hgz; g.fillRect(0, Y(1.4), W, yb - Y(1.4));
-  g.fillStyle = haze; g.fillRect(0, yb - 1, W, H - yb + 1);
+  // the nearest dark foliage down to the grass, matching the 360 wrap below (a crisp join, only a whisper of haze)
+  g.fillStyle = '#1d3f2c'; g.fillRect(0, yb - 1, W, H - yb + 1);
+  g.fillStyle = 'rgba(' + hz + ',0.18)'; g.fillRect(0, yb - 1, W, H - yb + 1);
   // fade this strip out at both ends (the 360 degree wrap shows through)
   g.globalCompositeOperation = 'destination-out';
   for (const [x0, x1, a0, a1] of [[0, W * 0.16, 1, 0], [W * 0.84, W, 0, 1]]) {
@@ -629,11 +675,12 @@ export function makeSkyPanorama(cx, cy, fogHex = SKY_HAZE) {
 }
 
 // ---- Lake (F19) -----------------------------------------------------------------------------------------
-// One flat plane down-court (+y), beyond the trees: it starts ~42 m from the court centre and reaches into the fog, so
-// its far edge never shows. A small shader gives it a sky-reflecting, slowly moving shimmer, a lighter shallow band and
-// a faint foam line along an irregular near shore. Fog is the scene's own (30-170 m to SKY_HAZE), so the water melts
+// One flat plane down-court (+y), beyond the trees: the near shore is ~40 m from the court centre. A small shader gives it a sky-reflecting, slowly moving shimmer, a lighter shallow band and
+// a faint foam line along an irregular near shore. Fog is the scene's own (60-320 m to SKY_HAZE), so the water melts
 // into the panorama exactly like the grass does.
-export const LAKE = { near: 42, far: 260, halfW: 340, dz: 0.05 }; // y of the shore, far edge, half width (m), height over the grass plane
+// F46: an elliptical lake (about half the old visible area): centre (court x, cy), semi-axes ax (x) and ay (y), in metres,
+// so the shore is 43 m from the court at nearest and the far shore 153 m away. The plane paths in floatplane.js stay inside it.
+export const LAKE = { cy: 98, ax: 65, ay: 55, dz: 0.05 }; // height dz over the grass plane
 
 const LAKE_VERT = `
 #include <fog_pars_vertex>
@@ -663,13 +710,13 @@ vec3 skyAt(float e) { // sky gradient by elevation (degrees), the same stops as 
   c = mix(c, uSky2, smoothstep(10.0, 25.0, e));
   return mix(c, uSky3, smoothstep(25.0, 50.0, e));
 }
-float shoreEdge(float x) {
-  float dx = x - uCx;
-  float round = pow(max(0.0, abs(dx) - 110.0) / 60.0, 2.0) * 40.0;
-  return ${LAKE.near.toFixed(1)} + 5.0 * sin(x * 0.045 + 1.0) + 3.0 * sin(x * 0.11 + 2.3) + 1.5 * sin(x * 0.27) + round;
+float lakeDepth(vec2 p) { // metres inside the irregular elliptical shore (negative outside)
+  vec2 q = vec2((p.x - uCx) / ${LAKE.ax.toFixed(1)}, (p.y - ${LAKE.cy.toFixed(1)}) / ${LAKE.ay.toFixed(1)});
+  float r = length(q) + 0.035 * sin(p.x * 0.06 + 1.0) + 0.03 * sin(p.y * 0.11 + 2.3) + 0.015 * sin(p.x * 0.23 + p.y * 0.17);
+  return (1.0 - r) * 45.0;
 }
 void main() {
-  float d = vW.y - shoreEdge(vW.x); // metres into the water
+  float d = lakeDepth(vW.xy); // metres into the water
   if (d < -0.2) discard;
   vec3 toCam = cameraPosition - vW;
   float dist = length(toCam);
@@ -689,7 +736,7 @@ void main() {
   float fres = 0.04 + 0.96 * pow(1.0 - clamp(V.z, 0.0, 1.0), 5.0);
   vec3 sky = skyAt(el);
   vec3 body = mix(uDeep, uShallow, 1.0 - smoothstep(0.0, 14.0, d));
-  vec3 col = mix(body, sky * 0.8, clamp(fres * 0.8, 0.0, 1.0));
+  vec3 col = mix(body, sky * vec3(0.62, 0.8, 1.0), clamp(fres * 0.34, 0.0, 1.0));
   // a faint light streak where the slope catches the sky, drifting slowly
   col += 0.05 * smoothstep(0.35, 1.0, sin(g.x * 1.3 + g.y * 0.9 + t * 0.4)) * (1.0 - smoothstep(0.0, 120.0, dist) * 0.6);
   // foam line along the shore (a few metres wide, so it still reads at a grazing angle) and soft fade at the very edge
@@ -705,11 +752,11 @@ void main() {
 
 // Returns { mesh, update(dt) }. cx: x of the court centre (the lake is centred on it); z: the grass plane's height.
 export function makeLake(cx, z) {
-  const geo = new THREE.PlaneGeometry(LAKE.halfW * 2, LAKE.far - 20);
+  const geo = new THREE.PlaneGeometry(LAKE.ax * 2 * 1.1, LAKE.ay * 2 * 1.1);
   const sk = [0, 10, 25, 50].map((e) => skyColor(e));
   const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
     uTime: { value: 0 }, uCx: { value: cx },
-    uDeep: { value: new THREE.Color('#1f5f8c') }, uShallow: { value: new THREE.Color('#6fa89c') }, uFoam: { value: new THREE.Color('#f2f7f5') },
+    uDeep: { value: new THREE.Color('#0a58a8') }, uShallow: { value: new THREE.Color('#3a9bd2') }, uFoam: { value: new THREE.Color('#f2f7f5') },
     uSky0: { value: sk[0] }, uSky1: { value: sk[1] }, uSky2: { value: sk[2] }, uSky3: { value: sk[3] },
   }]);
   const mat = new THREE.ShaderMaterial({
@@ -717,7 +764,7 @@ export function makeLake(cx, z) {
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   });
   const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(cx, (20 + LAKE.far) / 2, z + LAKE.dz);
+  mesh.position.set(cx, LAKE.cy, z + LAKE.dz);
   mesh.frustumCulled = false;
   mesh.renderOrder = -1; // under the spray and the plane (also transparent)
   return { mesh, update(dt) { uniforms.uTime.value += dt; } };

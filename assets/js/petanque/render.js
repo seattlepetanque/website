@@ -158,7 +158,7 @@ export function createRenderer(canvas, terrain) {
   const scene = new THREE.Scene();
   const FOG = new THREE.Color(SKY_HAZE);
   scene.background = FOG;
-  scene.fog = new THREE.Fog(FOG, 30, 170);
+  scene.fog = new THREE.Fog(FOG, 60, 320);
   scene.add(makeSky());
   scene.add(makeSkyPanorama(C.terrainW / 2, C.terrainL / 2, SKY_HAZE));
   scene.environment = makeEnvMap(renderer);
