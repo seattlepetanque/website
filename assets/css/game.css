@@ -352,10 +352,28 @@ html.petanque-playing main { overflow: visible; }
   .petanque .pt-board, .petanque .pt-dock, .petanque .petanque-controls, .petanque .pt-overlay, .petanque .toss-readout { transition: none; }
 }
 
-/* E12: Adjust view toggle */
-.pc-bar button.pc-reaim { display: inline-flex; align-items: center; gap: .35em; }
-.pc-bar button.pc-reaim .pc-eye { flex: none; }
-.pc-bar button.pc-reaim.is-on { box-shadow: inset 0 0 0 2px var(--paper, #fffaf0); }
+/* F48: hold-to-use view icons (hud.js createHoldIcons): pan, read the ground, overhead view. A translucent column on the
+   right edge of the court row, just under the hamburger button, clear of the bottom-right cluster, the mene-end bar (which
+   only shows when no throw is pending) and the toss area in the middle. Only built while it is the human's turn. */
+.pc-holds { display: none; }
+.petanque.is-playing .pc-holds {
+  display: flex; flex-direction: column; gap: .35rem; grid-row: 2 / 3; position: absolute; right: 0; top: 2.75rem; z-index: 4;
+}
+.petanque.is-playing .pc-holds[hidden], .petanque.is-paused .pc-holds { display: none; }
+.pc-hold {
+  display: inline-flex; align-items: center; justify-content: center; width: 2.5rem; height: 2.5rem; padding: 0; cursor: pointer;
+  color: var(--red, #8a1c2b); background: color-mix(in srgb, var(--paper, #fffaf0) 55%, transparent); border: 1px solid color-mix(in srgb, var(--red, #8a1c2b) 55%, transparent); border-radius: 50%;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; touch-action: none;
+}
+.pc-hold svg { width: 1.4rem; height: 1.4rem; display: block; pointer-events: none; }
+.pc-hold:hover { background: color-mix(in srgb, var(--paper, #fffaf0) 80%, transparent); }
+.pc-hold.is-held { color: var(--paper, #fffaf0); background: var(--red, #8a1c2b); border-color: var(--red, #8a1c2b); }
+.pc-hold:focus-visible { outline: 3px solid var(--navy, #14284b); outline-offset: 2px; box-shadow: 0 0 0 5px var(--paper, #fffaf0); }
+.pc-hold[hidden] { display: none; }
+@media (max-height: 500px) {
+  .pc-hold { width: 2.25rem; height: 2.25rem; }
+  .petanque.is-playing .pc-holds { top: 2.5rem; gap: .25rem; }
+}
 
 /* ---- F11: "who holds the point" banner (hud.js showHolding / hideHolding, shown before each aim). In the playing
    layout it sits centred in the court row (grid row 2), under the controls bar, so it never covers the scoreboard

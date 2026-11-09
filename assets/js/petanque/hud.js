@@ -23,6 +23,66 @@ const focusSoon = (node) => {
   if (node) setTimeout(() => node.focus({ preventScroll: true }), 0);
 };
 
+// F48: translucent press-and-hold icon buttons (pan the view, read the ground, overhead view). One finger or the mouse
+// holds an icon (pointer capture, so sliding off it keeps the hold); Space or Enter holds it from the keyboard. The hold
+// ends on release, pointercancel, lost capture, blur or Escape, and never opens a context menu or selects text.
+// defs: [{ cls, label, title, svg, onHold({ dirX, dirY, pointer }), onRelease() }]. dirX/dirY (-1..1) say where on the
+// icon the pointer is (the pan icon uses them as four arrows); they are 0 for the keyboard.
+export function createHoldIcons(defs) {
+  const wrap = el('div', 'pc-holds');
+  wrap.setAttribute('role', 'group');
+  wrap.setAttribute('aria-label', 'Hold to change the view');
+  wrap.hidden = true;
+  const buttons = defs.map((d) => {
+    const b = button('', 'pc-hold ' + d.cls);
+    b.innerHTML = d.svg;
+    b.setAttribute('aria-label', d.label);
+    b.title = d.title || d.label;
+    b.setAttribute('aria-pressed', 'false');
+    let pointerId = null, keyHeld = false;
+    const dirOf = (e) => {
+      const r = b.getBoundingClientRect(), nx = (e.clientX - r.left - r.width / 2) / (r.width / 2), ny = (e.clientY - r.top - r.height / 2) / (r.height / 2);
+      if (Math.hypot(nx, ny) < 0.18) return { dirX: 0, dirY: 0 }; // dead centre: no direction
+      return Math.abs(nx) >= Math.abs(ny) ? { dirX: Math.sign(nx), dirY: 0 } : { dirX: 0, dirY: Math.sign(ny) };
+    };
+    const held = () => pointerId !== null || keyHeld;
+    const start = (info) => { b.classList.add('is-held'); b.setAttribute('aria-pressed', 'true'); d.onHold(info); };
+    const end = () => {
+      if (!held() && !b.classList.contains('is-held')) return;
+      pointerId = null; keyHeld = false;
+      b.classList.remove('is-held'); b.setAttribute('aria-pressed', 'false');
+      d.onRelease();
+    };
+    b.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      e.preventDefault(); e.stopPropagation();
+      if (pointerId !== null) return;
+      pointerId = e.pointerId;
+      try { b.setPointerCapture(e.pointerId); } catch (err) { /* synthetic or released pointer */ }
+      start({ ...dirOf(e), pointer: true });
+    });
+    b.addEventListener('pointermove', (e) => { if (e.pointerId === pointerId) d.onHold({ ...dirOf(e), pointer: true }); });
+    for (const t of ['pointerup', 'pointercancel', 'lostpointercapture']) b.addEventListener(t, (e) => { if (e.pointerId === pointerId) end(); });
+    b.addEventListener('pointerleave', (e) => { if (e.pointerId === pointerId && !b.hasPointerCapture(e.pointerId)) end(); });
+    b.addEventListener('contextmenu', (e) => e.preventDefault());
+    b.addEventListener('dragstart', (e) => e.preventDefault());
+    b.addEventListener('click', (e) => e.preventDefault());
+    b.addEventListener('keydown', (e) => {
+      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); if (!e.repeat && !held()) { keyHeld = true; start({ dirX: 0, dirY: 0, pointer: false }); } }
+      else if (e.key === 'Escape' && held()) { e.preventDefault(); e.stopPropagation(); end(); }
+    });
+    b.addEventListener('keyup', (e) => { if ((e.key === ' ' || e.key === 'Enter') && keyHeld) end(); });
+    b.addEventListener('blur', end);
+    b.releaseHold = end;
+    return b;
+  });
+  wrap.append(...buttons);
+  return {
+    el: wrap, buttons,
+    setVisible(on) { if (!on) for (const b of buttons) b.releaseHold(); wrap.hidden = !on; },
+  };
+}
+
 // root: the #petanque container; callbacks: { onStart({ target, difficulty }), onNext, onPlayAgain, onChoose(playerId) }
 export function createHud(root, hudEl, cb) {
   const status = root.querySelector('.petanque-status');

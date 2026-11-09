@@ -1,7 +1,7 @@
 // Game loop: terrain, world, renderer, rules, AI, toss input (donnée throw), audio and HUD wired together.
 import { C } from './constants.js';
 import { court, setCourt, resetCourt, baseYaw, ahead, nextCircle } from './court.js';
-import { cameraStyle, tvVariant } from './camera.js';
+import { cameraStyle, tvVariant, clampViewOffset, panViewOffset } from './camera.js';
 import { createDirector } from './director.js';
 import { mulberry32 } from './rng.js';
 import { createTerrain } from './terrain.js';
@@ -10,7 +10,7 @@ import { createRenderer } from './render.js';
 import {
   createMatch, defaultPlayers, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm, deadJackText,
 } from './rules.js';
-import { createHud } from './hud.js';
+import { createHud, createHoldIcons } from './hud.js';
 import { settings } from './settings.js';
 import { chooseThrowAsync, chooseJackThrow, chooseJackPlacement, whoThrows } from './ai.js';
 import { createTossInput } from './toss.js';
@@ -41,8 +41,6 @@ const AI_MIN_THINK = 800; // ms: the AI never answers faster than this
 const HINT_KEY = 'petanque-hint-seen';
 const HINT_TEXT = 'Drag sideways to turn. Press on the court where you want the boule to land, pull down to throw ' +
   'higher, release to throw; drag back up to cancel. Press near a boule to shoot it.';
-const VIEWS = ['shoulder', 'head', 'inspect'];
-const VIEW_LABELS = { shoulder: 'Shoulder', head: 'Head', inspect: 'Inspect' };
 // Where waiting players stand: behind the circle and beside the court, out of the shoulder camera's view
 const HOME_LOCAL = { you: { x: -0.9, y: -0.4 }, pierre: { x: -1.5, y: 0.7 }, marcel: { x: 6.0, y: 0.0 }, odette: { x: 6.8, y: 0.8 } };
 // E10: HOME_LOCAL is relative to the default circle (2, 1) playing +y; homeAt turns it with the circle and direction
@@ -120,14 +118,14 @@ function boot() {
   const observerView = (points, extra) => renderer.setCamera('observer', { points, ...extra });
   const watchCircle = () => observerView([{ x: court.circle.x, y: court.circle.y }, ahead(5)]); // somebody about to throw
   const aimView = () => (observing() && match ? watchCircle() : shoulderView());
-  const PITCH_MAX = 15 * DEG, KEEP_YAW = 35 * DEG; // E12 (see setAdjust)
+  const KEEP_YAW = 35 * DEG; // E12 (see setAdjust); the pan limits live in camera.js (VIEW_PAN, F48)
   let adjusting = false, viewAnim = 0;
   const audio = createAudio();
   let thinkToken = 0; // bumped to drop stale partner-suggestion results
   let pierreChoice = null; // cached AI choice for Pierre while the chooser is open
   const pickHuman = params.get('humanturn'); // debug: stop at the human's first boule (or 'chooser')
 
-  // Controls (F32): a hamburger menu (Adjust view, Read the ground, Mode, View, Ambience, TEMP Landing) top right; speaker,
+  // Controls (F32): a hamburger menu (Mode, Ambience, TEMP demo buttons) top right; F48 hold-to-use view icons (pan, read the ground, overhead) under it; speaker,
   // fullscreen and pause icons bottom right; Resume / New game / End game on the paused bar; no raw sliders
   controls.textContent = '';
   const mkBtn = (parent, text, cls) => {
@@ -138,26 +136,15 @@ function boot() {
   };
   const bar = document.createElement('div');
   bar.className = 'pc-bar';
-  const reaimBtn = mkBtn(bar, '', 'pc-reaim'); // E12: "Adjust view" toggle
-  reaimBtn.innerHTML = '<svg class="pc-eye" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3.2" fill="currentColor"/></svg> <span>Adjust view</span>';
-  reaimBtn.setAttribute('aria-checked', 'false');
-  reaimBtn.title = 'Drag or use the arrow keys to look around the thrower. Turn off to aim and toss.';
-  // F05 "Read the ground": slope arrows and a firmness wash, human turn only, off by default, can be disabled in settings
+  // F05 "Read the ground": slope arrows and a firmness wash, human turn only, shown while its icon is held (F48), can be disabled in settings
   const gv = createGroundView(terrain, { phone: isPhone(), reduced: () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) });
   renderer.addObject(gv.object);
   let gvOn = debug && params.has('groundview');
-  const gvBtn = mkBtn(bar, 'Read the ground', 'pc-ground');
-  gvBtn.title = 'Study the court: arrows drift downhill (faster = steeper); colour shows firmness, warm soft and cool hard.';
-  gvBtn.hidden = true;
   const syncGv = (dt) => {
     const avail = settings.groundView && !!pending && !flying;
-    gvBtn.hidden = !avail;
-    gvBtn.classList.toggle('is-on', gvOn);
-    gvBtn.setAttribute('aria-checked', String(gvOn));
     gv.setVisible(avail && gvOn);
     gv.update(dt);
   };
-  gvBtn.addEventListener('click', () => { gvOn = !gvOn; syncGv(0); });
   const modeBtn = mkBtn(bar, '', 'pc-mode'); // E01: Quick / Slow
   const syncModeBtn = () => {
     modeBtn.textContent = 'Mode: ' + (settings.mode === 'quick' ? 'Quick' : 'Slow');
@@ -166,7 +153,6 @@ function boot() {
   syncModeBtn();
   modeBtn.addEventListener('click', () => { settings.mode = settings.mode === 'quick' ? 'slow' : 'quick'; });
   settings.onChange(syncModeBtn);
-  const viewBtn = mkBtn(bar, 'View: Shoulder', 'pc-view');
   // TEMP F29: remove after review. Floatplane landing on demand, in the background with no camera change.
   const landingBtn = mkBtn(bar, '✈ Landing', 'pc-landing');
   landingBtn.setAttribute('aria-label', 'Start a floatplane landing');
@@ -195,14 +181,14 @@ function boot() {
     syncAmbBtn();
     ambBtn.addEventListener('click', () => { settings.ambience = !settings.ambience; audio.setAmbience(settings.ambience); syncAmbBtn(); audio.unlock(); });
   }
-  // F32 hamburger menu: every option button (built above straight into the bar) moves into one dropdown. Enter, Space,
+  // F32 hamburger menu: every option button (Mode, Ambience, the demo buttons; built above straight into the bar) moves into one dropdown. Enter, Space,
   // click or ArrowDown opens it; arrows, Home and End move; Esc or Tab close it (Esc returns focus to the button);
   // an outside press closes it. Toggle items use role menuitemcheckbox + aria-checked.
   const menuPanel = document.createElement('div');
   menuPanel.className = 'pc-menu'; menuPanel.id = 'pc-menu'; menuPanel.setAttribute('role', 'menu'); menuPanel.setAttribute('aria-label', 'Game options');
   menuPanel.hidden = true;
   const menuItems = [...bar.querySelectorAll(':scope > button')];
-  const TOGGLES = new Set([reaimBtn, gvBtn, ambBtn]);
+  const TOGGLES = new Set([ambBtn]);
   const STAY_OPEN = new Set([modeBtn, ambBtn]); // the others close the menu so the court is clear
   for (const it of menuItems) { it.setAttribute('role', TOGGLES.has(it) ? 'menuitemcheckbox' : 'menuitem'); it.tabIndex = -1; it.classList.add('pc-menu-item'); }
   menuPanel.append(...menuItems);
@@ -246,6 +232,21 @@ function boot() {
   exitBtn.title = 'Pause (Esc)';
   corner.append(muteBtn, fsBtn, exitBtn);
   root.append(corner);
+  // F48: Adjust view, Read the ground and View (overhead) are translucent press-and-hold icons under the hamburger button.
+  const holdSvg = (inner) => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+  const holds = createHoldIcons([
+    { cls: 'pc-pan', label: 'Adjust view: hold to pan up, down, left or right', title: 'Hold the arrows to look around the thrower (or hold Space, then use the arrow keys)',
+      svg: holdSvg('<path d="M12 3v18M3 12h18M12 3l-2.5 2.8M12 3l2.5 2.8M12 21l-2.5-2.8M12 21l2.5-2.8M3 12l2.8-2.5M3 12l2.8 2.5M21 12l-2.8-2.5M21 12l-2.8 2.5"/>'),
+      onHold: (info) => panHold(info), onRelease: () => panRelease() },
+    { cls: 'pc-terrain', label: 'Read the ground: hold to show the slope and firmness', title: 'Hold to study the court: arrows drift downhill (faster = steeper); colour shows firmness, warm soft and cool hard.',
+      svg: holdSvg('<path d="M2.5 18c3-1 4-5 7-5s3 3 6 3 4-3 6-4M3 12.5c2.5-.8 3.2-4.2 6-4.2 2.4 0 3 2.2 5.2 2.2 1.7 0 2.8-1.6 5-2.7M5 6.5c1.8-.6 2.5-2.8 4.8-2.8"/>'),
+      onHold: () => { gvOn = true; syncGv(0); }, onRelease: () => { gvOn = false; syncGv(0); } },
+    { cls: 'pc-headview', label: 'View: hold for the overhead view', title: 'Hold for the view from above; let go to return to the shoulder view',
+      svg: holdSvg('<circle cx="7" cy="6.5" r="2.2"/><path d="M3 20v-4.5a4 4 0 0 1 8 0V20"/><path d="M14 8h7M14 8l2-2M14 8l2 2"/><circle cx="17.5" cy="16.5" r="3"/><circle cx="17.5" cy="16.5" r=".6" fill="currentColor"/>'),
+      onHold: () => setView('head'), onRelease: () => { if (pending && !flying) setView('shoulder'); else view = 'shoulder'; } },
+  ]);
+  root.append(holds.el);
+  holds.buttons[1].hidden = !settings.groundView; // the hidden kill switch for slow devices (localStorage petanque-groundview=off)
   root.append(gv.legend);
   controls.append(bar);
   if (debug && params.has('sounds')) {
@@ -410,36 +411,31 @@ function boot() {
   function enableControls(on) {
     if (!on) setAdjust(false, { reset: true }); // the turn is over: drop the toggle and the view offset
     toss.setPhase(on ? 'aim' : 'off');
-    reaimBtn.hidden = !on;
-    viewBtn.hidden = !on;
+    holds.setVisible(on);
     if (!on) { clearToss(); renderer.setJackArrow(false); }
   }
   enableControls(false);
 
-  // View cycling: shoulder, head, inspect
+  // F48 views: 'shoulder' (normal) or 'head' (overhead, only while its icon is held)
   let view = 'shoulder';
   function setView(v) {
     if (v !== 'shoulder' && adjusting) setAdjust(false);
     view = v;
-    viewBtn.textContent = 'View: ' + VIEW_LABELS[v];
-    const j = jackBody();
-    const target = j && !j.dead ? { x: j.x, y: j.y } : ahead(7);
     if (v === 'shoulder') shoulderView();
-    else if (v === 'head') headView(j && !j.dead ? j : ahead(7), undefined, undefined, undefined, true);
-    else renderer.setCamera('inspect', { target, dist: 3, az: baseYaw(), el: 0.6 });
-    if (pending && !flying) toss.setPhase(v === 'inspect' ? 'off' : 'aim');
+    else {
+      const j = jackBody();
+      headView(j && !j.dead ? j : ahead(7), undefined, undefined, undefined, true);
+    }
   }
-  viewBtn.addEventListener('click', () => setView(VIEWS[(VIEWS.indexOf(view) + 1) % VIEWS.length]));
-  // E12 "Adjust view": while on, toss input is off and dragging (or arrows) orbits the shoulder camera round the
-  // thrower: yaw offset within +-180 deg of the aim, pitch offset within +-15 deg. Wheel and pinch still zoom.
+  // E12/F48 "Adjust view": while its icon is held, toss input is off and the held arrows orbit the shoulder camera round the
+  // thrower: yaw offset within +-180 deg of the aim, pitch offset within +-15 deg (clamped in camera.js, never wrapped). Wheel and pinch still zoom.
   // Turning it off keeps a small yaw offset (<= KEEP_YAW) since aiming still works from there; a larger one would
   // leave the camera looking sideways or backwards of the aim, so it eases back to the default framing. Pitch stays.
   const reducedMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const wrapPi = (a) => Math.atan2(Math.sin(a), Math.cos(a));
   function setViewOffset(yaw, pitch) {
-    const lim = (a) => Math.max(-Math.PI, Math.min(Math.PI, a));
-    shoulderCam.viewYaw = lim(yaw);
-    shoulderCam.viewPitch = Math.max(-PITCH_MAX, Math.min(PITCH_MAX, pitch));
+    const c = clampViewOffset(yaw, pitch);
+    shoulderCam.viewYaw = c.yaw; shoulderCam.viewPitch = c.pitch;
   }
   function easeViewTo(yaw, pitch) {
     cancelAnimationFrame(viewAnim);
@@ -457,16 +453,12 @@ function boot() {
     if (on && !(pending && !flying)) return;
     const was = adjusting;
     adjusting = on;
-    reaimBtn.classList.toggle('is-on', on);
-    reaimBtn.setAttribute('aria-checked', String(on));
     if (on === was && !reset) return;
     if (on) {
       clearToss();
       if (view !== 'shoulder') setView('shoulder');
       toss.setPhase('off');
-      canvas.style.cursor = 'grab';
     } else {
-      canvas.style.cursor = '';
       if (pending && !flying && !reset) toss.setPhase('aim');
     }
     if (!on) {
@@ -476,39 +468,45 @@ function boot() {
       }
     }
   }
-  reaimBtn.addEventListener('click', () => setAdjust(!adjusting));
-  let dragView = null;
-  canvas.addEventListener('pointerdown', (e) => {
-    if (!adjusting || (e.pointerType === 'mouse' && e.button !== 0)) return;
-    if (dragView) { dragView = null; return; } // second finger: pinch zoom, stop orbiting
-    dragView = { id: e.pointerId, x: e.clientX, y: e.clientY };
-    canvas.style.cursor = 'grabbing';
-  });
-  canvas.addEventListener('pointermove', (e) => {
-    if (!adjusting || !dragView || e.pointerId !== dragView.id) return;
-    const dx = e.clientX - dragView.x, dy = e.clientY - dragView.y;
-    dragView.x = e.clientX; dragView.y = e.clientY;
-    cancelAnimationFrame(viewAnim);
-    // dragging right swings the view left round the thrower (grab-the-world feel), as in the paused orbit
-    setViewOffset(wrapPi(shoulderCam.viewYaw - dx * 0.008), shoulderCam.viewPitch - dy * 0.004);
-  });
-  const endDrag = (e) => { if (dragView && e.pointerId === dragView.id) { dragView = null; if (adjusting) canvas.style.cursor = 'grab'; } };
-  canvas.addEventListener('pointerup', endDrag);
-  canvas.addEventListener('pointercancel', endDrag);
-  window.addEventListener('keydown', (e) => {
-    if (!adjusting || e.ctrlKey || e.metaKey || e.altKey) return;
-    const tag = e.target && e.target.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-    const f = e.shiftKey ? 0.25 : 1;
-    let dy = 0, dp = 0;
-    if (e.key === 'ArrowLeft') dy = -5 * DEG * f; else if (e.key === 'ArrowRight') dy = 5 * DEG * f;
-    else if (e.key === 'ArrowUp') dp = -2 * DEG * f; else if (e.key === 'ArrowDown') dp = 2 * DEG * f;
-    else if (e.key === 'Escape') { setAdjust(false); e.preventDefault(); return; }
-    else return;
+  // The pan icon (hud.js createHoldIcons) reports a held direction (pointer: which arrow of the icon is under the finger;
+  // keyboard: Space/Enter holds, arrow keys on the focused icon pan). A frame loop applies the pan while anything is held.
+  const pan = { pointer: null, hold: false, keys: new Set(), raf: 0, t: 0 };
+  const panDir = () => {
+    let x = pan.pointer ? pan.pointer.x : 0, y = pan.pointer ? pan.pointer.y : 0;
+    if (pan.keys.has('ArrowLeft')) x -= 1;
+    if (pan.keys.has('ArrowRight')) x += 1;
+    if (pan.keys.has('ArrowUp')) y -= 1;
+    if (pan.keys.has('ArrowDown')) y += 1;
+    return { x: Math.max(-1, Math.min(1, x)), y: Math.max(-1, Math.min(1, y)) };
+  };
+  const panActive = () => pan.hold || !!pan.pointer || pan.keys.size > 0;
+  function panStep(now) {
+    const dt = Math.min(0.1, (now - pan.t) / 1000); pan.t = now;
+    const d = panDir();
+    if (adjusting && (d.x || d.y)) {
+      const v = panViewOffset({ yaw: shoulderCam.viewYaw, pitch: shoulderCam.viewPitch }, d.x, d.y, dt);
+      setViewOffset(v.yaw, v.pitch);
+    }
+    pan.raf = panActive() && adjusting ? requestAnimationFrame(panStep) : 0;
+  }
+  function panRefresh() {
+    const on = panActive();
+    if (on && !adjusting) { cancelAnimationFrame(viewAnim); setAdjust(true); }
+    else if (!on && adjusting) setAdjust(false);
+    if (on && adjusting && !pan.raf) { pan.t = performance.now(); pan.raf = requestAnimationFrame(panStep); }
+  }
+  function panHold(info) {
+    if (info.pointer) pan.pointer = { x: info.dirX, y: info.dirY }; else pan.hold = true;
+    panRefresh();
+  }
+  function panRelease() { pan.pointer = null; pan.hold = false; pan.keys.clear(); panRefresh(); }
+  const panBtn = holds.buttons[0];
+  panBtn.addEventListener('keydown', (e) => {
+    if (!e.key.startsWith('Arrow') || e.ctrlKey || e.metaKey || e.altKey) return;
     e.preventDefault();
-    cancelAnimationFrame(viewAnim);
-    setViewOffset(wrapPi(shoulderCam.viewYaw + dy), shoulderCam.viewPitch + dp);
+    pan.keys.add(e.key); panRefresh();
   });
+  panBtn.addEventListener('keyup', (e) => { if (pan.keys.delete(e.key)) panRefresh(); });
   const hud = createHud(root, document.querySelector('.petanque-hud'), {
     onStart: (opts) => { audio.unlock(); setPlaying(true); startGame(opts); },
     onNext: () => nextMene(),
@@ -972,6 +970,7 @@ function boot() {
       setViewOffset((+params.get('viewyaw') || 0) * DEG, (+params.get('viewpitch') || 0) * DEG);
       if (params.has('adjust')) setAdjust(true);
     }
+    if (debug && params.has('holdhead')) setView('head'); // ?debug&humanturn&holdhead: the overhead view as while its icon is held (screenshots)
     say2(text);
     if (pickHuman !== null || store(HINT_KEY) !== '1') hud.showHint(HINT_TEXT);
     if (demo) { // ?debug&humanturn&demo: a scripted toss preview for screenshots

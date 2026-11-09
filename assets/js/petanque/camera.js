@@ -405,3 +405,21 @@ export function frameBroadcast(kind, s, prev) {
   if (s.groundAt) pos.z = Math.max(pos.z, s.groundAt(pos.x, pos.y) + BC.minZ);
   return { ...st, pos, tgt, v: { p: vp, t: vt } };
 }
+
+// F48: the shoulder camera's "Adjust view" pan. yaw orbits the thrower (+ = looks right), pitch tilts (+ = looks down
+// from higher up, - = looks level from lower). The allowed region is a rectangle: yaw within +-180 deg of the aim and
+// pitch within +-15 deg. Everything that moves the offset goes through clampViewOffset (no wrap-around), so the held
+// icon, the arrow keys and the debug flags can never leave it.
+export const VIEW_PAN = Object.freeze({
+  maxYaw: Math.PI, maxPitch: (15 * Math.PI) / 180,
+  yawRate: (70 * Math.PI) / 180, pitchRate: (25 * Math.PI) / 180, // rad/s while a direction is held
+});
+export function clampViewOffset(yaw, pitch, lim = VIEW_PAN) {
+  const y = Number.isFinite(yaw) ? yaw : 0, p = Number.isFinite(pitch) ? pitch : 0;
+  return { yaw: clamp(y, -lim.maxYaw, lim.maxYaw), pitch: clamp(p, -lim.maxPitch, lim.maxPitch) };
+}
+// One pan step: dirX (+1 right, -1 left) and dirY (+1 down, -1 up; each clamped to -1..1) held for dt seconds.
+export function panViewOffset(view, dirX, dirY, dt, lim = VIEW_PAN) {
+  const dx = clamp(dirX || 0, -1, 1), dy = clamp(dirY || 0, -1, 1), t = clamp(dt || 0, 0, 0.25);
+  return clampViewOffset(view.yaw + dx * lim.yawRate * t, view.pitch + dy * lim.pitchRate * t, lim);
+}

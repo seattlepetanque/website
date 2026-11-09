@@ -386,3 +386,25 @@ test('director: hover is 1 to 2 s, no reaction cut under reduced motion, pause f
   const d2 = createDirector({ later: (fn) => q.push([fn]), show: (s) => shots.push(s.kind) });
   d2.afterStop(out); d2.cancel(); const n = shots.length; q[q.length - 1][0](); assert.equal(shots.length, n, 'a cancelled shot never fires');
 });
+
+test('F48: view offsets are clamped to the allowed pan region, never wrapped', async () => {
+  const { clampViewOffset, panViewOffset, VIEW_PAN } = await import('../../assets/js/petanque/camera.js');
+  assert.deepEqual(clampViewOffset(0.2, 0.1), { yaw: 0.2, pitch: 0.1 });
+  assert.equal(clampViewOffset(10, 0).yaw, VIEW_PAN.maxYaw);
+  assert.equal(clampViewOffset(-10, 0).yaw, -VIEW_PAN.maxYaw);
+  assert.equal(clampViewOffset(0, 5).pitch, VIEW_PAN.maxPitch);
+  assert.equal(clampViewOffset(0, -5).pitch, -VIEW_PAN.maxPitch);
+  assert.deepEqual(clampViewOffset(NaN, undefined), { yaw: 0, pitch: 0 });
+});
+
+test('F48: holding a direction pans at a steady rate and stops at the edge', async () => {
+  const { panViewOffset, VIEW_PAN } = await import('../../assets/js/petanque/camera.js');
+  let v = { yaw: 0, pitch: 0 };
+  v = panViewOffset(v, 1, 0, 0.1);
+  assert.ok(Math.abs(v.yaw - VIEW_PAN.yawRate * 0.1) < 1e-9 && v.pitch === 0);
+  v = panViewOffset(v, -1, 0, 0.1);
+  assert.ok(Math.abs(v.yaw) < 1e-9);
+  for (let i = 0; i < 400; i++) v = panViewOffset(v, 1, 1, 1 / 60); // right and down for 6+ s
+  assert.equal(v.yaw, VIEW_PAN.maxYaw);
+  assert.equal(v.pitch, VIEW_PAN.maxPitch); // down looks down: positive pitch
+});
