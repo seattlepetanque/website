@@ -4,7 +4,6 @@
 import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
 import { mulberry32 } from './rng.js';
-import { court } from './court.js';
 
 export const GV_STEP = 0.1; // sampling grid of the overlay data, metres
 const LIFT = 0.006; // overlay sits this far above the ground
@@ -59,8 +58,7 @@ export function createGroundView(terrain, { phone = false, reduced = () => false
   legend.setAttribute('aria-hidden', 'true');
   legend.style.cssText = 'position:absolute;left:.6rem;top:5.6rem;z-index:5;pointer-events:none;font:600 .72rem/1.2 system-ui,sans-serif;color:#fff;text-shadow:0 1px 2px #000;background:rgba(20,40,75,.55);padding:.35rem .5rem;border-radius:.4rem;max-width:11rem';
   legend.innerHTML = '<div>Firmness</div><div style="height:.5rem;margin:.2rem 0;border-radius:.25rem;background:linear-gradient(90deg,rgb(232,118,40),rgb(236,226,200),rgb(48,120,200))"></div>' +
-    '<div style="display:flex;justify-content:space-between"><span>soft</span><span>hard</span></div><div style="margin-top:.25rem">Arrows: downhill, faster = steeper</div>' +
-    (terrain.shape ? '<div class="pc-ground-shape" style="margin-top:.3rem;font-weight:500;font-style:italic;opacity:.8"></div>' : '');
+    '<div style="display:flex;justify-content:space-between"><span>soft</span><span>hard</span></div><div style="margin-top:.25rem">Arrows: downhill, faster = steeper</div>';
 
   function build() {
     built = true;
@@ -169,10 +167,6 @@ export function createGroundView(terrain, { phone = false, reduced = () => false
       lattice = reduced();
       if (lattice) layLattice(); else for (const q of parts) { q.dead = false; respawn(q, true); }
       writeAll();
-    }
-    if (v && terrain.shape) { // worded for the way the court is being played now
-      const el = legend.querySelector('.pc-ground-shape');
-      if (el) el.textContent = terrain.shapeText ? terrain.shapeText(court.dir) : terrain.shape.text;
     }
     group.visible = v;
     legend.hidden = !v;

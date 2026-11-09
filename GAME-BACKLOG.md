@@ -813,7 +813,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F42 | done | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
 | F43 | on-hold | sonnet | F44 | Timbers half buried where the ground is higher (F25 heights) |
 | F44 | in-progress | sonnet | F42 | User chose: revert F25 (terrain shapes) |
-| F41 | todo | haiku | - | End-of-mène bar overlaps the bottom-right icon cluster and hides the Next button |
+| F41 | done | haiku | - | End-of-mène bar overlaps the bottom-right icon cluster and hides the Next button |
 | F33 | todo | sonnet | F04 | Nobody crouches for throws over 7.5 m |
 | F32 | in-progress | sonnet | — | Simplified in-game controls: always-on roll guide, icon cluster, hamburger menu, minimal pause screen |
 | F31 | done | haiku | — | Cap reported scores at the game target (13) |

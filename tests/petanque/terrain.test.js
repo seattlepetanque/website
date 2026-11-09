@@ -29,11 +29,11 @@ test('terrain is deterministic by seed', () => {
   assert.ok(pts(50).some(([x, y]) => a.sample(x, y).h !== c.sample(x, y).h));
 });
 
-test('height within the macro clamp, normals unit length, loose in [0,1]', () => {
+test('height within 5 cm, normals unit length, loose in [0,1]', () => {
   const t = createTerrain(7);
   for (const [x, y] of pts(2000)) {
     const s = t.sample(x, y);
-    assert.ok(Math.abs(s.h) <= C.maxHeight + C.jitterAmp, `h=${s.h}`);
+    assert.ok(Math.abs(s.h) <= 0.05, `h=${s.h}`);
     assert.ok(Math.abs(Math.hypot(s.nx, s.ny, s.nz) - 1) < 1e-6);
     assert.ok(s.nz > 0.5);
     assert.ok(s.loose >= 0 && s.loose <= 1);
@@ -166,71 +166,4 @@ test('Read-the-ground overlay data matches sample()', async () => {
     assert.ok(Math.abs(fd.firm[k] - (1 - s.loose)) < 1e-6);
     assert.ok(Math.abs(fd.grad[k] - Math.hypot(s.nx, s.ny) / s.nz) < 1e-6);
   }
-});
-
-// F25: court shapes
-const KINDS = Object.keys(C.shapeWeights);
-const gradField = (t) => { // perceived gradient on a 0.25 m lattice over the court
-  const v = t.perceived(), cols = [];
-  const nx = Math.round(C.terrainW / 0.25) + 1, ny = Math.round(C.terrainL / 0.25) + 1;
-  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { const s = v.sample(i * 0.25, j * 0.25); cols.push([-s.nx / s.nz, -s.ny / s.nz]); }
-  return { nx, ny, g: cols };
-};
-
-test('terrain.shape: kind, unit direction and text; deterministic per seed', () => {
-  for (const seed of [1, 2, 3, 4, 5, 6]) {
-    const a = createTerrain(seed).shape, b = createTerrain(seed).shape;
-    assert.deepEqual(a, b);
-    assert.ok(KINDS.includes(a.kind));
-    assert.ok(Math.abs(Math.hypot(a.dir.x, a.dir.y) - 1) < 0.01);
-    assert.ok(typeof a.text === 'string' && a.text.length > 10);
-    assert.deepEqual(createTerrain(seed).perceived().shape, a);
-  }
-});
-
-test('every archetype is reachable by seed', () => {
-  const seen = new Set();
-  for (let s = 1; s <= 150 && seen.size < KINDS.length; s++) seen.add(createTerrain(s).shape.kind);
-  assert.deepEqual([...seen].sort(), [...KINDS].sort());
-});
-
-test('each archetype: max gradient in range, main feature carries >= 70% of slope energy, coherent gradient direction', () => {
-  for (const kind of KINDS) {
-    for (const seed of [1, 2, 3]) {
-      const t = createTerrain(seed, { shape: kind });
-      assert.equal(t.shape.kind, kind);
-      const m = maxGradDeg(t);
-      assert.ok(m <= C.slopeMaxDeg * 1.08 && m >= C.slopeMaxDeg * 0.85, `${kind}/${seed}: ${m}`);
-      assert.ok(t.shape.share >= 0.7, `${kind}/${seed}: share ${t.shape.share}`);
-      // average angular change between neighbouring cells, ignoring near-flat spots
-      const { nx, ny, g } = gradField(t);
-      const gmax = Math.max(...g.map((v) => Math.hypot(v[0], v[1])));
-      let sum = 0, n = 0;
-      const ang = (a, b) => { const d = Math.atan2(a[0] * b[1] - a[1] * b[0], a[0] * b[0] + a[1] * b[1]); return Math.abs(d); };
-      for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-        const a = g[j * nx + i];
-        if (Math.hypot(a[0], a[1]) < 0.2 * gmax) continue;
-        for (const o of [i + 1 < nx ? j * nx + i + 1 : -1, j + 1 < ny ? (j + 1) * nx + i : -1]) {
-          if (o < 0 || Math.hypot(g[o][0], g[o][1]) < 0.2 * gmax) continue;
-          sum += ang(a, g[o]); n++;
-        }
-      }
-      assert.ok(sum / n < 0.12, `${kind}/${seed}: mean angular change ${(sum / n).toFixed(3)} rad`);
-    }
-  }
-});
-
-test('a tilt runs the way terrain.shape.dir says', () => {
-  const t = createTerrain(3, { shape: 'tilt' }), { g } = gradField(t);
-  let sx = 0, sy = 0;
-  for (const v of g) { sx += v[0]; sy += v[1]; }
-  const n = Math.hypot(sx, sy);
-  assert.ok((sx / n) * t.shape.dir.x + (sy / n) * t.shape.dir.y > 0.95);
-});
-
-test('shapeText words the shape for the direction the court is played', () => {
-  const t = createTerrain(3, { shape: 'tilt' });
-  assert.equal(t.shapeText(1), t.shape.text);
-  assert.notEqual(t.shapeText(-1), t.shape.text);
-  assert.match(t.shapeText(-1), /near end/);
 });
