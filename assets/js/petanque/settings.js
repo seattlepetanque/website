@@ -3,6 +3,7 @@
 //   'quick' - everything moves into position instantly or with a short fade
 const KEY = 'petanque-mode';
 const MODES = ['quick', 'slow'];
+const PARTNERS = ['pierre', 'marcel', 'odette'];
 const listeners = new Set();
 
 function load() {
@@ -32,6 +33,9 @@ export const settings = {
   // F12: ambient park sounds on/off (default on); the Ambience button in the controls bar sets it
   get ambience() { try { return localStorage.getItem('petanque-ambience') !== 'off'; } catch (e) { return true; } },
   set ambience(v) { try { localStorage.setItem('petanque-ambience', v ? 'on' : 'off'); } catch (e) { /* storage blocked */ } },
+  // F45: the partner chosen in the setup dialog ('pierre' | 'marcel' | 'odette'; default Pierre)
+  get partner() { try { const v = localStorage.getItem('petanque-partner'); return PARTNERS.includes(v) ? v : 'pierre'; } catch (e) { return 'pierre'; } },
+  set partner(v) { if (PARTNERS.includes(v)) { try { localStorage.setItem('petanque-partner', v); } catch (e) { /* storage blocked */ } } },
   onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
 };
 export const MODE_INFO = {

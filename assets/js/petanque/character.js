@@ -1343,6 +1343,7 @@ export function createCharacter(THREE, spec = {}) {
   applyMeshes();
   return {
     root, update, setStance, walkTo, playThrow, playBend, playKick, setCarrying, handWorldPosition, dispose,
+    setTrousers: (c) => mTrousers.color.set(c), // F45: team colour of the trousers
     lookAt, setHolding, setHeldBoules, shiftBoule, setPlacement, setSteer, walkLeg, attachModel, forceQuirk, setReducedMotion, fadeTo, setOpacity,
     hand, // 'right' | 'left': the dominant (throwing, carrying) hand
     get isMesh() { return !!vis; },

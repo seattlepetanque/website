@@ -15,14 +15,25 @@ const TIE_EPS = 0.001; // equidistant within 1 mm
 const BOULES_PER_PLAYER = 3;
 const EPS = 1e-9;
 
-export function defaultPlayers() {
+// F45: the human picks a partner from the three characters; the other two are the opponents. Each keeps their own
+// role (Marcel points; Pierre and Odette shoot); the human takes the role the partner does not.
+export const PARTNER_IDS = Object.freeze(['pierre', 'marcel', 'odette']);
+export const CHARACTER_ROLE = Object.freeze({ pierre: 'tireur', marcel: 'pointeur', odette: 'tireur' });
+const CHARACTER_NAME = Object.freeze({ pierre: 'Pierre', marcel: 'Marcel', odette: 'Odette' });
+export const validPartner = (id) => (PARTNER_IDS.includes(id) ? id : 'pierre');
+export const opponentIds = (partner = 'pierre') => PARTNER_IDS.filter((id) => id !== validPartner(partner));
+// 'You & Pierre', 'Marcel & Odette' (opponents in the fixed Pierre, Marcel, Odette order)
+export const teamNamesFor = (partner = 'pierre') =>
+  ['You & ' + CHARACTER_NAME[validPartner(partner)], opponentIds(partner).map((id) => CHARACTER_NAME[id]).join(' & ')];
+
+export function defaultPlayers(partner = 'pierre') {
+  const part = validPartner(partner);
   const mk = (id, name, team, isHuman, role) =>
     ({ id, name, team, isHuman, boulesLeft: BOULES_PER_PLAYER, role });
   return [
-    mk('you', 'You', 0, true, 'pointeur'),
-    mk('pierre', 'Pierre', 0, false, 'tireur'),
-    mk('marcel', 'Marcel', 1, false, 'pointeur'),
-    mk('odette', 'Odette', 1, false, 'tireur'),
+    mk('you', 'You', 0, true, CHARACTER_ROLE[part] === 'pointeur' ? 'tireur' : 'pointeur'),
+    mk(part, CHARACTER_NAME[part], 0, false, CHARACTER_ROLE[part]),
+    ...opponentIds(part).map((id) => mk(id, CHARACTER_NAME[id], 1, false, CHARACTER_ROLE[id])),
   ];
 }
 
@@ -147,7 +158,7 @@ export function nextTeam(match) {
 
 // The sentence for a dead cochonnet, from the boules in hand [team0, team1] when it went dead.
 // Both teams holding boules or neither: void. Only one team: that team scores them.
-export function deadJackText(inHand, teamNames = ['You & Pierre', 'Marcel & Odette']) {
+export function deadJackText(inHand, teamNames = teamNamesFor('pierre')) {
   const [h0, h1] = inHand;
   if (h0 > 0 && h1 > 0) return 'The cochonnet went out: both teams still have boules, so the mène is void.';
   if (h0 === 0 && h1 === 0) return 'The cochonnet went out and neither team has boules left, so the mène is void.';

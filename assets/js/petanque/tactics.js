@@ -31,7 +31,7 @@ export const profiles = {
   pierre: { id: 'pierre', lambda0: 0.05, appetite: 1.6, awareness: 0.5, gate: 0.5625, jackShy: 0, promote: 1.5, defend: 0.4, dropOK: 0.5, taste: { demi: 0.04, tir: 0.08 } },
   advice: { id: 'advice', lambda0: 0.15, appetite: 1.0, awareness: 1.0, gate: 0.9, jackShy: 0, promote: 1.0, defend: 1.0, dropOK: 1.0, taste: {} }, // "You": neutral
 };
-// Pierre's advice: half his own temperament, half neutral
+// The partner's advice (Pierre by default): half their own temperament, half neutral
 export function adviceProfile(id = 'pierre') {
   const a = profiles[id] || profiles.pierre, n = profiles.advice;
   const mix = (k) => (a[k] + n[k]) / 2;
@@ -57,7 +57,7 @@ export function evalParams(diff) {
 }
 
 export function profileFor(player, { advice = false } = {}) {
-  if (advice) return adviceProfile('pierre');
+  if (advice) return adviceProfile(typeof advice === 'string' ? advice : 'pierre'); // F45: advice may name the partner whose temperament is mixed in
   return profiles[player && player.id] || profiles.advice;
 }
 

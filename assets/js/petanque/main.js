@@ -8,7 +8,7 @@ import { createTerrain } from './terrain.js';
 import { createWorld, createBody, launch, placeDeadBall, deadRowSlot, deadJackSpot } from './physics.js';
 import { createRenderer } from './render.js';
 import {
-  createMatch, defaultPlayers, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm, deadJackText,
+  createMatch, defaultPlayers, teamNamesFor, validPartner, opponentIds, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm, deadJackText,
 } from './rules.js';
 import { createHud, createHoldIcons } from './hud.js';
 import { settings } from './settings.js';
@@ -29,7 +29,8 @@ import { createGroundView } from './groundview.js';
 import { isPhone } from './scenery.js';
 import { PERSONALITIES, CAST_IDS, specFor, pickStance, createCommentary, whoKind, composeSuggestion } from './personalities.js';
 
-const TEAM_NAMES = ['You & Pierre', 'Marcel & Odette'];
+let TEAM_NAMES = teamNamesFor('pierre'); // F45: reset in startGame for the chosen partner
+const TEAM_TROUSERS = ['#23396b', '#8a5a2b']; // navy for your team, bronze for the opponents (F45: by team, whoever is on it)
 const AIM_MAX = 0.6; // rad of aim either side of straight ahead
 const MAX_STEPS = 24; // physics steps per frame; backlog beyond this is dropped
 const DEG = Math.PI / 180;
@@ -42,9 +43,11 @@ const HINT_KEY = 'petanque-hint-seen';
 const HINT_TEXT = 'Drag sideways to turn. Press on the court where you want the boule to land, pull down to throw ' +
   'higher, release to throw; drag back up to cancel. Press near a boule to shoot it.';
 // Where waiting players stand: behind the circle and beside the court, out of the shoulder camera's view
+// F45: the slots belong to the seats: your partner stands in Pierre's slot and the opponents in Marcel's and Odette's, whoever they are
 const HOME_LOCAL = { you: { x: -0.9, y: -0.4 }, pierre: { x: -1.5, y: 0.7 }, marcel: { x: 6.0, y: 0.0 }, odette: { x: 6.8, y: 0.8 } };
 // E10: HOME_LOCAL is relative to the default circle (2, 1) playing +y; homeAt turns it with the circle and direction
-const homeAt = (id) => { const h = HOME_LOCAL[id], d = court.dir; return { x: C.terrainW / 2 + (h.x - 2) * d, y: court.circle.y + (h.y - 1) * d }; };
+let seatOf = { you: 'you', pierre: 'pierre', marcel: 'marcel', odette: 'odette' };
+const homeAt = (id) => { const h = HOME_LOCAL[seatOf[id]], d = court.dir; return { x: C.terrainW / 2 + (h.x - 2) * d, y: court.circle.y + (h.y - 1) * d }; };
 const CAST_SPEED = 2.4; // m/s: a brisk walk, so a change of thrower takes about a second
 // Looks, stances, quirks and commentary live in personalities.js (GAME-PLAN section 10).
 // Team colours: navy trousers for your team, bronze for the opponents.
@@ -73,7 +76,7 @@ function boot() {
   const world = createWorld(terrain, mulberry32(seed ^ 0x9e3779b9));
   const renderer = createRenderer(canvas, terrain);
   const aiRand = mulberry32(seed ^ 0x51ed270b);
-  const stanceRand = mulberry32(seed ^ 0x6a09e667); // Pierre's crouch-or-stand pick, one per throw
+  const stanceRand = mulberry32(seed ^ 0x6a09e667); // the AI's crouch-or-stand pick, one per throw
   const talk =createCommentary(mulberry32(seed ^ 0x7a1c0de5)); // personality lines, seeded like everything else
   const chance = mulberry32(seed ^ 0x3c6ef372);
 
@@ -95,6 +98,7 @@ function boot() {
 
   let match = null; // rules state; null until a game starts
   let difficulty = 'medium';
+  let partner = 'pierre'; // F45: the character on your team
   let instant = false; // autotest: no delays, simulate to rest synchronously
   let token = 0; // bumped on each new game so stale timers are ignored
   let yellowDone = false; // ?debug&yellow forces one yellow card
@@ -531,7 +535,7 @@ function boot() {
   const BOULE_COLORS = ['#a9bde0', '#e8aa6a']; // the team's boule look (render.js bouleMats)
   const playerOf = (id) => match && match.players.find((p) => p.id === id);
   const splitHeld = (n) => ({ dominant: Math.min(1, n), other: Math.min(2, Math.max(0, n - 1)) });
-  const teamColor = (id) => BOULE_COLORS[PERSONALITIES[id].team]; // E23: a team-0 player holds steel, team 1 bronze
+  const teamColor = (id) => BOULE_COLORS[(playerOf(id) || PERSONALITIES[id]).team]; // E23: a team-0 player holds steel, team 1 bronze
   function readyHeld(id) { // before a throw: the boule is in the dominant hand, moved over from the other hand if need be
     const ch = cast.get(id), p = playerOf(id);
     if (!p || match.phase !== 'play' || !slow()) { ch.setHeldBoules(null); return Promise.resolve(); }
@@ -901,7 +905,7 @@ function boot() {
     hud.hideChooser();
     hud.hideHint();
     hud.showPaused(false);
-    hud.showSetup({ difficulty, cast: ['pierre', 'marcel', 'odette'].map((id) => ({ name: PERSONALITIES[id].name, bio: PERSONALITIES[id].bio, team: PERSONALITIES[id].team })) });
+    hud.showSetup({ difficulty, partner: settings.partner, cast: ['pierre', 'marcel', 'odette'].map((id) => ({ id, name: PERSONALITIES[id].name, bio: PERSONALITIES[id].bio, tag: PERSONALITIES[id].tag })) });
     if (debug && params.has('topcam')) hud.hideOverlay();
   }
 
@@ -910,7 +914,13 @@ function boot() {
     token++; thinkToken++; pierreChoice = null;
     difficulty = opts.difficulty || 'medium';
     instant = !!opts.instant;
-    const players = defaultPlayers();
+    partner = validPartner((debug && params.get('partner')) || opts.partner || settings.partner); // F45
+    const players = defaultPlayers(partner);
+    TEAM_NAMES = teamNamesFor(partner);
+    seatOf = { you: 'you', [partner]: 'pierre' };
+    opponentIds(partner).forEach((id, i) => { seatOf[id] = i ? 'odette' : 'marcel'; });
+    talk.setPartner(partner);
+    for (const id of cast.keys()) if (id !== 'you') cast.get(id).setTrousers(TEAM_TROUSERS[id === partner ? 0 : 1]);
     // all-AI debug matches: nobody is "You", so the commentary grammar ("Sam points", "Sam's boule") still works
     if (opts.allAI) for (const p of players) { p.isHuman = false; if (p.id === 'you') p.name = 'Sam'; }
     resetCourt(); applyCourt(court.circle, 1, false);
@@ -1215,16 +1225,16 @@ function boot() {
     return { x: c.x, y: c.y, release: (l) => handFrom(player.id, l, yaw) };
   }
 
-  // Pierre looks at the court and tells you what he would do
-  async function suggest(pierre) {
+  // Your partner looks at the court and tells you what they would do
+  async function suggest(pierre) { // (pierre: the partner, whoever you chose)
     const mine = ++thinkToken;
     const t = token;
     let choice, who;
     try {
-      // who should throw (analytic, each with their own cone), then what that player should do: Pierre's blended advice
+      // who should throw (analytic, each with their own cone), then what that player should do: the partner's blended advice
       const avail = playersWithBoules(match, pierre.team);
       who = whoThrows({ match, bodies: world.bodies, team: pierre.team, difficulty, players: avail }).player || pierre;
-      choice = await chooseThrowAsync({ world, match, player: who, difficulty, rand: aiRand, from: aiBase(pierre), advice: true });
+      choice = await chooseThrowAsync({ world, match, player: who, difficulty, rand: aiRand, from: aiBase(pierre), advice: pierre.id });
     } catch (err) { return; }
     if (mine !== thinkToken || t !== token) return;
     const j = jackBody();
@@ -1237,8 +1247,8 @@ function boot() {
     const fact = atBoule ? `(${target} is ${gapText(foes[0], j)} from the jack.)` : '';
     const code = choice.why && choice.why.code !== 'mistake' ? choice.why.code : 'takePoint';
     const avail = playersWithBoules(match, pierre.team);
-    const kind = whoKind({ intent: choice.intent, thrower: who, pierre, pierreHasBoules: avail.some((p) => p.id === pierre.id) && pierre.boulesLeft > 0, teamSize: avail.length });
-    hud.setSuggestion(composeSuggestion(talk, { intent: choice.intent, code, kind, vars: { target, ...choice.why }, fact }), who.id);
+    const kind = whoKind({ intent: choice.intent, thrower: who, partner: pierre, partnerHasBoules: avail.some((p) => p.id === pierre.id) && pierre.boulesLeft > 0, teamSize: avail.length });
+    hud.setSuggestion(composeSuggestion(talk, { speaker: pierre.id, intent: choice.intent, code, kind, vars: { target, ...choice.why }, fact }), who.id);
     if (pickHuman !== null && pickHuman !== 'chooser') beginTurn('you'); // debug: go straight to the human throw
   }
 
@@ -1694,8 +1704,8 @@ function boot() {
       refreshHud({ team, playerId: null, text: 'Your team throws next' });
       say2('Your team to play. Who throws?');
       headView(match.jack, undefined, 0.3); // E17: the card covers the middle, so the subject sits high
-      hud.showChooser(avail, 'Pierre is sizing up the court…');
-      const pierre = avail.find((p) => !p.isHuman);
+      const pierre = avail.find((p) => !p.isHuman); // your partner
+      hud.showChooser(avail, `${pierre ? pierre.name : 'Your partner'} is sizing up the court…`);
       if (pierre) suggest(pierre);
       return;
     }
@@ -1787,7 +1797,7 @@ function boot() {
     const out = [];
     if (owner.isHuman) { // you have no catchphrases: your partner cheers your points, a neutral line otherwise
       const cheer = gained || ev === 'great' || ev === 'carreau';
-      out.push(cheer ? talk.say('pierre', 'ownScores') : talk.line('you', ev));
+      out.push(cheer ? talk.say(partner, 'ownScores') : talk.line('you', ev));
     } else out.push(talk.say(owner.id, ev));
     if (gained && chance() < 0.5) { // the other side reacts to losing the point
       const foe = pick(1 - was.team);
@@ -1830,7 +1840,7 @@ function boot() {
       say2(`${why} ${TEAM_NAMES[placing]} place the cochonnet.`);
       later(() => aiPlaceJack(why).catch((err) => console.error(err)), 1300);
     } else {
-      say2(`${why} You and Pierre place the cochonnet: click a green spot between the yellow arcs (6 to 10 m out).`);
+      say2(`${why} You and ${PERSONALITIES[partner].name} place the cochonnet: click a green spot between the yellow arcs (6 to 10 m out).`);
       later(() => humanPlaceJack(), 1300);
       if (debug && params.has('px')) humanPlaceMarker(); // screenshots: show the marker at once
     }
@@ -1927,7 +1937,7 @@ function boot() {
     if (!j || !match) return;
     match = { ...match, jack: { x: j.x, y: j.y, dead: j.dead } };
     headView(j);
-    const first = match.players.filter((p) => p.team === match.jackTeam && p.isHuman).length ? 'You and Pierre play' : `${TEAM_NAMES[match.jackTeam]} play`;
+    const first = match.players.filter((p) => p.team === match.jackTeam && p.isHuman).length ? `You and ${PERSONALITIES[partner].name} play` : `${TEAM_NAMES[match.jackTeam]} play`;
     say2(`Jack placed at ${Math.hypot(j.x - court.circle.x, j.y - court.circle.y).toFixed(1)} m. ${first} first.`);
     later(startPlay, 1400);
   }
@@ -2075,7 +2085,6 @@ function boot() {
     else {
       const names = TEAM_NAMES[r.team];
       text = `${names} score ${r.points} point${r.points === 1 ? '' : 's'}`;
-      if (r.team === 0) text = `You & Pierre score ${r.points} point${r.points === 1 ? '' : 's'}`;
     }
     // the scoring side's player and one on the other side say their piece (nobody speaks for a void mène)
     const voices = (won, lost) => {
@@ -2087,7 +2096,7 @@ function boot() {
       const win = match.winner;
       const lines = [pick(win), pick(1 - win)];
       hud.showGameOver({
-        text: win === 0 ? 'You win!' : 'Marcel & Odette win',
+        text: win === 0 ? 'You win!' : `${TEAM_NAMES[1]} win`,
         detail: `${text}. Final score ${match.scores[0]} to ${match.scores[1]}. ` +
           [lines[0] && talk.say(lines[0], 'gameWon'), lines[1] && talk.say(lines[1], 'gameLost')].filter(Boolean).join(' '),
       });

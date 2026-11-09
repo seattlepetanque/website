@@ -3,7 +3,7 @@
 
 import { settings, MODE_INFO } from './settings.js';
 
-const TEAM_NAMES = ['You & Pierre', 'Marcel & Odette'];
+const TEAM_NAMES = ['You & Pierre', 'Marcel & Odette']; // initial labels; update() sets them from the match
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -104,7 +104,7 @@ export function createHud(root, hudEl, cb) {
     head.append(nm, score);
     const players = el('div', 'pt-players');
     box.append(head, players);
-    return { box, score, players };
+    return { box, score, players, nm };
   });
   const meneEl = el('div', 'pt-mene');
   board.append(teamEls[0].box, meneEl, teamEls[1].box);
@@ -133,7 +133,7 @@ export function createHud(root, hudEl, cb) {
   holdEl.setAttribute('aria-live', 'polite');
   hudEl.append(pausedEl, board, holdEl, dock);
 
-  let setupState = { target: 13, difficulty: 'medium' };
+  let setupState = { target: 13, difficulty: 'medium', partner: settings.partner };
 
   function clearOverlay() { overlay.textContent = ''; overlay.className = 'pt-overlay'; }
 
@@ -151,9 +151,13 @@ export function createHud(root, hudEl, cb) {
     return c;
   }
 
-  function radioGroup(card, legendText, name, options, value, onChange) {
-    const fs = el('fieldset', 'pt-fieldset');
-    fs.append(el('legend', null, legendText));
+  // One compact row: a bold label on the left, the radio options inline beside it
+  function radioGroup(card, legendText, name, options, value, onChange, cls = '') {
+    const fs = el('div', 'pt-fieldset ' + cls);
+    fs.setAttribute('role', 'radiogroup');
+    fs.setAttribute('aria-label', legendText);
+    fs.append(el('span', 'pt-legend', legendText));
+    const opts = el('div', 'pt-opts');
     for (const [val, label] of options) {
       const lab = el('label', 'pt-choice');
       const input = document.createElement('input');
@@ -161,44 +165,57 @@ export function createHud(root, hudEl, cb) {
       input.checked = String(val) === String(value);
       input.addEventListener('change', () => onChange(val));
       lab.append(input, el('span', null, label));
-      fs.append(lab);
+      opts.append(lab);
     }
+    fs.append(opts);
     card.append(fs);
+    return fs;
   }
 
   function showSetup(initial) {
     setupState = { ...setupState, ...(initial || {}) };
     board.hidden = true; turnEl.hidden = true;
     const c = card('Set up your game', 'pt-setup');
-    c.append(el('p', 'pt-blurb', 'You and Pierre play Marcel and Odette, doublette, three boules each.'));
-    if (setupState.cast) {
-      const ul = el('ul', 'pt-cast');
-      ul.setAttribute('aria-label', 'The players');
-      for (const m of setupState.cast) {
-        const li = el('li', 'pt-cast-item pt-cast' + m.team);
-        li.append(el('strong', null, m.name), el('span', null, ` \u2014 ${m.bio}`));
-        ul.append(li);
+    const cast = setupState.cast || [];
+    const nameOf = (id) => (cast.find((m) => m.id === id) || { name: id }).name;
+    const blurb = el('p', 'pt-blurb');
+    const bioEl = el('p', 'pt-partner-bio');
+    const refresh = () => {
+      const part = setupState.partner;
+      const opp = cast.filter((m) => m.id !== part).map((m) => m.name);
+      blurb.textContent = `You and ${nameOf(part)} play ${opp.join(' and ')}, doublette, three boules each.`;
+      const m = cast.find((q) => q.id === part);
+      bioEl.textContent = m ? `${m.name}: ${m.bio}.` : '';
+    };
+    c.append(blurb);
+    if (cast.length) {
+      // F45: choose your partner; the other two are the opponents
+      const fs = el('div', 'pt-fieldset pt-partner');
+      fs.setAttribute('role', 'radiogroup');
+      fs.setAttribute('aria-label', 'Your partner');
+      fs.append(el('span', 'pt-legend', 'Your partner'));
+      const row = el('div', 'pt-partners');
+      for (const m of cast) {
+        const lab = el('label', 'pt-partner-choice');
+        const input = document.createElement('input');
+        input.type = 'radio'; input.name = 'pt-partner'; input.value = m.id;
+        input.checked = m.id === setupState.partner;
+        input.addEventListener('change', () => { setupState.partner = m.id; settings.partner = m.id; refresh(); });
+        lab.append(input, el('strong', null, m.name), el('span', 'pt-partner-tag', m.tag || ''));
+        row.append(lab);
       }
-      c.append(ul);
+      fs.append(row);
+      c.append(fs, bioEl);
     }
+    refresh();
     radioGroup(c, 'Play to', 'pt-target', [[13, '13 points'], [7, '7 points (quick)']],
       setupState.target, (v) => { setupState.target = +v; });
     radioGroup(c, 'Opponents', 'pt-diff', [['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard']],
       setupState.difficulty, (v) => { setupState.difficulty = v; });
-    const modeFs = el('fieldset', 'pt-fieldset pt-modes');
-    modeFs.append(el('legend', null, 'Pace'));
-    for (const [val, label] of [['slow', 'Slow'], ['quick', 'Quick']]) {
-      const lab = el('label', 'pt-choice pt-mode-choice');
-      const input = document.createElement('input');
-      input.type = 'radio'; input.name = 'pt-mode'; input.value = val;
-      input.checked = settings.mode === val;
-      input.addEventListener('change', () => { settings.mode = val; });
-      const txt = el('span', null);
-      txt.append(el('strong', null, label), el('span', 'pt-mode-desc', ' \u2014 ' + MODE_INFO[val]));
-      lab.append(input, txt);
-      modeFs.append(lab);
-    }
-    c.append(modeFs);
+    const modeDesc = el('p', 'pt-mode-desc', MODE_INFO[settings.mode]);
+    radioGroup(c, 'Pace', 'pt-mode', [['slow', 'Slow'], ['quick', 'Quick']], settings.mode,
+      (v) => { settings.mode = v; modeDesc.textContent = MODE_INFO[v]; }, 'pt-modes');
+    c.append(modeDesc);
     const start = button('Start game', 'pt-btn pt-start', () => cb.onStart({ ...setupState }));
     c.append(start);
     say('Choose your game options, then start.');
@@ -222,7 +239,9 @@ export function createHud(root, hudEl, cb) {
       teamEls[t].score.textContent = match.scores[t];
       teamEls[t].box.classList.toggle('is-turn', !!turn && turn.team === t);
       teamEls[t].players.textContent = '';
-      for (const p of match.players.filter((q) => q.team === t)) {
+      const members = match.players.filter((q) => q.team === t);
+      if (members.length) teamEls[t].nm.textContent = [...members].sort((a, b) => (b.isHuman ? 1 : 0) - (a.isHuman ? 1 : 0)).map((q) => q.name).join(' & ');
+      for (const p of members) {
         const row = el('div', 'pt-player' + (turn && turn.playerId === p.id ? ' is-active' : ''));
         row.append(el('span', 'pt-pname', p.name), dots(p.boulesLeft));
         teamEls[t].players.append(row);
@@ -234,11 +253,14 @@ export function createHud(root, hudEl, cb) {
   }
 
   // Who-throws card (human team), centred over the court with a translucent backdrop.
-  // players: the throwers with boules; suggestion: Pierre's advice (replaced later by setSuggestion).
+  // players: the throwers with boules; suggestion: your partner's advice (replaced later by setSuggestion).
   let chooserCard = null;
   let suggestEl = null;
   let whoBtns = [];
+  let advisor = 'Pierre'; // the partner who suggests (F45: whoever you chose)
   function showChooser(players, suggestion) {
+    const partner = players.find((p) => !p.isHuman);
+    if (partner) advisor = partner.name;
     const c = card('Your team to play', 'pt-choose');
     c.classList.add('pt-choose-card');
     c.tabIndex = -1;
@@ -264,14 +286,14 @@ export function createHud(root, hudEl, cb) {
     c.append(group);
     focusSoon(c);
   }
-  // playerId: the one Pierre says should throw; they get a "Pierre suggests" tag (never pre-selected)
+  // playerId: the one your partner says should throw; they get a "<Partner> suggests" tag (never pre-selected)
   function setSuggestion(text, playerId) {
     if (suggestEl) suggestEl.textContent = text;
     for (const b of whoBtns) {
       const on = playerId !== undefined && b.dataset.player === playerId;
       b.classList.toggle('is-suggested', on);
       const tag = b.querySelector('.pt-who-tag');
-      if (on && !tag) b.append(el('span', 'pt-who-tag', 'Pierre suggests'));
+      if (on && !tag) b.append(el('span', 'pt-who-tag', `${advisor} suggests`));
       if (!on && tag) tag.remove();
     }
   }
