@@ -174,7 +174,8 @@ test('the AI plans at the jack where it is now: a knocked jack moves the plan wi
   const yaw0 = Math.atan2(2 - C.circle.x, 7.5 - C.circle.y);
   const run = (id, difficulty) => chooseThrow({ world: s.world, match: s.match, player: playerOf(s.match, id), difficulty, rand: mulberry32(9), from: handBase(id, yaw0) });
   const jack = s.jack, boule = s.world.bodies.find((b) => b.kind === 'boule');
-  for (const [id, wantIntent] of [['marcel', 'point'], ['odette', null]]) {
+  // (F04: a shot at a boule 7 cm from the jack can beat the point even for Marcel; the test is about where the plan aims)
+  for (const [id, wantIntent] of [['marcel', null], ['odette', null]]) {
     jack.x = 2; jack.y = 7.5; boule.x = 2.05; boule.y = 7.45;
     const a = run(id, 'hard');
     // a knock sends the jack (and the boule beside it) 1.5 m further and 0.8 m to the side

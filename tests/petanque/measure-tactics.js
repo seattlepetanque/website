@@ -18,6 +18,7 @@ const whoThrows = AIM.whoThrows || null;
 // tuning hooks: DSCALE=easy,medium,hard overrides donnee.js difficultyScale (the AI skill spread); EPS=easy,medium,hard overrides the tactical error rates for a run
 if (process.env.DSCALE) process.env.DSCALE.split(',').forEach((v, i) => { difficultyScale[['easy', 'medium', 'hard'][i]] = +v; });
 if (process.env.EPS) process.env.EPS.split(',').forEach((v, i) => { DIFFICULTY[['easy', 'medium', 'hard'][i]].eps = +v; });
+if (AIM.AI && process.env.ABLATE) for (const k of process.env.ABLATE.split(',')) AIM.AI.ablate[k] = true; // ABLATE=noPromote,noDefense,noDrop,noMargin switches a new F04 piece off for a comparison run
 if (AIM.AI && !process.env.TIME_GUARD) AIM.AI.timeGuard = false; // the 40 ms wall-clock guard makes results load-dependent; TIME_GUARD=1 keeps it
 
 // WHO_OLD=1: the pre-F03 pick (best analytic score per player; within 0.25 the one with most boules), for the before/after comparison
@@ -138,6 +139,13 @@ export function playMatch(seed, { diffs = ['medium', 'medium'], bot = null, targ
         const t = others.find((o) => d2(o, choice.info.target) < 0.02);
         if (t) { r.hit = t.b.dead || d2(t.b, t) > 0.15; r.carreau = r.hit && !body.dead && d2(body, t) < 0.4; }
       }
+      if (choice.family === 'promote') {
+        // F04 promotion results: did our boule end at least 0.1 m closer to the jack, did the jack move, were own boules knocked out
+        const t = others.find((o) => d2(o, choice.info.target) < 0.02);
+        const jj = world.bodies.find((b) => b.kind === 'jack');
+        r.pushed = !!t && !t.b.dead && d2(t.b, jj) < d2(t, { x: jx, y: jy }) - 0.1;
+        r.ownLost = others.filter((o) => o.team === team && o.b.dead).length;
+      }
       if (choice.intent === 'shoot') r.ownMoved = others.filter((o) => o.team === team && (o.b.dead || d2(o.b, o) > 0.15)).length;
       if (rec) rec(r);
       match = apply(match, {
@@ -227,6 +235,10 @@ function report(label, parts, { detail = false } = {}) {
     console.log(`  roles team ${team} while the role player holds boules: ${tir} takes ${pct(shotsIn.filter((r) => r.player === tir).length, shotsIn.length)} of ${shotsIn.length} shots; ${poi} takes ${pct(ptsIn.filter((r) => r.player === poi).length, ptsIn.length)} of ${ptsIn.length} points`);
     console.log(`  roles team ${team}: ${tir} takes ${pct(shots.filter((r) => r.player === tir).length, shots.length)} of ${shots.length} shots; ${poi} takes ${pct(pts.filter((r) => r.player === poi).length, pts.length)} of ${pts.length} points`);
   }
+  const pro = ai.filter((r) => r.family === 'promote');
+  if (pro.length) console.log(`  promote: ${pro.length} throws; boule ends >= 0.1 m closer ${pct(pro.filter((r) => r.pushed).length, pro.length)}, jack moved ${pct(pro.filter((r) => r.jackMoved).length, pro.length)}, an own boule knocked out ${pct(pro.filter((r) => r.ownLost > 0).length, pro.length)}`);
+  const famsOf = (f) => ai.filter((r) => r.family === f).length;
+  console.log(`  F04 shares of AI throws: promote ${pct(famsOf('promote'), ai.length)}, block ${pct(famsOf('block'), ai.length)}, cover ${pct(famsOf('cover'), ai.length)}, block+cover ${pct(famsOf('block') + famsOf('cover'), ai.length)}, drop ${pct(famsOf('drop'), ai.length)} (reason codes: ${['promote', 'block', 'cover', 'spread', 'drop', 'farJack', 'easyShot'].map((c) => c + ' ' + pct(ai.filter((r) => r.why === c).length, ai.length)).join(', ')})`);
   const mist = ai.filter((r) => r.why === 'mistake').length;
   console.log(`  tactical errors: ${pct(mist, ai.length)} of AI throws`);
 }

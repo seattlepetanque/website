@@ -24,30 +24,36 @@ export const DEFAULT_CFG = {
 // ---------- Profiles and difficulty (12.7) ----------
 // gate = minimum removal gain G to consider a shot (0.9 / appetite)
 export const profiles = {
-  marcel: { id: 'marcel', lambda0: 0.30, appetite: 0.5, awareness: 1.0, gate: 1.5, jackShy: 0.6, taste: { roulette: 0.22, demi: 0.06 } },
-  odette: { id: 'odette', lambda0: 0.15, appetite: 1.3, awareness: 1.0, gate: 0.7, jackShy: 0, taste: { demi: 0.02 } },
-  pierre: { id: 'pierre', lambda0: 0.05, appetite: 1.6, awareness: 0.5, gate: 0.5625, jackShy: 0, taste: { demi: 0.04, tir: 0.08 } },
-  advice: { id: 'advice', lambda0: 0.15, appetite: 1.0, awareness: 1.0, gate: 0.9, jackShy: 0, taste: {} }, // "You": neutral
+  // 12.12.6: promote (appetite for pushing an own boule on), defend (block / cover / spread priors and the defense threshold),
+  // dropOK (willingness to drop; scales the drop margin)
+  marcel: { id: 'marcel', lambda0: 0.30, appetite: 0.5, awareness: 1.0, gate: 1.5, jackShy: 0.6, promote: 0.8, defend: 1.4, dropOK: 1.0, taste: { roulette: 0.22, demi: 0.06 } },
+  odette: { id: 'odette', lambda0: 0.15, appetite: 1.3, awareness: 1.0, gate: 0.7, jackShy: 0, promote: 0.6, defend: 0.8, dropOK: 1.0, taste: { demi: 0.02 } },
+  pierre: { id: 'pierre', lambda0: 0.05, appetite: 1.6, awareness: 0.5, gate: 0.5625, jackShy: 0, promote: 1.5, defend: 0.4, dropOK: 0.5, taste: { demi: 0.04, tir: 0.08 } },
+  advice: { id: 'advice', lambda0: 0.15, appetite: 1.0, awareness: 1.0, gate: 0.9, jackShy: 0, promote: 1.0, defend: 1.0, dropOK: 1.0, taste: {} }, // "You": neutral
 };
 // Pierre's advice: half his own temperament, half neutral
 export function adviceProfile(id = 'pierre') {
   const a = profiles[id] || profiles.pierre, n = profiles.advice;
   const mix = (k) => (a[k] + n[k]) / 2;
   const appetite = mix('appetite');
-  return { id: 'advice-' + id, lambda0: mix('lambda0'), appetite, awareness: mix('awareness'), gate: 0.9 / appetite, jackShy: mix('jackShy'), taste: {} };
+  return { id: 'advice-' + id, lambda0: mix('lambda0'), appetite, awareness: mix('awareness'), gate: 0.9 / appetite, jackShy: mix('jackShy'), promote: mix('promote'), defend: mix('defend'), dropOK: mix('dropOK'), taste: {} };
 }
 
 // eps: tactical error rate; pw: weight of priors, awareness and the game term; cap: candidates kept by the pruning;
 // jackGain: gain a shot at the jack must promise (Infinity: never considered)
+// 12.12.6: promote ('draw': admitted with probability 0.25 per decision, 'on'), promoteAlign (degrees) and promoteGain (the gain gate);
+// defense (defense mode and the lane shield / jack cover terms), spread (weight of the easy-target term), drop ('A' / 'AB' cases, '' never)
 export const DIFFICULTY = {
-  easy: { eps: 0.30, pw: 0.3, cap: 6, jackGain: Infinity, baMul: 0.5, noiseMul: 3 },
-  medium: { eps: 0.08, pw: 0.8, cap: 8, jackGain: 1.5, baMul: 1, noiseMul: 1 },
-  hard: { eps: 0.02, pw: 1.0, cap: 10, jackGain: 0.8, baMul: 1, noiseMul: 1 },
+  easy: { eps: 0.30, pw: 0.3, cap: 6, jackGain: Infinity, baMul: 0.5, noiseMul: 3, promote: 'draw', promoteAlign: 25, promoteGain: 0.6, defense: false, spread: 0, drop: '' },
+  medium: { eps: 0.08, pw: 0.8, cap: 8, jackGain: 1.5, baMul: 1, noiseMul: 1, promote: 'on', promoteAlign: 15, promoteGain: 0.6, defense: true, spread: 0.5, drop: '' },
+  hard: { eps: 0.02, pw: 1.0, cap: 10, jackGain: 0.8, baMul: 1, noiseMul: 1, promote: 'on', promoteAlign: 20, promoteGain: 0.5, defense: true, spread: 1, drop: 'AB' },
 };
+export const PROMOTE_DRAW = 0.25;
 
 // Evaluator weights (12.4); wG is scaled by the principle weight
 export function evalParams(diff) {
-  return { wE: 1.0, wG: 2.5 * diff.pw, wB: 0.25 * diff.baMul, wM: 0.5, wX: 0.15, wL: 0.2, wF: 0.1 };
+  return { wE: 1.0, wG: 2.5 * diff.pw, wB: 0.25 * diff.baMul, wM: 0.5, wX: 0.15, wL: 0.2, wF: 0.1,
+    shield: !!diff.defense, wS: 0.12 * (diff.spread || 0), wS2: 0.15 * (diff.spread || 0) }; // 12.12.3: lane shield, jack cover, easy-target spread
 }
 
 export function profileFor(player, { advice = false } = {}) {
@@ -179,14 +185,14 @@ const HOLDER_BONUS = 0.25; // a holder with boules left may add points (plan: 0.
 // Expected points from the thrower's view for sorted distance lists (us, them), boules in hand after the throw.
 // A holder's boule k survives the other side's hX remaining boules with exp(-hX d^2 / 2 sigmaX^2), the first one
 // also the chance of being shot out.
-export function epState(sit, usD, themD, hT, hO, exposure = 0) {
+export function epState(sit, usD, themD, hT, hO, exposure = 0, opts = {}) {
   const bu = usD[0] ?? Infinity, bt = themD[0] ?? Infinity;
   if (bu === Infinity && bt === Infinity) return { ep: 0, holder: null, n: 0, keeps: [], exposureTerm: 0 };
   if (Math.abs(bu - bt) <= 0.001) return { ep: 0, holder: 'tie', n: 0, keeps: [], exposureTerm: 0 };
   const us = bu < bt;
   const mine = us ? usD : themD, otherBest = us ? bt : bu;
   const hX = us ? hO : hT, hH = us ? hT : hO;
-  const sigma = us ? sit.sigma.them : sit.sigma.us;
+  const sigma = (us ? sit.sigma.them : sit.sigma.us) * (opts.sigmaMul || 1); // 12.12.3 lane shield: their point replies spread wider past a blocker
   const pHit = us ? sit.pHitX.them : sit.pHitX.us;
   const keeps = [];
   let sum = 0;
@@ -218,6 +224,61 @@ export function deadJackPayoff(hT, hO, toGo, params) {
   return -0.15;
 }
 
+// ---------- Defensive terms (12.12.3): lane shield, jack cover, easy target ----------
+// Geometry is the circle-to-jack line: t is the distance along it, lat the distance from it
+function lineFrame(sit) {
+  const J = sit.jackPos, dj = sit.jack.dist || 1;
+  return { ux: (J.x - CIRCLE.x) / dj, uy: (J.y - CIRCLE.y) / dj, dj };
+}
+// laneShield: how much a boule short of the jack blocks the other side's roulette on the line (1: within 0.3 m of the line and 0.2 to
+// 1.2 m short of the jack, 0.5: within 0.5 m of the line). `pts` are the holder's boules ({x, y}).
+export function laneShield(sit, pts) {
+  const { ux, uy, dj } = lineFrame(sit);
+  let best = 0;
+  for (const p of pts) {
+    const dx = p.x - CIRCLE.x, dy = p.y - CIRCLE.y;
+    const short = dj - (dx * ux + dy * uy), lat = Math.abs(dx * uy - dy * ux);
+    if (short < 0.2 || short > 1.2) continue;
+    const v = lat <= 0.3 ? 1 : lat <= 0.5 ? 0.5 : 0;
+    if (v > best) best = v;
+  }
+  return best;
+}
+// coverJack: 1 when one of our boules sits within 0.45 m past the jack and 0.3 m of the line (a jack knocked back stays next to it)
+export function jackCover(sit, pts) {
+  const { ux, uy, dj } = lineFrame(sit);
+  for (const p of pts) {
+    const dx = p.x - CIRCLE.x, dy = p.y - CIRCLE.y;
+    const past = dx * ux + dy * uy - dj, lat = Math.abs(dx * uy - dy * ux);
+    if (past > 0 && past <= 0.45 && lat <= 0.3) return 1;
+  }
+  return 0;
+}
+// A straight ground path from the circle to `target` blocked by another boule near the line (ignoring `skip`)
+function pathBlocked(target, boules, skip) {
+  const dx = target.x - CIRCLE.x, dy = target.y - CIRCLE.y, len = Math.hypot(dx, dy) || 1;
+  for (const b of boules) {
+    if (b === skip || b.id !== undefined && skip && b.id === skip.id) continue;
+    const t = ((b.x - CIRCLE.x) * dx + (b.y - CIRCLE.y) * dy) / len;
+    if (t < 1.5 || t > len - 0.1) continue;
+    if (Math.abs((b.x - CIRCLE.x) * dy - (b.y - CIRCLE.y) * dx) / len < 0.2) return true;
+  }
+  return false;
+}
+// easyTarget: penalty for our counting boules that a shot would take two at a time (nearest neighbour within 0.12 m), plus
+// an extra for a lone counting boule nobody blocks when their shooter hits it often (pHitX above 0.5)
+function easyTargetPenalty(sit, counting, all, params) {
+  if (!params.wS || !(sit.handAfter.them > 0 && sit.tireur.them)) return 0;
+  let pen = 0;
+  for (const b of counting) {
+    let nn = Infinity;
+    for (const o of all) if (o !== b) nn = Math.min(nn, Math.hypot(o.x - b.x, o.y - b.y));
+    if (nn < 0.12) pen += params.wS;
+  }
+  if (counting.length === 1 && sit.pHitX.them > 0.5 && !pathBlocked(counting[0], all, counting[0])) pen += params.wS2;
+  return pen;
+}
+
 // Value of a settled state (bodies after a simulated throw) for the thrower's team, in mène points
 export function evalEnd(bodies, sit, params = sit.params) {
   const hT = sit.handAfter.us, hO = sit.handAfter.them;
@@ -230,15 +291,26 @@ export function evalEnd(bodies, sit, params = sit.params) {
     const b = bodies[i];
     if (b.kind !== 'boule') continue;
     if (b.dead) { if (b.team === sit.team) deadOwn++; else deadFoe++; continue; }
-    (b.team === sit.team ? us : them).push(Math.hypot(b.x - jack.x, b.y - jack.y));
+    (b.team === sit.team ? us : them).push({ x: b.x, y: b.y, d: Math.hypot(b.x - jack.x, b.y - jack.y) });
   }
-  us.sort((a, b) => a - b); them.sort((a, b) => a - b);
-  const st = epState(sit, us, them, hT, hO, jackExposure(jack.x, jack.y));
+  us.sort((a, b) => a.d - b.d); them.sort((a, b) => a.d - b.d);
+  const usD = us.map((b) => b.d), themD = them.map((b) => b.d);
+  const ours = (us[0] ? us[0].d : Infinity) < (them[0] ? them[0].d : Infinity);
+  let sigmaMul = 1, covered = 0;
+  if (params.shield && sit.jackPos) {
+    // the terms use the court's jack frame (the planning-time jack); a jack the sim moved a little changes them little
+    sigmaMul = 1 + 0.35 * laneShield(sit, ours ? us : them);
+    if (ours) covered = jackCover(sit, us);
+  }
+  const exposure = jackExposure(jack.x, jack.y) * (1 - 0.5 * covered);
+  const st = epState(sit, usD, themD, hT, hO, exposure, { sigmaMul });
   const g = gameTerm(sit, st);
   const wB = params.wB * (st.holder === 'us' && hO === 0 ? 0.5 : 1);
-  const dT = us[0] ?? SENTINEL, dO = them[0] ?? SENTINEL;
+  const dT = usD[0] ?? SENTINEL, dO = themD[0] ?? SENTINEL;
+  let spread = 0;
+  if (st.holder === 'us' && params.wS) spread = easyTargetPenalty(sit, us.slice(0, st.n), us.concat(them), params);
   return params.wE * st.ep + params.wG * g + wB * clamp(hT - hO, -3, 3) + params.wM * clamp(dO - dT, -1, 1) -
-    params.wX * st.exposureTerm - params.wL * Math.max(0, deadOwn - sit.deadBefore.us) + params.wF * Math.max(0, deadFoe - sit.deadBefore.them);
+    params.wX * st.exposureTerm - params.wL * Math.max(0, deadOwn - sit.deadBefore.us) + params.wF * Math.max(0, deadFoe - sit.deadBefore.them) - spread;
 }
 
 // Same, from sorted distance lists (static analysis in the planner)
@@ -290,6 +362,24 @@ const pushRisk = (sit, t) => {
   return 0;
 };
 
+export const SHOT_CALIB = 1.5;
+
+// ---------- Defense mode (12.12.3) ----------
+// On when they have more ammunition (BA <= -1), or we hold with a reply still to come, or they will hold more boules than us after
+// this throw. A low `defend` narrows it: mid (< 1) drops the third rule, low (< 0.6) needs BA <= -2.
+export function defenseOn(sit) {
+  if (!sit.diff.defense) return false;
+  const d = sit.profile.defend ?? 1, hT = sit.handAfter.us, hO = sit.handAfter.them;
+  if (d < 0.6) return sit.BA <= -2;
+  const base = sit.BA <= -1 || (sit.holder === 'us' && hO >= 1);
+  return d >= 1 ? base || hO > hT : base;
+}
+// The drop's margin against the best real throw (12.12.4): dropOK scales it (Pierre drops reluctantly)
+// Case A: drop when the best real throw is below Vdrop + A(dropOK); case B: when it is below Vdrop - B / dropOK. Ties go to the real
+// throw for a reluctant dropper: A is +0.05 for dropOK 1 (a throw no better than the drop), -0.025 for Pierre (0.5).
+export const DROP_MARGIN = { A: [-0.1, 0.15], B: 0.1 };
+export const dropMargin = (kind, sit) => { const ok = sit.profile.dropOK || 1; return kind === 'A' ? DROP_MARGIN.A[0] + DROP_MARGIN.A[1] * ok : -DROP_MARGIN.B / ok; };
+
 // ---------- Candidate families (12.2, 12.3) ----------
 function addPart(c, code, v) { c.parts[code] = (c.parts[code] || 0) + v; }
 
@@ -326,10 +416,14 @@ export function plan(sit, cfg = DEFAULT_CFG, { loose = false } = {}) {
     const after = evalDists(sit, [dd, ...sit.d.us].sort((x, y) => x - y), sit.d.them);
     c.pClose = pClose;
     c.value = pClose * (after.ep - sit.EPnow) - (1 - pClose) * 0.1;
+    // 12.12.1: against a holder the point has to land nearer than their best boule, not just near the jack
+    const rBeat = sit.holder === 'them' && themBest ? Math.max(0.04, Math.min(0.25 + 0.6 * off, themBest.dist - 0.5 * off)) : 0.25 + 0.6 * off;
+    const pBeat = 1 - Math.exp(-(rBeat * rBeat) / (2 * sig * sig));
+    c.apoint = pBeat * (after.ep - sit.EPnow) - (1 - pBeat) * 0.1;
   };
   const pointPriors = (c) => {
     if (taste(c.style)) c.parts.taste = taste(c.style);
-    if (downW && c.family !== 'pointBehind') addPart(c, 'downOnBoules', 0.15 * aw);
+    if (downW && c.family !== 'cover') addPart(c, 'downOnBoules', 0.15 * aw);
     if (sit.noReply && (c.family === 'pointJack' || c.family === 'pointSlot')) addPart(c, 'noReply', 0.1);
     if (sit.hand.us === 1 && sit.holder !== 'us') c.credit.lastBoule = 0.12 * aw;
     if (sit.closeOut.us && !sit.noReply) c.credit.closeOut = 0.3 * pw;
@@ -352,32 +446,118 @@ export function plan(sit, cfg = DEFAULT_CFG, { loose = false } = {}) {
       for (const style of ['demi', 'plombee']) cands.push(mk('pointSlot', style, 'point', t));
     }
   }
-  // pointFront: a blocker 0.3 m short of the jack on the line
+  // block (12.12.3, was pointFront): a boule 0.3 m short of the jack on the line, and (defense mode) one 0.45 m short, shifted to the side of their best boule
+  const defOn = !cfg.noDefense && defenseOn(sit); // cfg.noDefense / noPromote / noDrop / noMargin: ablation switches for measure-tactics.js
+  const dw = (prof.defend ?? 1) * pw; // defence weight: profile times principle weight
   const behindTheirs = themBest && themBest.dist < 0.4 && ((themBest.x - J.x) * ux + (themBest.y - J.y) * uy) > 0.02;
-  if ((themPointeur && sit.onGround.length > 0) || behindTheirs || loose) {
-    for (const style of ['plombee', 'demi']) cands.push(mk('pointFront', style, 'point', { x: J.x - ux * 0.3, y: J.y - uy * 0.3 }));
+  const oursNear = (t, r) => sit.onGround.some((b) => b.team === 'us' && dist2(b, t) < r);
+  const blockAdmit = defOn ? ((themPointeur && sit.onGround.length > 0) || behindTheirs) : ((themPointeur && sit.onGround.length > 0) || behindTheirs);
+  if (blockAdmit || loose) {
+    const spots = [{ x: J.x - ux * 0.3, y: J.y - uy * 0.3 }];
+    if (defOn) {
+      const side = themBest ? Math.sign((themBest.x - J.x) * px + (themBest.y - J.y) * py) || 1 : 1;
+      spots.push({ x: J.x - ux * 0.45 + px * side * 0.25, y: J.y - uy * 0.45 + py * side * 0.25 });
+    }
+    for (const t of spots) {
+      if (!loose && (oursNear(t, 0.2) || sit.onGround.some((b) => dist2(b, t) < 0.1))) continue; // R4: collateral >= 1 drops a block
+      if (!loose && defOn && pathBlocked(t, sit.onGround)) continue; // their lane to the spot is already blocked: nothing to add
+      for (const style of ['plombee', 'demi']) cands.push(mk('block', style, 'point', t));
+    }
   }
-  // pointBehind: cover the jack
+  // cover: the jack covered from behind
   if ((exposure >= 0.4 && themTireur) || (sit.holder === 'us' && sit.hand.them > 0) || loose) {
     const spots = [{ x: J.x + ux * 0.4, y: J.y + uy * 0.4 }, { x: J.x + ux * 0.35 + px * 0.3, y: J.y + uy * 0.35 + py * 0.3 }, { x: J.x + ux * 0.35 - px * 0.3, y: J.y + uy * 0.35 - py * 0.3 }];
     const nSpots = sit.diff === DIFFICULTY.hard ? 3 : 2;
-    for (const t of spots.slice(0, nSpots)) for (const style of ['demi', 'plombee']) cands.push(mk('pointBehind', style, 'point', t));
+    for (const t of spots.slice(0, nSpots)) for (const style of ['demi', 'plombee']) cands.push(mk('cover', style, 'point', t));
   }
   for (const c of cands) {
     pointPriors(c);
-    if (c.family === 'pointFront') {
-      if (themPointeur && sit.onGround.length > 0 && !sit.laneBlocked) { addPart(c, 'blockFront', 0.2 * pw); }
+    if (c.family === 'block') {
+      if (themPointeur && sit.onGround.length > 0 && !(defOn ? pathBlocked(c.target, sit.onGround) : sit.laneBlocked)) addPart(c, 'block', 0.2 * (defOn ? dw : pw));
       if (downW) addPart(c, 'downOnBoules', 0); // already counted above
     }
-    if (c.family === 'pointBehind' && themTireur) {
-      addPart(c, exposure >= 0.6 ? 'coverJack' : 'safetyBehind', 0.4 * exposure * pw);
-    }
+    if (c.family === 'cover' && themTireur) addPart(c, 'cover', 0.4 * exposure * (defOn ? dw : pw));
     pointInfo(c);
+  }
+  // spread (12.12.3): a point that avoids a close neighbour where the jack spot would sit beside our own boule is credited 'spread'
+  if (sit.diff.spread > 0 && sit.d.us.length) {
+    const nearOwn = (t) => sit.onGround.some((b) => b.team === 'us' && dist2(b, t) < 0.12);
+    const jackSpot = cands.find((c) => c.family === 'pointJack');
+    if (jackSpot && nearOwn(jackSpot.target) && themTireur) {
+      for (const c of cands) if (c.family === 'pointSlot' && !nearOwn(c.target)) c.credit.spread = 0.2 * sit.diff.spread;
+    }
+  }
+  const pointBest = (fams) => Math.max(-9, ...cands.filter((c) => fams.includes(c.family)).map((c) => c.apoint));
+  const Apoint = pointBest(['pointJack', 'pointSlot']);
+
+  // promote (12.12.2): a gentle throw that lands short of one of our boules and rolls into it, pushing it towards the jack
+  const promoteOn = !cfg.noPromote && sit.diff.promote === 'on' || (sit.diff.promote === 'draw' && sit.promoteDraw);
+  if ((promoteOn || loose) && sit.hand.us >= 1 && (sit.handAfter.them >= 1 || sit.holder !== 'us') && exposure < 0.8) {
+    const alignMax = sit.diff.promoteAlign * DEG;
+    const gainGate = Math.max(0.3, sit.diff.promoteGain / (prof.promote || 1));
+    const oursBest = sit.onGround.filter((b) => b.team === 'us').slice(0, 2);
+    let pick = null;
+    for (const B of oursBest) {
+      const dx = B.x - CIRCLE.x, dy = B.y - CIRCLE.y, lb = Math.hypot(dx, dy) || 1, bx = dx / lb, by = dy / lb;
+      const jx = J.x - B.x, jy = J.y - B.y, lj = Math.hypot(jx, jy) || 1e-6;
+      // an own boule past the jack on the line: a carom that helps (the jack may be close to B and the push may move it)
+      const carom = sit.onGround.some((o) => o.team === 'us' && o !== B && (o.x - J.x) * bx + (o.y - J.y) * by > 0.05 && (o.x - J.x) * bx + (o.y - J.y) * by < 0.5 && Math.abs((o.x - J.x) * by - (o.y - J.y) * bx) < 0.25);
+      if (B.dist > 1.4 || B.dist < (carom ? 0.15 : 0.35)) continue;
+      const ang = Math.acos(clamp((bx * jx + by * jy) / lj, -1, 1));
+      if (ang > alignMax && !loose) continue;
+      // risk to the head: other boules near the segment from B to 0.9 m beyond it (ours beyond B are a carom, not a risk)
+      let risky = 0, near = 0;
+      for (const o of sit.onGround) {
+        if (o === B) continue;
+        const t = (o.x - B.x) * bx + (o.y - B.y) * by, lat = Math.abs((o.x - B.x) * by - (o.y - B.y) * bx);
+        if (t < -0.05 || t > 0.9 || lat > 0.25) continue;
+        if (o.team === 'us' && t > 0) { near++; continue; }
+        risky++;
+      }
+      if (risky && !loose) continue;
+      // gain gate: our value with B moved 0.5 m closer, against now
+      const newD = Math.max(0.1, B.dist - 0.5);
+      const moved = sit.d.us.slice(); moved[moved.indexOf(B.dist)] = newD; moved.sort((x, y) => x - y);
+      const gain = evalDists(sit, moved, sit.d.them).ep - sit.EPnow;
+      if (gain < gainGate && !loose) continue;
+      const g2 = { B, bx, by, lb, ang, gain, near, carom };
+      if (!pick || gain > pick.gain) pick = g2;
+    }
+    if (pick) {
+      const { B, bx, by, near, carom } = pick;
+      const lane = !pathBlocked(B, sit.onGround, B);
+      const dB = dist2(B, CIRCLE);
+      for (const [style, ov] of [['demi', 0.6], ['roulette', 0.8]]) { // ov: where the free roll would end, beyond the boule's centre (a gentle tap)
+        if (style === 'roulette' && !lane && !loose) continue;
+        const cone = coneFor({ skill: sit.skill, from: CIRCLE, landing: along(Math.max(1, dB)), loft: L[style] });
+        const pPush = pAbsBelow(0.10, cone.sigmaLat) * pAbsBelow(0.30, cone.sigmaLong);
+        const push = 0.5 * ov; // a roll into a boule transfers roughly half
+        const movedD = sit.d.us.slice(); movedD[movedD.indexOf(B.dist)] = Math.max(0.1, B.dist - push); movedD.sort((x, y) => x - y);
+        const gainPush = evalDists(sit, movedD, sit.d.them).ep - sit.EPnow;
+        const landD = sit.d.us.concat([B.dist + 0.1]).sort((x, y) => x - y);
+        const pointValue = evalDists(sit, landD, sit.d.them).ep - sit.EPnow;
+        const inLine = pick.ang <= 20 * DEG && B.dist <= 0.9 ? 1 : 0;
+        const pDisturb = clamp(0.1 + 0.8 * Math.max(0, 0.8 - B.dist), 0, 0.5) * inLine * (carom ? 0.5 : 1);
+        const headCost = 0.8 + 0.3 * near;
+        const target = { x: B.x, y: B.y };
+        const restAt = { x: B.x + bx * ov, y: B.y + by * ov };
+        const c = mk('promote', style, 'point', target, { restAt, tag: 'promote', targetId: B.id, carom, info: { gain: pick.gain, B: { x: B.x, y: B.y }, dist: B.dist, pPush } });
+        c.target = target; // the boule itself, unclamped (the sims and the early cut-offs read it)
+        c.off = B.dist; c.pClose = pPush;
+        c.value = pPush * gainPush + (1 - pPush) * pointValue - pPush * pDisturb * headCost;
+        if (taste(style)) c.parts.taste = taste(style);
+        if (sit.holder === 'us') addPart(c, 'promote', 0.15 * (prof.promote || 1) * pw);
+        c.credit.promote = 0.4 + Math.min(0.2, 0.15 * pick.gain);
+        if (downW) c.credit.downOnBoules = 0.1 * downW;
+        cands.push(c);
+      }
+    }
   }
 
   // shootBoule
   const shots = [];
   const gate = Math.max(0.2, prof.gate * (1 + 0.6 * Math.max(0, -BA)) - 0.2 * upW * aw);
+  const shootMargin = Math.max(0, prof.gate * 0.25 + 0.2 * downW - 0.1 * upW);
   for (const t of themBoules) {
     if (t.dist > 1.4) continue;
     if (farGap(t.y) < 1 || alongOf(t) < 1) continue;
@@ -399,6 +579,15 @@ export function plan(sit, cfg = DEFAULT_CFG, { loose = false } = {}) {
       continue;
     }
     if (!loose && collateral >= 2 && G < 2) { sit.protectDropped = sit.protectDropped || { collateral }; out.dropped.push({ code: 'protectOwn', ...info }); continue; }
+    // 12.12.1: a shot must beat the best point by a margin (personality gate / 4, R1 +0.2 per boule down, R2 -0.1 per boule up)
+    // (the analytic hit chance runs under the sims, so the comparison uses it scaled up by SHOT_CALIB)
+    const pCal = Math.min(0.9, pHit * SHOT_CALIB), Acal = pCal * G - (1 - pCal) * miss;
+    const far = !cfg.noMargin && dj > 9.5 && pHit < 0.3 && G < 2; // a long jack: the shot is a long shot unless the target is worth the whole mène
+    if (!loose && (far || (!cfg.noMargin && Acal < Apoint + shootMargin))) {
+      if (far) sit.farJack = sit.farJack || { dist: dj };
+      out.dropped.push({ code: far ? 'farJack' : 'takePoint', ...info });
+      continue;
+    }
     shots.push(info);
   }
   shots.sort((a, b) => b.A - a.A);
@@ -423,6 +612,8 @@ export function plan(sit, cfg = DEFAULT_CFG, { loose = false } = {}) {
       if (taste(style === 'tirHigh' ? 'tir' : style)) c.parts.taste = taste(style === 'tirHigh' ? 'tir' : style);
       if (sit.hand.us === 1 && sit.holder !== 'us') c.credit.lastBoule = 0;
       if (sit.closeOut.them && sit.EPnow < -1) c.credit.closeOut = 0.3 * pw;
+      // easyShot: a high chance and a plain removal (reported only when no stronger code applies)
+      if (s.pHit >= 0.5 && s.unlock === 0 && s.removed < 2 && sit.pts < 2) c.credit.easyShot = 0.8;
       c.a = s.A;
       cands.push(c);
     }
@@ -455,10 +646,24 @@ export function plan(sit, cfg = DEFAULT_CFG, { loose = false } = {}) {
   }
 
   if (sit.protectDropped) for (const c of cands) if (c.intent === 'point') c.credit.protectOwn = 0.3;
+  if (sit.farJack) for (const c of cands) if (c.intent === 'point' && c.family !== 'promote') c.credit.farJack = 0.3;
   for (const c of cands) {
     const tot = Object.entries(c.parts).filter(([k]) => k !== 'taste' && k !== 'jackShy').reduce((x, [, v]) => x + v, 0);
     c.prior = clamp(tot, -0.5, 0.5) + (c.parts.taste || 0) + (c.parts.jackShy || 0);
     c.a = (c.intent === 'point' ? c.value : c.a) + c.prior;
+  }
+
+  // drop (12.12.4): Hard only; the static preconditions here, the simulated comparison in ai.js
+  if (!loose && !cfg.noDrop && sit.diff.drop && sit.holder === 'us' && sit.d.us[1] < 0.5) { // a packed head: two of our boules within 0.5 m of the jack
+    const hO = sit.handAfter.them;
+    const caseA = hO === 0 && sit.diff.drop.includes('A'), caseB = hO >= 1 && sit.handAfter.us === 0 && sit.diff.drop.includes('B');
+    if (caseA || caseB) {
+      const side = J.x >= CIRCLE.x ? -1 : 1; // away from the jack's side of the lane
+      const landing = { x: clamp(CIRCLE.x + 0.6 * side, 0.4, C.terrainW - 0.4), y: ahead(1.4).y };
+      const c = mk('drop', 'plombee', 'point', landing, { landing, tag: 'drop', info: {} });
+      c.target = landing; c.credit.drop = 0.6; c.value = 0; c.a = 0;
+      out.drop = { cand: c, kind: caseA ? 'A' : 'B' };
+    }
   }
 
   // keep within the field
@@ -485,7 +690,9 @@ export function plan(sit, cfg = DEFAULT_CFG, { loose = false } = {}) {
 }
 
 // ---------- Explanation (12.5) ----------
-const SPECIFIC = new Set(['bringInBoules', 'removePoints', 'voidMene', 'jackScoreTrick', 'protectOwn', 'blockFront', 'coverJack', 'safetyBehind', 'noReply', 'closeOut', 'lastBoule']);
+const SPECIFIC = new Set(['bringInBoules', 'removePoints', 'voidMene', 'jackScoreTrick', 'protectOwn', 'block', 'cover', 'promote', 'spread', 'drop', 'farJack', 'noReply', 'closeOut', 'lastBoule']);
+// Old reason codes, kept as aliases of the new ones (their lines and tests still work)
+export const REASON_ALIAS = Object.freeze({ blockFront: 'block', coverJack: 'cover', safetyBehind: 'cover' });
 
 export function reasonParams(code, sit, win) {
   const info = (win && win.info) || {};
@@ -500,7 +707,9 @@ export function reasonParams(code, sit, win) {
     case 'closeOut': return { toGo: sit.closeOut.us ? sit.toGo.us : sit.toGo.them, n: sit.closeOut.us ? sit.toGo.us : sit.toGo.them };
     case 'voidMene': return { losing: -sit.ptsSigned, n: Math.max(0, -sit.ptsSigned) };
     case 'jackScoreTrick': return { hT: sit.handAfter.us, n: sit.handAfter.us };
-    case 'safetyBehind': case 'coverJack': return { exposure: sit.jack.exposure };
+    case 'cover': case 'safetyBehind': case 'coverJack': return { exposure: sit.jack.exposure };
+    case 'promote': return { gap: fmtCm(info.dist === undefined ? 0 : info.dist - C.boule.r - JACK_R) };
+    case 'farJack': return { dist: Math.round(sit.jack.dist * 10) / 10 };
     default: return {};
   }
 }

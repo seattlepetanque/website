@@ -10,7 +10,7 @@ export const PERSONALITIES = {
       height: 1.76, build: 'average', stance: 'stand', // the human always stands to throw
       colors: { shirt: '#2fa3a0', trousers: '#23396b', skin: '#d9a37c' },
     },
-    quirks: { idle: ['shift', 'lookaround'], celebrate: 'cheer', dismay: 'shrug' },
+    quirks: { idle: ['shift', 'lookaround', 'checkboules', 'wipeboule', 'shade', 'shrug', 'chat'], hold: ['sides'], celebrate: 'cheer', dismay: 'shrug' },
     bio: 'the one with the boules',
   },
   pierre: {
@@ -19,7 +19,7 @@ export const PERSONALITIES = {
       height: 1.82, build: 'average', stance: 'stand', stances: ['crouch', 'stand'], // picked per throw (pickStance)
       colors: { shirt: '#f2c230', trousers: '#23396b', skin: '#b98258', scarf: '#d8322c' }, // yellow shirt, red neckerchief
     },
-    quirks: { idle: ['bounce', 'fidget', 'practice'], celebrate: 'jump', dismay: 'head' },
+    quirks: { idle: ['bounce', 'fidget', 'practice', 'toss', 'checkboules', 'shade', 'chat'], hold: ['fidget', 'sides', 'fidget'], celebrate: 'jump', dismay: 'head' },
     bio: 'your partner, young, keen, never short of confidence, and he loves a shot',
   },
   marcel: {
@@ -28,7 +28,7 @@ export const PERSONALITIES = {
       height: 1.68, build: 'stout', stance: 'crouch',
       colors: { shirt: '#7d8f5a', trousers: '#8a5a2b', skin: '#cf9a72', hat: '#3f3a34' }, // olive shirt; ?figures=mesh keeps the model's own colours
     },
-    quirks: { hat: 'cap', idle: ['hips', 'headshake', 'wipebrow'], celebrate: 'proud', dismay: 'wave' },
+    quirks: { hat: 'cap', idle: ['hips', 'headshake', 'wipebrow', 'wipeboule', 'checkboules', 'shade', 'shrug', 'chat'], hold: ['akimbo', 'akimbo', 'sides'], celebrate: 'proud', dismay: 'wave' },
     bio: 'has pointed at this terrain since 1974 and will tell you about it',
   },
   odette: {
@@ -37,7 +37,7 @@ export const PERSONALITIES = {
       height: 1.74, build: 'slim', stance: 'stand', hand: 'left',
       colors: { shirt: '#e9e1d2', trousers: '#9c6a34', skin: '#efc6a4', hat: '#e9d9a0' },
     },
-    quirks: { hat: 'sunhat', idle: ['fold', 'checkwatch', 'tilt'], celebrate: 'clap', dismay: 'sigh' },
+    quirks: { hat: 'sunhat', idle: ['fold', 'checkwatch', 'tilt', 'checkboules', 'shade', 'shrug', 'chat'], hold: ['sides', 'fold', 'sides'], celebrate: 'clap', dismay: 'sigh' },
     bio: 'retired schoolteacher, a very sharp tireur, and she will correct your grammar',
   },
 };
@@ -111,6 +111,27 @@ export const LINES = {
       ],
       'noReply': [
         'They have none left. Points, points.', 'Nobody answers. I add points.',
+      ],
+      'promote': [
+        'I give mine a little push. Doucement.', 'A tap on our boule, and it moves up.', 'A gentle push, only if the line is clean.',
+      ],
+      'block': [
+        'A door, in front of the jack. Let them try.', 'A blocker in front, and the roller stops.', 'I close the road to the jack.',
+      ],
+      'cover': [
+        'Behind the cochonnet, like a goalkeeper.', 'A boule behind, if they hit the jack.', 'Behind the jack, to be safe.',
+      ],
+      'spread': [
+        'Apart, so one shot cannot take two.', 'Not too close together. Patience.', 'Spaced out, they cannot take two.',
+      ],
+      'drop': [
+        'I put it at my feet. I do not touch what is good.', 'It stays short. The head is perfect.', 'A little drop. I touch nothing.',
+      ],
+      'farJack': [
+        'Too far to shoot. I point.', 'Far, far away. A point is wiser.', 'The cochonnet is too far for a shot.',
+      ],
+      'easyShot': [
+        'Close and clear. I shoot.', 'An easy one. I take it.', 'Close enough. Why not shoot?',
       ],
     },
     spotPoint: [
@@ -218,6 +239,27 @@ export const LINES = {
       'noReply': [
         'They have none left. Points, then.', 'No reply possible. I add points.',
       ],
+      'promote': [
+        'I tap ours closer, no risk to theirs.', 'A push on our boule. Elementary.', 'Our boule goes forward, theirs stay put.',
+      ],
+      'block': [
+        "I close the lane. They'll have to lob it.", 'A blocker on the line. They must lob.', 'The lane is closed. Observe.',
+      ],
+      'cover': [
+        'A boule behind: if they shoot the jack, we keep it.', 'Behind the jack, in case they shoot it.', 'A safety behind the jack.',
+      ],
+      'spread': [
+        'Not too close together. They hit one, not both.', 'Spacing, if you please.', 'One target at a time for them.',
+      ],
+      'drop': [
+        'A drop. Nothing to gain, so nothing to lose.', 'I place it short. There is nothing to improve.', 'A quiet little drop.',
+      ],
+      'farJack': [
+        'Too far for a clean shot. I point.', 'Too long a way. I point.', 'A shot from here is a gamble. I point.',
+      ],
+      'easyShot': [
+        'A clean shot. That one is mine.', 'Clear and close. I shoot.', 'The shot is on. Observe.',
+      ],
     },
     spotPoint: [
       'I shall place it precisely.', 'A measured throw. As it should be.', 'Observe the technique.',
@@ -324,6 +366,27 @@ export const LINES = {
       'noReply': [
         'They are out. Points, points, points!', 'Nobody can answer. Add points.',
       ],
+      'promote': [
+        'Ha! I push our boule in. Watch this.', 'A tap on our own boule, and zoom!', 'I give ours a nudge. Allez!',
+      ],
+      'block': [
+        'I park one in front. Nobody rolls through.', 'A blocker! Let them find a way round.', 'One in front of the jack, like a wall.',
+      ],
+      'cover': [
+        'I put one behind, just in case.', 'One behind the jack. Safe!', 'Behind the jack, in case somebody shoots.',
+      ],
+      'spread': [
+        'Spread them, no easy double.', 'Not too close. No double for them.', 'Spaced out, so no double.',
+      ],
+      'drop': [
+        '...I drop it. Yes. Even I can read this.', 'A drop. Me. Do not tell anyone.', 'I drop it short. For once.',
+      ],
+      'farJack': [
+        'It is a long way... all right, I point.', 'So far! Fine, I point.', 'Too far for a shot. I point.',
+      ],
+      'easyShot': [
+        'Boom. Easy one.', 'Close and clear. Boom!', 'Easy. I shoot it.',
+      ],
     },
     suggest: {
       'takePoint': [
@@ -370,6 +433,27 @@ export const LINES = {
       ],
       'noReply': [
         'They are out. Just add points.', 'Nobody can answer. Points.',
+      ],
+      'promote': [
+        "Tap our own boule on, it'll be a point even if you miss", 'Nudge our boule closer, a miss still leaves a point',
+      ],
+      'block': [
+        'Put one in front of the jack and stop their rolling', 'A blocker in front of the jack, stop their roller',
+      ],
+      'cover': [
+        'Behind the jack, in case they go for it', 'Put one behind the jack, to keep the point safe',
+      ],
+      'spread': [
+        'Keep ours apart, no easy double for them', 'Not beside our boule, one throw could take both',
+      ],
+      'drop': [
+        'Just drop it short. Nothing to gain here.', 'Drop it short, no need to risk the head',
+      ],
+      'farJack': [
+        "It's a long way. Point it.", 'Too far from here, point it',
+      ],
+      'easyShot': [
+        'Close and clear, shoot it!', 'That one is an easy shot, take it',
       ],
     },
     who: {
@@ -500,7 +584,8 @@ export function createCommentary(rand) {
 export const REASON_ACTION = Object.freeze({
   takePoint: 'point', holdPoint: 'point', downOnBoules: 'point', protectOwn: 'point', lastBoule: 'point',
   closeOut: 'point', blockFront: 'point', safetyBehind: 'point', coverJack: 'point', noReply: 'point',
-  upOnBoules: 'shoot', bringInBoules: 'shoot', removePoints: 'shoot', voidMene: 'shoot', jackScoreTrick: 'shoot',
+  promote: 'point', block: 'point', cover: 'point', spread: 'point', drop: 'point', farJack: 'point', // F04: block / cover also stand for the old codes (aliases)
+  upOnBoules: 'shoot', bringInBoules: 'shoot', removePoints: 'shoot', voidMene: 'shoot', jackScoreTrick: 'shoot', easyShot: 'shoot',
 });
 
 // Which who.<kind> line fits: the thrower (human or Pierre), whether they are alone, and the action
