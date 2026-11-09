@@ -818,9 +818,10 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F13 | done | haiku | — | Dead-jack void message gives the wrong reason |
 | F14 | done | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
 | F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
-| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25, F26, F27 | Round 5 review |
+| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25, F26, F27, F28 | Round 5 review |
 | F26 | todo | haiku | — | Slow mode: brisker fetch walks with natural arm swing (or folded arms) |
 | F27 | todo | sonnet | F04 | Pierre does what he said he'd do |
+| F28 | todo | sonnet | — | Better end-of-mène boule collection: kick boules to open space, then pick up (design first) |
 | F17 | done | haiku | — | Remove "lands at …" landing-distance text from the status line |
 | F18 | done | haiku | — | Breeze only occasionally, fading in and out |
 | F19 | done | sonnet | — | Distant lake with an occasional floatplane taking off or landing |
@@ -1035,3 +1036,8 @@ The F05 slope field reads as noise. Real courts have a few broad features player
 
 ### F27 Pierre does what he said (sonnet)
 When Pierre suggests a move in the chooser ("I'd shoot Marcel's boule", "A blocker in front", "You point, I'll shoot after") and the player picks him, he must play that move: the same intent, family and target (e.g. the boule he named), not a fresh decision that might point instead. Likewise any "I'm going to…" line he says before throwing must match the throw. Cause to check: the chooser runs an advice decision (`advice: true`, blended profile, human skill cone) but Pierre's actual turn calls `chooseThrowAsync` again with his own profile; cache the advice decision (keyed to the court state) and, when he's chosen, re-plan only the execution (his own skill, release point) for the same candidate. If the court changed since the suggestion, re-suggest first. Test: across seeded scenarios, the family and target of Pierre's throw equal his suggestion when chosen.
+
+### F28 Better boule collection: kick to open space, then collect (sonnet)
+F14/F15's simultaneous gathering still gets players stuck around the head. Model what real players do: each player locates their boules and nudges/kicks them out toward a free area nobody is standing in (a spot to the side of the head on their own side, chosen to avoid others' areas and paths), then walks there and picks them up together; dead boules beyond the strings are still fetched round the timbers.
+Step 1, design (short write-up in GAME-PLAN §10, shown to the user before step 2): how collection zones are assigned (e.g. each player gets a sector around the head, left/right/near/far by team and next-mène role), how a kick works (a short foot swing that launches the boule with a small simulated roll toward the zone, through physics with live-ball collisions off or limited, or a scripted slide), order and timing so players rarely cross paths, and the fallback (after ~12–15 s, remaining boules go to hands).
+Step 2, implement: a kick animation in character.js, the kick roll (physics or scripted), zone assignment and pathing in crowd.js/main.js replacing the current walk-to-each-boule loop, then the pick-up at the zone and the walk to next-mène spots (F15). Tests: zone assignment never overlaps, kicked boules end within the zone, a crowded head finishes without deadlock in simulation. Screenshots at a few times.
