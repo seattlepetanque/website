@@ -795,6 +795,19 @@ export function createCharacter(THREE, spec = {}) {
           setYaw(goal);
           if (w.stage === 'turn1') { if (w.dist > 0.02) w.stage = 'go'; else if (w.via.length) nextLeg(w); else w.stage = 'turn2'; } else w.stage = 'done';
         } else setYaw(st.yaw + Math.sign(dy) * step);
+      } else if (w.stage === 'go' && st.steer && w.lift <= 1) {
+        // F14: a crowd-steered step ({ vx, vy } scaled 0..1 from crowd.js): head along it, never past the leg's end
+        const sv = st.steer, m = sqrt(sv.vx * sv.vx + sv.vy * sv.vy);
+        const lx = w.leg.x - root.position.x, ly = w.leg.y - root.position.y, left = sqrt(lx * lx + ly * ly);
+        if (m > 1e-6) w.heading = atan2(sv.vx, sv.vy);
+        const step = min(w.speed * dt * m, left);
+        const dh = atan2(sin(w.heading - st.yaw), cos(w.heading - st.yaw));
+        if (abs(dh) > 1e-6) setYaw(abs(dh) <= TURN_RATE * dt ? w.heading : st.yaw + Math.sign(dh) * TURN_RATE * dt);
+        if (m > 1e-6) { root.position.x += sin(w.heading) * step; root.position.y += cos(w.heading) * step; w.phase += step / (4 * 0.18 * H) * 2 * PI; }
+        if (left - step < 0.02) {
+          root.position.x = w.leg.x; root.position.y = w.leg.y;
+          if (w.via.length) nextLeg(w); else w.stage = 'turn2';
+        }
       } else if (w.stage === 'go') {
         const step = min(w.speed * dt, w.dist - w.moved);
         w.moved += step;
@@ -942,6 +955,7 @@ export function createCharacter(THREE, spec = {}) {
     }
     updateLook(dt);
     step(dt);
+    st.steer = null; // F14: set again each frame by the caller
     evalPose();
     applyMeshes();
   }
@@ -993,6 +1007,10 @@ export function createCharacter(THREE, spec = {}) {
       switchMode('bend');
     });
   }
+  // F14: for this frame only, a walk's 'go' stage follows { vx, vy } (crowd.js steer) instead of its straight leg
+  function setSteer(v) { st.steer = v || null; }
+  // the point the walk is heading for now ({ x, y }), or null when not walking a straight stretch
+  function walkLeg() { return st.mode === 'walk' && st.walk && st.walk.stage === 'go' && st.walk.lift <= 1 ? { x: st.walk.leg.x, y: st.walk.leg.y } : null; }
   function setCarrying(on) { st.carry = !!on; }
   function playThrow({ loft = 0.5, onRelease } = {}) {
     if (st.mode === 'throw') cancelThrow();
@@ -1104,7 +1122,7 @@ export function createCharacter(THREE, spec = {}) {
   applyMeshes();
   return {
     root, update, setStance, walkTo, playThrow, playBend, setCarrying, handWorldPosition, dispose,
-    lookAt, setHolding, setHeldBoules, shiftBoule, setPlacement, attachModel, forceQuirk, fadeTo, setOpacity,
+    lookAt, setHolding, setHeldBoules, shiftBoule, setPlacement, setSteer, walkLeg, attachModel, forceQuirk, fadeTo, setOpacity,
     hand, // 'right' | 'left': the dominant (throwing, carrying) hand
     get isMesh() { return !!vis; },
     get yaw() { return st.yaw; },

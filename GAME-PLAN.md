@@ -555,3 +555,9 @@ Admission does the work: `promote` needs one of our two best boules in line with
 - Should Pierre's advice suggest `promote` and `drop` to the human, or only shots and points (the human controls how gentle a push is)?
 - Is it OK to remove `pointFront`/`pointBehind` as names (kept as aliases for reasons and old tests), or should they stay as separate families alongside `block`/`cover`?
 - Ablation targets: is 52% for the full tactics against the same tactics minus the new families good enough to ship, or do we want a bigger margin?
+
+#### 12.12 decisions (2026-11-08)
+- **Short drop:** Hard AIs only (Easy and Medium never drop), in the narrow cases above.
+- **Promotion:** allowed freely, including caroms that may move the jack; the simulations decide.
+- **Pierre's advice:** includes promotion, block/cover and (on Hard) the drop, with a short reason.
+- Settled without asking: no minimum boule distance exists in the rules (a ~1.5 m drop is legal); `pointFront`/`pointBehind` may be retired as family names (keep the old reason codes as aliases); keep the D22 balance targets for the ablation check.

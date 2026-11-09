@@ -806,7 +806,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F01 | done | sonnet | — | Sports-broadcast follow camera for the roving view |
 | F02 | done | sonnet | F07 | After a mène, players collect their boules from the head and walk to their spots |
 | F03 | done | sonnet | — | Teams keep roles (pointer and shooter) instead of alternating throwers |
-| F04 | in-progress | sonnet | F03 | Tactics expansion: pointing vs shooting vs promotion, defensive play, the deliberate short drop (design first, then implement) |
+| F04 | in-progress | sonnet | F03 | Tactics expansion: design done (GAME-PLAN §12.12, decisions recorded); step 2 implement |
 | F05 | done | sonnet | — | Slope and firmness fields tuned, plus an optional "Read the ground" analysis view |
 | F06 | done | haiku | — | Surface-to-surface measuring: circle to the rival boule's near edge, all distances to 0.1 cm |
 | F07 | done | sonnet | — | Last thrower picks up the ring straight away and carries it toward the jack |
@@ -816,7 +816,9 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F11 | done | haiku | — | "Who holds the point" overlay before each throw |
 | F12 | done | sonnet | — | Ambient park sounds with stereo movement |
 | F13 | done | haiku | — | Dead-jack void message gives the wrong reason |
-| F14 | in-progress | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
+| F14 | done | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
+| F15 | todo | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
+| F16 | todo | sonnet | F04, F15 | Round 5 review |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -933,3 +935,13 @@ Replaces F02's staggered turns. After the mène-end result, all players (except 
 
 ### F13 notes
 - `endMene` stores `inHand` at the jack's death; `deadJackText(inHand, teamNames)` gives the void-both, void-neither or one-team-scores sentence; used in endOfMene. Three tests.
+
+### F14 notes
+- `crowd.js` (`steer()`: seek + sideways push within 0.8 m + slow behind someone ahead; `createGather()` model; `GATHER_TIMEOUT` 20 s, `BLOCK_FADE_S` 2 s, `MIN_GAP` 0.5 m), character `setSteer`/`walkLeg`, main.js F02 section now starts everyone at once with per-frame steering, waits ≤ 6 s for someone bending at their boule, fallback `giveBoules` at 20 s, steered goal walks that fade if blocked > 2 s. crowd.test.js (7).
+- **Gaps for F15:** goal walks only start at `nextMene` (goals depend on the new circle), so after picking up players stand around until then, and the fallback leaves them overlapping; in the 25 s screenshot one player still had boules on the ground, so the 20 s fallback may not fire in the real scene. Quick mode and skip not tried.
+
+### F15 Gathering follow-up (sonnet)
+Fix the F14 gaps: (1) once a player has their boules, they walk straight to their next-mène spot (compute the new circle and slots as soon as the mène result is known, so goals don't wait for `nextMene`); (2) confirm in the real scene that the 20 s fallback fires (the F14 screenshot at 25 s still showed boules on the ground) and that nobody is left overlapping (separate or fade); (3) try quick mode and click-skip. Tests for the earlier goal timing; screenshots at a few times.
+
+### F16 Round 5 review (sonnet)
+Tests, build, full-match test, integration across modes and directions for all round 5 features (broadcast camera, gathering, roles, terrain view, measuring, ring carry, dead-jack ring spot, holding banner, ambience, tactics expansion), README update, screenshots, and a "Round 5 remaining issues" list.
