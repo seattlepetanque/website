@@ -1220,7 +1220,7 @@ function boot() {
   // and sets it down in the row beyond the far string; a failed cochonnet is carried to the player who places it,
   // handed over, and walked out to the chosen spot. Instant mode and reduced motion teleport. Fetching never holds
   // up a turn for long: the next turn waits (briefly) only while the fetcher is still in view.
-  const FETCH_SPEED = 1.35; // m/s
+  const FETCH_SPEED = CAST_SPEED; // m/s: F26, the same brisk pace as walking to the circle (fetches, pick-ups, gathering)
   const FETCH_VIEW_WAIT = 20000; // ms: longest a new turn waits for a fetcher to leave the court's view (a click or key ends it)
   let fetchJob = null; // { id, tok, cancelled } the character at work
   let carry = null; // { body, id }: a ball riding in somebody's hand

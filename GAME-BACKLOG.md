@@ -822,7 +822,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F14 | done | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
 | F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
 | F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24, F25, F26, F27, F28, F31 | Round 5 review |
-| F26 | in-progress | haiku | — | Slow mode: brisker fetch walks with natural arm swing (or folded arms) |
+| F26 | done | haiku | — | Slow mode: brisker fetch walks with natural arm swing (or folded arms) |
 | F27 | todo | sonnet | F04 | Pierre does what he said he'd do |
 | F28 | in-progress (step 2) | sonnet | F26 | Better end-of-mène boule collection: design done (GAME-PLAN §10c, decisions recorded); implementing |
 | F17 | done | haiku | — | Remove "lands at …" landing-distance text from the status line |
@@ -1056,3 +1056,6 @@ If a team ever ends a mène with more points than needed (e.g. 12 + 3 = 15), the
 
 ### F31 notes
 - rules.js `endMene`: `scores[team] = Math.min(match.target, scores[team] + points)`; display code reads `match.scores` so needed no change. The old "7-point game ends at 7" test now expects the capped `[5, 7]`; four new tests (12 + 3 → 13, 6 + 6 in a 7-point game → 7, normal scoring unchanged, E15 early end at a capped score).
+
+### F26 notes
+- `FETCH_SPEED = CAST_SPEED` (2.4 m/s, was 1.35) so fetches, pick-ups, ring/jack carries and gathering use the brisk walk-to-circle pace; stride stretched up to 1.3× (capped to stay in reach); free arms swing opposite the legs with more elbow bend, hands holding boules swing ~0.2 rad (boules ride the palm), folded arms stay folded; no stiff carry pose any more; style per walk by personality (Odette folds ~70%, Pierre swings most, Marcel small). walk-arms.test.js (7). A carried ring/jack has no separate pose (would need main.js call-site edits). `crowd.js` keeps its own 1.35 default for its tests.

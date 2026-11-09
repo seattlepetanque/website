@@ -456,18 +456,45 @@ function reactionPose(p, kind, style, t) {
 export const CARRY_ARM = { p: 0.55, ab: 0.2, p2: 1.45, ab2: 0.15 };
 
 // Walking gait at the given phase (radians, one full cycle = two steps). opts.lift scales the foot lift (stepping over
-// a timber raises it to a high step), opts.carry holds the right arm steady with a ball at the waist.
+// a timber raises it to a high step). opts.stride stretches the stride (brisk walks, see walkTo). Arms (F26): opts.arms
+// 'swing' (default: each arm swings opposite its leg) or 'fold' (folded across the chest); opts.amp scales the swing;
+// opts.held = { R, L } marks hands holding boules (a smaller swing, the boules ride the palm); opts.carry holds the
+// right arm with a ball or ring at the waist, swinging a little.
 export function walkPose(phase, opts = {}) {
-  const p = basePose(), A = 0.18, s = sin(phase), c = cos(phase), lift = opts.lift || 1;
+  const p = basePose(), k = opts.stride || 1, A = 0.18 * k, s = sin(phase), c = cos(phase), lift = opts.lift || 1;
   p.footL.y = A * s; p.footR.y = -A * s;
   p.footL.z = 0.035 * lift * max(0, c); p.footR.z = 0.035 * lift * max(0, -c);
   p.pz = 0.505 - 0.012 * abs(c); p.px = 0.012 * s; p.twist = 0.1 * s; p.spine = -0.1 * s * 0.6 + 0.04;
-  p.armL = arm(-0.45 * s + 0.1, 0.08, 0.3); p.armR = arm(0.45 * s + 0.1, 0.08, 0.3);
-  if (opts.carry) { p.armR = { ...CARRY_ARM }; p.twist = 0.1 * s * 0.5; }
+  walkArms(p, s, opts);
+  if (opts.carry) p.twist = 0.1 * s * 0.5;
   p.pitch = 0.05; p.neck = -0.04; p.headYaw = 0;
   p.ry = 0.0425; // the gait's footprint is centred here at every phase
   return p;
 }
+// F26: the walking arms. A free arm swings about its shoulder from hanging, the elbow bent a little more on the forward
+// swing; a hand holding boules swings less and its forearm rests a little forward (the boules ride the palm, E16);
+// a folded pair stays folded (FOLD); a carried ball or ring keeps the right arm at the waist with a small swing.
+const WALK_SWING = 0.45, WALK_HOLD_SWING = 0.2; // rad, each way from hanging
+function walkArms(p, s, o) {
+  const amp = o.amp || 1;
+  const arm1 = (key, sg) => { // sg: +1 right, -1 left (the leg opposite the arm steps forward when s > 0 for the left)
+    if (key === 'R' && o.carry) return { p: CARRY_ARM.p + 0.12 * s, ab: CARRY_ARM.ab, p2: CARRY_ARM.p2 + 0.12 * s, ab2: CARRY_ARM.ab2 };
+    if (o.arms === 'fold') return { ...FOLD[key] };
+    const held = !!(o.held && o.held[key]);
+    if (held) return arm(0.1 + sg * WALK_HOLD_SWING * amp * s, 0.12, 0.55);
+    return arm(0.1 + sg * WALK_SWING * amp * s, 0.08, 0.3);
+  };
+  p.armL = arm1('L', -1); p.armR = arm1('R', 1);
+}
+// F26: the walking style for one walk: a personality's tendency to fold its arms and how big its swing is, varied from walk
+// to walk by a hash of the walk's number (so no two walks look the same). who: the personality id (lower case).
+const WALK_TENDENCY = { odette: { fold: 0.7, amp: 0.85 }, marcel: { fold: 0.25, amp: 0.55 }, pierre: { fold: 0.05, amp: 1.15 } };
+export function walkStyle(who, seed, n) {
+  const t = WALK_TENDENCY[who] || { fold: 0.3, amp: 1 };
+  return { arms: hash(n, seed + 17) < t.fold ? 'fold' : 'swing', amp: t.amp * (0.85 + 0.3 * hash(n, seed + 23)) };
+}
+// F26: a walk's stride stretch: a brisk walk takes longer strides (capped so the feet stay in reach of the hips)
+export const walkStride = (speed) => min(1.3, sqrt(max(0.5, speed) / WALK_SPEED));
 
 // Bending to the ground (pick up or set down): u = 0 standing, 1 knees bent, back leaning forward, right hand at ground
 // level a little ahead of the feet. opts.carry keeps the right arm at the waist when standing (a ball in hand).
@@ -650,6 +677,7 @@ export function createCharacter(THREE, spec = {}) {
   const L = boneLengths(H);
   let quirkOffset = 0; // desynchronises the idle quirks of different characters
   for (const ch of String(spec.name || '')) quirkOffset += ch.charCodeAt(0) * 0.37;
+  let walks = 0; // F26: the number of walks so far (each walk's arm style is hashed from it)
 
   const root = new THREE.Group();
   root.name = spec.name || 'character';
@@ -799,7 +827,11 @@ export function createCharacter(THREE, spec = {}) {
   }
   function currentTarget() {
     const sw = (p) => (hand === 'left' ? armSwap(p) : p);
-    if (st.mode === 'walk') return sw(walkPose(st.walk.phase, { lift: st.walk.lift, carry: st.carry }));
+    if (st.mode === 'walk') { // the hands holding boules are named in right/left terms (the walk is authored for a right-hander)
+      const w = st.walk, dom = !!held && held.dominant > 0, oth = !!held && held.other > 0;
+      const holds = hand === 'left' ? { R: oth, L: dom } : { R: dom, L: oth };
+      return sw(walkPose(w.phase, { lift: w.lift, carry: st.carry, stride: w.stride, arms: w.style.arms, amp: w.style.amp, held: holds }));
+    }
     if (st.mode === 'bend') {
       const b = st.bending;
       return sw(bendPose(bendDepth(b.t), { carry: b.kind === 'pickup' ? b.acted : !b.acted }));
@@ -815,13 +847,6 @@ export function createCharacter(THREE, spec = {}) {
     if (st.carry && !held && (st.stance === 'watch' || st.stance === 'idle')) sp[armKey] = { ...CARRY_ARM };
     return sp;
   }
-  // Hands that hold boules carry them at the waist, palm up, while walking (standing about uses the relaxed holds in stancePose)
-  function heldArms(p) {
-    if (!held || st.mode !== 'walk') return p;
-    if (held.dominant > 0) p['arm' + HK] = { ...CARRY_ARM };
-    if (held.other > 0) p['arm' + OFF_HK] = { ...CARRY_ARM };
-    return p;
-  }
   function refreshHeld() {
     holdMesh.visible = held ? held.dominant > 0 : st.holding === 'boule';
     jackHeld.visible = !held && st.holding === 'jack';
@@ -829,7 +854,7 @@ export function createCharacter(THREE, spec = {}) {
     offMeshes[1].visible = !!held && held.other > 1;
   }
   function evalPose() {
-    const target = heldArms(currentTarget());
+    const target = currentTarget();
     st.out = st.blend < 1 && st.snap ? blendPoses(st.snap, target, st.blend) : target;
     st.solved = solveSkeleton(st.out, H);
     st.frame = vis ? meshFrame(st.solved, st.out, H, vis.s) : null;
@@ -936,7 +961,7 @@ export function createCharacter(THREE, spec = {}) {
         const step = min(w.speed * dt * m, left);
         const dh = atan2(sin(w.heading - st.yaw), cos(w.heading - st.yaw));
         if (abs(dh) > 1e-6) setYaw(abs(dh) <= TURN_RATE * dt ? w.heading : st.yaw + Math.sign(dh) * TURN_RATE * dt);
-        if (m > 1e-6) { root.position.x += sin(w.heading) * step; root.position.y += cos(w.heading) * step; w.phase += step / (4 * 0.18 * H) * 2 * PI; }
+        if (m > 1e-6) { root.position.x += sin(w.heading) * step; root.position.y += cos(w.heading) * step; w.phase += step / (4 * 0.18 * H * w.stride) * 2 * PI; }
         if (left - step < 0.02) {
           root.position.x = w.leg.x; root.position.y = w.leg.y;
           if (w.via.length) nextLeg(w); else w.stage = 'turn2';
@@ -948,7 +973,7 @@ export function createCharacter(THREE, spec = {}) {
         const dh = atan2(sin(w.heading - st.yaw), cos(w.heading - st.yaw));
         if (abs(dh) > 1e-6) setYaw(abs(dh) <= TURN_RATE * dt ? w.heading : st.yaw + Math.sign(dh) * TURN_RATE * dt);
         root.position.x += sin(w.heading) * step; root.position.y += cos(w.heading) * step;
-        w.phase += w.speed * dt / (4 * 0.18 * H) * 2 * PI;
+        w.phase += w.speed * dt / (4 * 0.18 * H * w.stride) * 2 * PI;
         if (w.dist - w.moved < 1e-6) {
           root.position.x = w.leg.x; root.position.y = w.leg.y;
           if (w.via.length) nextLeg(w); else w.stage = 'turn2';
@@ -1122,9 +1147,11 @@ export function createCharacter(THREE, spec = {}) {
       const fx = target.x - (via.length ? via[via.length - 1].x : first.x), fy = target.y - (via.length ? via[via.length - 1].y : first.y);
       const ty = target.yaw === undefined ? (via.length || first !== target ? atan2(fx, fy) : heading) : target.yaw;
       if (first !== target) via.push({ x: target.x, y: target.y, lift: target.lift });
+      const speed = target.speed || WALK_SPEED;
       st.walk = {
         target: { x: target.x, y: target.y, yaw: ty }, leg: { x: first.x, y: first.y }, via, dist, moved: 0, heading, phase: 0, stage: 'turn1',
-        resolve, speed: target.speed || WALK_SPEED, lift: first.lift || target.lift || 1,
+        resolve, speed, lift: first.lift || target.lift || 1,
+        stride: walkStride(speed), style: walkStyle(String(spec.personality || spec.name || '').toLowerCase(), quirkOffset, walks++),
       };
       switchMode('walk');
     });
