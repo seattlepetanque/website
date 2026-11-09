@@ -809,7 +809,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F37 | todo | haiku | F32 | Random ambient planes only in slow mode (quick mode: none) |
 | F38 | todo | sonnet | F37 | While a plane is flying and the human isn't active, camera occasionally frames the plane |
 | F39 | todo | sonnet | F28 | Slow mode: camera follows the human walking to the ring |
-| F40 | todo | haiku | - | Sideline timbers have a slightly flickery shadow |
+| F40 | done | haiku | - | Sideline timbers have a slightly flickery shadow |
 | F42 | done | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
 | F43 | on-hold | sonnet | F44 | Timbers half buried where the ground is higher (F25 heights) |
 | F44 | in-progress | sonnet | F42 | User chose: revert F25 (terrain shapes) |

@@ -182,6 +182,18 @@ export function createRenderer(canvas, terrain) {
   sun.shadow.bias = -0.00017;
   sun.shadow.normalBias = 0.01;
   scene.add(sun, sun.target);
+  // F40: aim the sun at p, snapped to the shadow map's texel grid in light space. Without this the frustum slides
+  // by sub-texel steps as the camera moves, which crawls the shadow edges (the timbers' flicker).
+  const sunXAxis = new THREE.Vector3(), sunYAxis = new THREE.Vector3(), sunZAxis = sunOffset.clone().normalize();
+  sunXAxis.crossVectors(new THREE.Vector3(0, 1, 0), sunZAxis).normalize();
+  sunYAxis.crossVectors(sunZAxis, sunXAxis).normalize();
+  const sunTexel = (2 * shadowHalf) / sun.shadow.mapSize.x;
+  const aimSun = (p) => {
+    const px = p.dot(sunXAxis), py = p.dot(sunYAxis);
+    const sx = Math.round(px / sunTexel) * sunTexel, sy = Math.round(py / sunTexel) * sunTexel;
+    sun.target.position.copy(p).addScaledVector(sunXAxis, sx - px).addScaledVector(sunYAxis, sy - py);
+    sun.position.copy(sun.target.position).add(sunOffset);
+  };
 
   // Terrain mesh
   const grid = terrain.heightGrid(0.05);
@@ -1442,8 +1454,7 @@ export function createRenderer(canvas, terrain) {
     if (PC.pos.z < floor) PC.pos.z = floor;
     camera.position.copy(PC.pos);
     camera.lookAt(PC.P);
-    sun.target.position.copy(PC.P);
-    sun.position.copy(PC.P).add(sunOffset);
+    aimSun(PC.P);
   }
 
   // Sepia: while paused the scene is drawn to a target and a full-screen triangle redraws it in sepia
@@ -1517,8 +1528,7 @@ export function createRenderer(canvas, terrain) {
     camera.position.copy(cur.pos);
     camera.lookAt(cur.tgt);
     // shadow frustum follows what we look at
-    sun.target.position.copy(cur.tgt);
-    sun.position.copy(cur.tgt).add(sunOffset);
+    aimSun(cur.tgt);
   }
 
   // Minimal orbit controls for inspect mode
