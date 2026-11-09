@@ -813,6 +813,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F42 | done | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
 | F43 | on-hold | sonnet | F44 | Timbers half buried where the ground is higher (F25 heights) |
 | F44 | in-progress | sonnet | F42 | User chose: revert F25 (terrain shapes) |
+| F48 | todo | sonnet | F35, F45 | Move Adjust view / Read the ground / View(head) out of the hamburger into translucent hold-to-use icons; pan clamped to allowed region |
 | F47 | todo | sonnet | F46 | Floatplane: after landing, turn away from the court and fade into the background (like the arrival); departures reversed; fade audio out too |
 | F46 | todo | sonnet | - | Scenery: grass edge near distant trees/skyline looks foggy; lake half the size and bluer; distant forest hilly with more mountains behind |
 | F45 | todo | sonnet | F35 | Setup dialog: choose partner from Pierre/Marcel/Odette (default Pierre); tighten the dialog's layout |
@@ -1140,3 +1141,10 @@ Verify with headless screenshots from the human shoulder view and a broadcast vi
 
 ### F47 Plane exit/entry choreography and audio fade (sonnet)
 User: after the plane lands it should turn away from the court and fade back into the background, similar to how it fades in from the sky when arriving. The reverse is true for departing planes (taxi in from the background, turn toward the court/lake, take off, climb out and fade). Also fade the audio out (and in) with distance/time: the engine is too loud for too long. Files: `floatplane.js`, `ambient.js` (engine gain envelope tied to the plane's distance/phase; shorter loud window, smooth fade to silence), keep F29 ambient/no-camera behaviour. Must be done after F46 (lake size/position changes in the same files) and keep the TEMP F29/F36 demo buttons working. Pure helper tests for the path/phase/gain envelope where possible.
+
+### F48 Hold-to-use view icons (sonnet)
+User spec (supersedes the F32 menu placement for these three):
+1. **Adjust view** leaves the hamburger menu: becomes a translucent pan icon (e.g. four-way arrows). Press and hold pans up/down/left/right as before, but clamped to the allowed pan region (today it can go outside the allowed pan space): fix the clamp (camera.js pure clamp + tests; the allowed region is whatever the existing pan limits intend, check `camera.js`/main.js adjust-view code).
+2. **Read the ground** leaves the hamburger: translucent terrain icon (contour lines/hill). Press and hold shows the Read-the-ground view; letting go returns to normal.
+3. **View: head** leaves the hamburger: translucent icon showing the two views (shoulder vs overhead). Press and hold shows the overhead view; letting go returns to the shoulder ("normal") view. (Replaces the toggle semantics; remove the persisted head/shoulder toggle if now redundant.)
+Details: pointer events (pointerdown/up/cancel/leave, touch-friendly, no context menu/selection), keyboard equivalents (hold key or Space/Enter while focused), aria-labels, only shown when applicable (human's turn, as before); keep them in the F32 icon cluster area without overlapping the F41 mène-end bar or the toss input zone; hamburger keeps Mode, Ambience, ✈ demo buttons. Test with screenshots at 1200x800, 500x900, 844x390. Run after F35-F37 are committed and with F45 (setup dialog) not conflicting: both touch hud.js/main.js/css.
