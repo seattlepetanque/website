@@ -811,8 +811,8 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F39 | todo | sonnet | F28 | Slow mode: camera follows the human walking to the ring |
 | F40 | todo | haiku | - | Sideline timbers have a slightly flickery shadow |
 | F42 | done | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
-| F43 | todo | sonnet | F42 | Timbers half buried where the ground is higher (F25 heights) |
-| F44 | todo | sonnet | F42, F43 | Height map experiment (F25) judged a failure: revisit/revert terrain shapes |
+| F43 | on-hold | sonnet | F44 | Timbers half buried where the ground is higher (F25 heights) |
+| F44 | in-progress | sonnet | F42 | User chose: revert F25 (terrain shapes) |
 | F41 | todo | haiku | - | End-of-mène bar overlaps the bottom-right icon cluster and hides the Next button |
 | F33 | todo | sonnet | F04 | Nobody crouches for throws over 7.5 m |
 | F32 | in-progress | sonnet | — | Simplified in-game controls: always-on roll guide, icon cluster, hamburger menu, minimal pause screen |
@@ -1120,3 +1120,5 @@ User: lumber is half buried. Diagnosis (manager read of `render.js:247-275`, `ph
 
 ### F44 Height-map experiment is a failure (sonnet)
 User: the height map experiment is a failure. Fact check: there has always been a real height field (`terrain.js`: macro heightfield grid, `terrain.sample(x,y).h`, `heightGrid`; render mesh vertices and physics both use it). Before F25 (commit 8afab85) it was noisy fBm at about 0.5-1.5° slopes with a tiny amplitude; F25 replaced it with broad per-seed archetypes (tilt, ridge, basin, hills, saddle, combos) scaled to 1-2° gradient, which raised heights to about ±0.2 m and caused F34/F42/F43 side effects (strings, timbers buried). Ask the user what specifically failed (looks wrong, plays badly, too visible?) before changing; then either: (a) revert terrain.js/constants/groundview to pre-F25 (`git revert 8afab85` is a clean option, keep tests in step), (b) keep archetypes but bound the edge heights, or (c) a visual-only fix. F43 may become moot if (a). Hold until the user chooses.
+
+F44 decision: the user chose to revert F25 (commit 8afab85). F43 is on hold; re-check after the revert whether timbers are still buried (probably moot).
