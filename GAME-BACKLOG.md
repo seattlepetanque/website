@@ -811,6 +811,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F39 | todo | sonnet | F28 | Slow mode: camera follows the human walking to the ring |
 | F40 | todo | haiku | - | Sideline timbers have a slightly flickery shadow |
 | F42 | in-progress | sonnet | F34 | TOP: boundary string is completely missing (regression from F34 draping) |
+| F43 | todo | sonnet | F42 | Timbers half buried where the ground is higher (F25 heights) |
 | F41 | todo | haiku | - | End-of-mène bar overlaps the bottom-right icon cluster and hides the Next button |
 | F33 | todo | sonnet | F04 | Nobody crouches for throws over 7.5 m |
 | F32 | in-progress | sonnet | — | Simplified in-game controls: always-on roll guide, icon cluster, hamburger menu, minimal pause screen |
@@ -1112,3 +1113,6 @@ User screenshot (~/Desktop/Screenshot 2026-11-08 at 11.34.31 PM.png): the bottom
 
 ### F42 Boundary string completely missing (sonnet, top priority)
 User: the string is completely missing now. Almost certainly a regression from F34 (commit 695c8b7): the boundary strings in `render.js` became draped strips sampled from `terrain.sample`; check geometry winding/normal (single-sided strips facing down are culled), strip width/positions, `polygonOffset`, material, being added to the scene/group, or `terrain.sample` returning NaN. Verify with a real screenshot (not stopping at the modal) that the strings show on flat and steep seeds, and add a pure-function test for the strip geometry if possible.
+
+### F43 Timbers half buried (sonnet)
+User: lumber is half buried. Diagnosis (manager read of `render.js:247-275`, `physics.js` LUMBER): the timbers sit at a fixed height (top at `lumberSize`, z from -0.1 up to +0.15 m), independent of the terrain. F25 (commit 8afab85) made the ground rise/fall up to about ±0.2 m, so wherever the ground edge is high the timbers are partly (or half) underground. Nothing in the shadow work touched this (no shadow-related commit on render.js). Fix: raise each board section so its top stays `lumberSize` above the local terrain at the court edge (per-section max of `terrain.sample` along the board, plus small clearance), and keep physics in step: `LUMBER` boxes (`physics.js:40`, used by `boxContact` and the ghost/out-of-bounds checks, `z1`) must use the same heights, so make LUMBER derive from a shared pure function of the terrain. Ground mesh edge easing (`edgeZ`) must still blend under the timbers. Tests: pure test that every section top is >= terrain + size; rerun physics tests. Do after F42 (same file).
