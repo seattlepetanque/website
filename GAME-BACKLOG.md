@@ -818,7 +818,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F13 | done | haiku | — | Dead-jack void message gives the wrong reason |
 | F14 | done | sonnet | F02 | Simultaneous boule gathering with collision avoidance and a 20 s fallback |
 | F15 | done | sonnet | F14 | Gathering follow-up: walk straight to next-mène spots, confirm the 20 s fallback |
-| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23 | Round 5 review |
+| F16 | todo | sonnet | F04, F15, F17, F18, F19, F20, F21, F22, F23, F24 | Round 5 review |
 | F17 | done | haiku | — | Remove "lands at …" landing-distance text from the status line |
 | F18 | done | haiku | — | Breeze only occasionally, fading in and out |
 | F19 | done | sonnet | — | Distant lake with an occasional floatplane taking off or landing |
@@ -826,6 +826,7 @@ From the user's play-testing (2026-11-08). Earlier contracts and shared-repo rul
 | F21 | done | haiku | — | Remove the coloured team rings around boules |
 | F22 | in-progress | sonnet | — | Mène-end card never hides the scoring circle or its labels |
 | F23 | todo | sonnet | F04 | Rebalance: Pierre strong and well-rounded (prefers shooting); Medium opponents beatable |
+| F24 | in-progress | sonnet | — | Bug: in quick mode the circle isn't placed at the start of a new mène |
 
 ### F01 Sports-broadcast follow camera (sonnet)
 **User approval (2026-11-08):** the current camera (as of commit cf14495: the E11 slow-mode observer and the E27 TV-style shots, with the E32 mène-end view) is good. Treat it as the approved baseline. F01 and any later camera experiments must keep this behaviour available as a selectable camera style (and the default unless the user says otherwise), never replace it outright, and be compared against it.
@@ -1005,3 +1006,6 @@ User play-testing: Pierre (your partner) plays badly, and Marcel and Odette are 
 - **Pierre:** a strong, well-rounded player with a preference for shooting: pointing accuracy close to Marcel's, shooting close to Odette's (slightly below each specialist), good tactical sense, his shoot-leaning appetite kept but not reckless. Check his SKILL, role stickiness, appetite, tactical error rate and any personality penalties.
 - **Opponents:** Marcel is the pointer, Odette the shooter; Odette's pointing should be clearly weaker than Marcel's, not "great". Re-tune per difficulty so a reasonable human with a strong Pierre wins roughly: Easy ~85–90% (very winnable), Medium ~45–55%, Hard ~25–40% (measure with a scripted human using the roll guide plus the real Pierre AI as partner, ≥ 100 matches per row on a quiet machine).
 - Report the before/after accuracy tables per player and difficulty, and win rates. Runs after F04 (tactics expansion), since both touch ai.js/tactics.js balance.
+
+### F24 Bug: quick mode doesn't place the circle at a new mène (sonnet)
+User report: in quick mode the circle (ring) isn't placed at the beginning of a new mène. Expected (E10): at the start of the next jack throw the ring appears (short fade) at the new spot around the last jack (or F10's dead-jack spot), with the E28 room correction, and the thrower stands in it. Likely regression from F02/F07/F10/F14/F15 rewiring the mène transition around slow mode (ring carry, `ringTask`, `plan.ringDown`, `walkToSpots`) that left the quick-mode path without a ring move or with the court state not updated. Fix the quick path; make sure the court module (circle, dir), the ring mesh, the rules geometry and the camera all move together; add a test (pure where possible) that after `nextMene` in quick mode the court circle equals `nextCircle(...)` and the ring mesh position matches; check the slow path still works.
