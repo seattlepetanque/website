@@ -395,37 +395,65 @@ function makeWrapTexture(haze) {
   }
 
   // distant mountain ranges (Olympics to the west, Cascades to the east), three layers deep: each farther range is taller,
-  // paler and hazier. Jagged (a few octaves of sines with integer cycles round the circle so the wrap closes) and fading
-  // out behind the players, where the treeline is tallest anyway.
+  // paler and hazier. Low, craggy rock (grey, brown and blue-grey; no snow): a few octaves of sines with integer cycles
+  // round the circle so the wrap closes, plus sharp |sin| crag terms, with ridge/gully strokes painted over the silhouette.
+  // Fading out behind the players, where the treeline is tallest anyway.
   const sines = (az, terms) => terms.reduce((acc, [k, amp, ph]) => acc + amp * Math.sin(az * k * Math.PI / 180 + ph), 0);
+  const crags = (az, ri) => 0.3 * (1 - Math.abs(Math.sin(az * (73 + ri * 22) * Math.PI / 360 + ri))) + 0.2 * (1 - Math.abs(Math.sin(az * (131 + ri * 30) * Math.PI / 360 + 2 * ri)));
   const ranges = [
-    // far: tall, pale | middle | near blue ridge
-    { col: mix('#a9bdd6', haze, 0.62), top: 7.5, lo: 1.2, from: 26, to: 160, terms: [[3, 0.55, 0.4], [5, 0.4, 2.1], [9, 0.3, 4.0], [17, 0.2, 1.1], [31, 0.12, 3.3], [57, 0.08, 0.2]], snow: true },
-    { col: mix('#8aa3c0', haze, 0.5), top: 5.2, lo: 0.8, from: 32, to: 158, terms: [[4, 0.5, 1.4], [7, 0.4, 5.0], [13, 0.3, 2.2], [23, 0.2, 0.7], [41, 0.1, 3.9]], snow: false },
-    { col: mix('#7d98b6', haze, 0.38), top: 3.3, lo: 0.5, from: 38, to: 152, terms: [[5, 0.5, 2.6], [8, 0.4, 0.3], [15, 0.3, 4.4], [29, 0.2, 1.9], [47, 0.1, 5.1]], snow: false },
+    // far: tallest, palest | middle | near ridge
+    { col: mix('#7f8896', haze, 0.45), lit: '#a2a3a6', shade: '#566174', brown: '#85705f', top: 4.6, lo: 0.8, from: 26, to: 160, terms: [[3, 0.55, 0.4], [5, 0.4, 2.1], [9, 0.3, 4.0], [17, 0.2, 1.1], [31, 0.12, 3.3], [57, 0.08, 0.2]] },
+    { col: mix('#76727a', haze, 0.36), lit: '#9a9288', shade: '#4c4957', brown: '#76624f', top: 3.2, lo: 0.55, from: 32, to: 158, terms: [[4, 0.5, 1.4], [7, 0.4, 5.0], [13, 0.3, 2.2], [23, 0.2, 0.7], [41, 0.1, 3.9]] },
+    { col: mix('#6c6b72', haze, 0.26), lit: '#8c8076', shade: '#444757', brown: '#6a5646', top: 2.1, lo: 0.35, from: 38, to: 152, terms: [[5, 0.5, 2.6], [8, 0.4, 0.3], [15, 0.3, 4.4], [29, 0.2, 1.9], [47, 0.1, 5.1]] },
   ];
   ranges.forEach((rg, ri) => {
     const prof = (az) => {
       const a = Math.abs(az);
       const k = Math.max(0, Math.min(1, (a - rg.from) / 30)) * Math.max(0, Math.min(1, (rg.to + 18 - a) / 28));
-      const n = Math.max(0, 0.55 + sines(az, rg.terms) / 1.4); // 0..~1.3, jagged peaks and saddles
-      return BASE_EL + 0.25 + k * (rg.lo + (rg.top - rg.lo) * Math.min(1, n * (0.8 + 0.2 * Math.sin(az * 0.07 + ri))));
+      const n = Math.max(0, 0.55 + sines(az, rg.terms) / 1.4 + crags(az, ri)); // 0..~1.4, jagged peaks and saddles
+      const t = n * (0.8 + 0.2 * Math.sin(az * 0.07 + ri)); // soft saturation, so peaks stay pointed rather than flat-topped
+      return BASE_EL + 0.25 + k * (rg.lo + (rg.top - rg.lo) * (t / (1 + 0.35 * t)) * 1.35);
     };
     g.fillStyle = rg.col;
     g.beginPath(); g.moveTo(0, yb);
-    for (let a = -180; a <= 180; a += 0.25) g.lineTo(X(a), Y(prof(a)));
+    for (let a = -180; a <= 180; a += 0.15) g.lineTo(X(a), Y(prof(a)));
     g.lineTo(W, yb); g.closePath(); g.fill();
-    if (rg.snow) { // a dusting of snow on the tallest peaks (clipped to the silhouette)
+    { // rock texture, clipped to the silhouette: sunlit left faces, shaded right faces, brown scree bands, crag strokes
       g.save(); g.clip();
-      g.fillStyle = 'rgba(247,250,255,0.8)';
-      g.beginPath(); g.moveTo(0, 0);
-      for (let a = -180; a <= 180; a += 0.25) g.lineTo(X(a), Math.min(Y(BASE_EL), Math.max(Y(prof(a)), Y(rg.top * 0.62 + 0.5 * Math.sin(a * 2.7)))) );
-      g.lineTo(W, 0); g.closePath(); g.fill();
+      const seed = (i) => Math.abs(Math.sin(i * 12.9898 + ri * 78.233) * 43758.5453) % 1;
+      const dAz = 0.15;
+      for (let a = -180; a < 180; a += dAz * 2) {
+        const p0 = prof(a), p1 = prof(a + dAz * 2), sl = p1 - p0;
+        const x0 = X(a), x1 = X(a + dAz * 2);
+        if (p0 < BASE_EL + 0.6) continue;
+        const y0 = Y(p0), yb2 = Y(BASE_EL + 0.4);
+        g.globalAlpha = 0.4;
+        g.fillStyle = sl > 0 ? rg.lit : rg.shade; // faces rising to the right catch the light from the left
+        g.fillRect(x0, y0, Math.max(1, x1 - x0), yb2 - y0);
+        g.globalAlpha = 1;
+      }
+      for (let i = 0; i < 2600; i++) { // ridge and gully strokes running down from the crest
+        const a = -180 + seed(i) * 360, p = prof(a);
+        if (p < BASE_EL + 0.7) continue;
+        const x = X(a), y = Y(p) + seed(i + 5000) * (Y(BASE_EL + 0.4) - Y(p)) * 0.8;
+        const len = (6 + seed(i + 9000) * 22) * (1 - ri * 0.2), lean = (seed(i + 7000) - 0.5) * 8;
+        g.strokeStyle = seed(i + 3000) < 0.45 ? rg.shade : (seed(i + 3000) < 0.75 ? rg.brown : rg.lit);
+        g.globalAlpha = 0.3 + seed(i + 1000) * 0.3; g.lineWidth = 0.8 + seed(i + 2000) * 1.4;
+        g.beginPath(); g.moveTo(x, y); g.lineTo(x + lean, y + len); g.stroke();
+      }
+      g.strokeStyle = rg.brown; g.globalAlpha = 0.22; g.lineWidth = 1.5; // horizontal strata bands
+      for (let j = 0; j < 5; j++) {
+        const lvl = BASE_EL + 0.4 + (rg.top - 0.2) * (0.2 + j * 0.17);
+        g.beginPath();
+        for (let a = -180; a <= 180; a += 1) { const yy = Y(lvl + 0.08 * Math.sin(a * 0.9 + j * 3)); a === -180 ? g.moveTo(X(a), yy) : g.lineTo(X(a), yy); }
+        g.stroke();
+      }
+      g.globalAlpha = 1;
       g.restore();
     }
     // layered haze: a veil thickening towards the foot of each range
     const hv = g.createLinearGradient(0, Y(rg.top), 0, Y(BASE_EL + 0.4));
-    hv.addColorStop(0, 'rgba(' + hazeRgb(haze) + ',0)'); hv.addColorStop(1, 'rgba(' + hazeRgb(haze) + ',' + (0.5 - ri * 0.08) + ')');
+    hv.addColorStop(0, 'rgba(' + hazeRgb(haze) + ',0)'); hv.addColorStop(1, 'rgba(' + hazeRgb(haze) + ',' + (0.38 - ri * 0.07) + ')');
     g.globalCompositeOperation = 'source-atop';
     g.fillStyle = hv; g.fillRect(0, Y(rg.top), W, Y(BASE_EL + 0.4) - Y(rg.top));
     g.globalCompositeOperation = 'source-over';
