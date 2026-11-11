@@ -10,8 +10,7 @@ import { LUMBER } from './physics.js';
 import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, scoringTargetBox } from './camera.js';
 import { makeButterflies } from './butterflies.js'; // F67
 import { makeCloudShadows } from './cloudshadows.js'; // F68
-import { makeDog } from './dog.js'; // F70
-import { makeDucks } from './ducks.js'; // F69
+import { daylightAt, SUN_DISTANCE } from './daylight.js';
 import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeTreeShadows, makeSkyPanorama, makeLake, makeSailboats, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 import { createFloatplane } from './floatplane.js'; // F19
 
@@ -117,13 +116,24 @@ function makeSky() {
   const geo = new THREE.SphereGeometry(200, 48, 64);
   // sphere's pole is +y; rotate so +z is up
   geo.rotateX(Math.PI / 2);
-  const pos = geo.attributes.position, col = new Float32Array(pos.count * 3), c = new THREE.Color();
+  geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(geo.attributes.position.count * 3), 3));
+  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false, toneMapped: false }));
+  paintSky(mesh, null);
+  return mesh;
+}
+// F71: (re)colour the dome. `fog` (a Color) is the warmed horizon haze: the horizon matches it exactly and the shift
+// fades out with elevation, so the upper sky only warms a little.
+const SKY_HAZE0 = new THREE.Color(SKY_HAZE);
+function paintSky(mesh, fog) {
+  const pos = mesh.geometry.attributes.position, col = mesh.geometry.attributes.color, c = new THREE.Color();
+  const dr = fog ? fog.r - SKY_HAZE0.r : 0, dg = fog ? fog.g - SKY_HAZE0.g : 0, db = fog ? fog.b - SKY_HAZE0.b : 0;
   for (let i = 0; i < pos.count; i++) {
-    skyColor(Math.asin(Math.max(-1, Math.min(1, pos.getZ(i) / 200))) * 180 / Math.PI, c);
-    col.set([c.r, c.g, c.b], i * 3);
+    const el = Math.asin(Math.max(-1, Math.min(1, pos.getZ(i) / 200))) * 180 / Math.PI;
+    skyColor(el, c);
+    const f = Math.pow(Math.max(0, 1 - Math.max(0, el) / 80), 1.5);
+    col.setXYZ(i, c.r + dr * f, c.g + dg * f, c.b + db * f);
   }
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false, toneMapped: false }));
+  col.needsUpdate = true;
 }
 function makeEnvMap(renderer, envFloor) {
   const s = new THREE.Scene();
@@ -164,17 +174,20 @@ export function createRenderer(canvas, terrain) {
   const FOG = new THREE.Color(SKY_HAZE);
   scene.background = FOG;
   scene.fog = new THREE.Fog(FOG, 60, 320);
-  scene.add(makeSky());
-  scene.add(makeSkyPanorama(C.terrainW / 2, C.terrainL / 2, SKY_HAZE));
+  const skyDome = makeSky();
+  scene.add(skyDome);
+  const panorama = makeSkyPanorama(C.terrainW / 2, C.terrainL / 2, SKY_HAZE);
+  scene.add(panorama);
   scene.environment = makeEnvMap(renderer, terrain.gravel === 'grey' ? '#8e939c' : '#a8977a');
 
   const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 300);
   camera.up.set(0, 0, 1);
 
   // Lights
-  scene.add(new THREE.HemisphereLight('#cfe2ff', '#8a7a5c', 1.1));
+  const hemi = new THREE.HemisphereLight('#cfe2ff', '#8a7a5c', 1.1);
+  scene.add(hemi);
   const sun = new THREE.DirectionalLight('#ffe2b8', 3.0);
-  const sunOffset = new THREE.Vector3(-5, -7, 6);
+  const sunOffset = new THREE.Vector3(-5, -7, 6); // F71: mutable, the single source of the sun direction (set by setDaylight)
   sun.castShadow = true;
   // The shadow box follows the look target. It is wide enough to take in the trees (within ~15 m of the court) and
   // their shadows, which fall away from the sun: desktop gets a 2048 map over +-14 m (texels ~1.4 cm), phones keep
@@ -189,9 +202,14 @@ export function createRenderer(canvas, terrain) {
   scene.add(sun, sun.target);
   // F40: aim the sun at p, snapped to the shadow map's texel grid in light space. Without this the frustum slides
   // by sub-texel steps as the camera moves, which crawls the shadow edges (the timbers' flicker).
-  const sunXAxis = new THREE.Vector3(), sunYAxis = new THREE.Vector3(), sunZAxis = sunOffset.clone().normalize();
-  sunXAxis.crossVectors(new THREE.Vector3(0, 1, 0), sunZAxis).normalize();
-  sunYAxis.crossVectors(sunZAxis, sunXAxis).normalize();
+  // F71: the light-space axes are recomputed whenever setDaylight changes the direction (snapping stays on the new grid)
+  const sunXAxis = new THREE.Vector3(), sunYAxis = new THREE.Vector3(), sunZAxis = new THREE.Vector3();
+  const updateSunAxes = () => {
+    sunZAxis.copy(sunOffset).normalize();
+    sunXAxis.crossVectors(new THREE.Vector3(0, 1, 0), sunZAxis).normalize();
+    sunYAxis.crossVectors(sunZAxis, sunXAxis).normalize();
+  };
+  updateSunAxes();
   const sunTexel = (2 * shadowHalf) / sun.shadow.mapSize.x;
   const aimSun = (p) => {
     const px = p.dot(sunXAxis), py = p.dot(sunYAxis);
@@ -259,15 +277,14 @@ export function createRenderer(canvas, terrain) {
   const lake = makeLake(C.terrainW / 2, edgeZ); // F19: distant lake (shimmer frozen when paused or under reduced motion)
   scene.add(lake.mesh);
   const sailboats = makeSailboats(C.terrainW / 2, edgeZ); scene.add(sailboats.group); // F64
-  const ducks = makeDucks(C.terrainW / 2, edgeZ); scene.add(ducks.group); // F69
-  const dog = makeDog(terrain); scene.add(dog.group); // F70
   const butterflies = makeButterflies(edgeZ); scene.add(butterflies.group); // F67
   const floatplane = createFloatplane({ cx: C.terrainW / 2, z: edgeZ + 0.05 });
   scene.add(floatplane.group);
   const tufts = makeTufts(terrain, isPhone()); clouds.patch(tufts.material); scene.add(tufts); // F68
   const trees = makeTrees(terrain);
   scene.add(trees);
-  scene.add(makeTreeShadows(terrain, sunOffset)); // F73: blob shadows for the trees outside the shadow map's job
+  const treeShadows = makeTreeShadows(terrain, sunOffset); // F73: blob shadows for the trees outside the shadow map's job
+  scene.add(treeShadows);
   let swayT = 0; // D15: a slow lean of each tree about its foot; frozen when paused (render dt 0), none under reduced motion
 
   // Lumber surround: weathered 6x6 timbers, one mesh per board section (long sides split with butt joints,
@@ -1638,8 +1655,41 @@ export function createRenderer(canvas, terrain) {
   if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(resize); ro.observe(canvas); }
   resize();
 
+  // F71: golden-hour drift. Colours and the sun move in steps of 0.01 of progress (a shadow-map hop of under a texel or
+  // two each time, never per frame); the tree decals follow the direction at most every 2 s of render time.
+  let dayAt = -1, dayD = null, treeDir = new THREE.Vector3().copy(sunOffset).normalize(), treeT = 99;
+  const tmpC = new THREE.Color();
+  const srgb = (a, out) => out.setRGB(a[0], a[1], a[2], THREE.SRGBColorSpace);
+  function applyDay(d) {
+    sunOffset.set(d.sunDir[0], d.sunDir[1], d.sunDir[2]).multiplyScalar(SUN_DISTANCE);
+    updateSunAxes();
+    sun.color.copy(srgb(d.sunColor, tmpC)); sun.intensity = d.sunIntensity;
+    hemi.color.copy(srgb(d.hemiSky, tmpC)); hemi.groundColor.copy(srgb(d.hemiGround, tmpC)); hemi.intensity = d.hemiIntensity;
+    srgb(d.fogColor, FOG); scene.fog.color.copy(FOG); // scene.background is FOG itself; the Fog keeps its own copy
+    paintSky(skyDome, FOG);
+    panorama.userData.setDaylight(d);
+  }
+  function setDaylight(progress) {
+    const p = Math.round(Math.max(0, Math.min(1, progress)) * 100) / 100;
+    const d = daylightAt(progress);
+    panorama.userData.setDaylight(d); // the alpenglow follows the smooth value
+    if (p === dayAt) return;
+    dayAt = p; dayD = daylightAt(p);
+    applyDay({ ...dayD, alpenglow: d.alpenglow });
+  }
+  function updateTreeShadows(dt) {
+    treeT += dt;
+    if (treeT < 2) return;
+    if (sunOffset.clone().normalize().angleTo(treeDir) < 0.004) return;
+    treeDir.copy(sunOffset).normalize(); treeT = 0;
+    treeShadows.userData.setSun(sunOffset);
+  }
+  setDaylight(0);
+  treeT = 99; treeDir.set(0, 0, 1);
+
   function render(dt = 1 / 60) {
     dt = Math.min(dt, 0.1);
+    updateTreeShadows(dt);
     // roll the boules from their angular velocity
     for (const e of meshes.values()) {
       const b = e.body, wl = Math.hypot(b.wx || 0, b.wy || 0, b.wz || 0);
@@ -1659,8 +1709,6 @@ export function createRenderer(canvas, terrain) {
     if (!reduce()) lake.update(dt);
     floatplane.update(dt, camera, reduce());
     sailboats.update(dt, reduce(), floatplane, edgeZ); // F64
-    ducks.update(dt, reduce(), floatplane, edgeZ); // F69
-    dog.update(dt, reduce()); // F70
     butterflies.update(dt, reduce()); // F67
     clouds.update(dt, reduce()); // F68
     updatePreview();
@@ -1693,5 +1741,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  return { setDaylight, sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
 }

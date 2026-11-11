@@ -299,15 +299,20 @@ export function makeTreeShadows(terrain, sunOffset) {
   const list = TREES;
   const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), mat, list.length);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3(), z = new THREE.Vector3(0, 0, 1);
-  list.forEach(([x, y, kind, s], i) => {
-    const [h, r] = TREE_SIZE[kind];
-    const d = treeShadowDecal(x, y, h * s, r * s, sunOffset, outsideTimbers);
-    const inGrid = x > -C.terrainPad && x < C.terrainW + C.terrainPad && y > -C.terrainPad && y < C.terrainL + C.terrainPad;
-    p.set(d.cx, d.cy, (inGrid ? terrain.sample(x, y).h : -0.03) + 0.012);
-    q.setFromAxisAngle(z, d.angle);
-    sc.set(Math.max(d.len, 0.01), d.width, 1);
-    mesh.setMatrixAt(i, m.compose(p, q, sc));
-  });
+  const place = (so) => { // F71: re-orient and re-scale every decal for the current sun offset
+    list.forEach(([x, y, kind, s], i) => {
+      const [h, r] = TREE_SIZE[kind];
+      const d = treeShadowDecal(x, y, h * s, r * s, so, outsideTimbers);
+      const inGrid = x > -C.terrainPad && x < C.terrainW + C.terrainPad && y > -C.terrainPad && y < C.terrainL + C.terrainPad;
+      p.set(d.cx, d.cy, (inGrid ? terrain.sample(x, y).h : -0.03) + 0.012);
+      q.setFromAxisAngle(z, d.angle);
+      sc.set(Math.max(d.len, 0.01), d.width, 1);
+      mesh.setMatrixAt(i, m.compose(p, q, sc));
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+  };
+  place(sunOffset);
+  mesh.userData.setSun = place;
   mesh.renderOrder = 1; mesh.frustumCulled = false;
   return mesh;
 }
@@ -626,6 +631,34 @@ function paintNeedle(g, px, baseY, tot, haze) {
   g.fillRect(px - sw * 1.3, topY - 2, sw * 2.6, tot + 2);
 }
 
+const RAINIER = (() => {
+  const rc = -12, halfW = 16, peakEl = 9;
+  const prof = (az) => {
+    const u = (az - rc) / halfW;
+    if (Math.abs(u) >= 1) return BASE_EL;
+    const shape = Math.pow(1 - Math.abs(u), 1.2) * (1 + 0.045 * Math.sin(u * 17) + 0.03 * Math.sin(u * 41 + 1));
+    let e = BASE_EL + (peakEl - BASE_EL) * shape;
+    if (Math.abs(u) < 0.07) e -= 0.22 * (1 - Math.abs(u) / 0.07);
+    return e;
+  };
+  return { rc, halfW, peakEl, prof };
+})();
+
+// F71: the alpenglow, a pink wash in Rainier's silhouette (stronger on the upper snow); shown with opacity = alpenglow
+function makeGlowTexture() {
+  const { span, W, H, minEl, maxEl } = DET;
+  const cv = makeCanvas(W, H), g = cv.getContext('2d');
+  const X = (az) => (az + span / 2) / span * W, Y = rowMap(minEl, maxEl, H);
+  const { rc, halfW, peakEl, prof } = RAINIER, yb = Y(BASE_EL);
+  g.beginPath(); g.moveTo(X(rc - halfW), yb);
+  for (let a = rc - halfW; a <= rc + halfW; a += 0.1) g.lineTo(X(a), Y(prof(a)));
+  g.lineTo(X(rc + halfW), yb); g.closePath();
+  const vg = g.createLinearGradient(0, Y(peakEl), 0, yb);
+  vg.addColorStop(0, 'rgba(255,128,176,0.6)'); vg.addColorStop(0.55, 'rgba(255,140,170,0.45)'); vg.addColorStop(1, 'rgba(255,170,160,0.2)');
+  g.fillStyle = vg; g.fill();
+  return cv;
+}
+
 function makeDetailTexture(haze) {
   const { span, W, H, minEl, maxEl } = DET;
   const cv = makeCanvas(W, H), g = cv.getContext('2d');
@@ -638,15 +671,7 @@ function makeDetailTexture(haze) {
 
   // Mount Rainier: broad massif, flat crater summit, ragged snowline, sunlit snow on blue-grey flanks.
   // Real Rainier is ~4 deg tall from Seattle, a little exaggerated here.
-  const rc = -12, halfW = 16, peakEl = 9;
-  const prof = (az) => {
-    const u = (az - rc) / halfW;
-    if (Math.abs(u) >= 1) return BASE_EL;
-    const shape = Math.pow(1 - Math.abs(u), 1.2) * (1 + 0.045 * Math.sin(u * 17) + 0.03 * Math.sin(u * 41 + 1));
-    let e = BASE_EL + (peakEl - BASE_EL) * shape;
-    if (Math.abs(u) < 0.07) e -= 0.22 * (1 - Math.abs(u) / 0.07);
-    return e;
-  };
+  const { rc, halfW, peakEl, prof } = RAINIER;
   g.beginPath(); g.moveTo(X(rc - halfW), yb);
   for (let a = rc - halfW; a <= rc + halfW; a += 0.1) g.lineTo(X(a), Y(prof(a)));
   g.lineTo(X(rc + halfW), yb); g.closePath();
@@ -741,7 +766,16 @@ export function makeSkyPanorama(cx, cy, fogHex = SKY_HAZE) {
   const grp = new THREE.Group();
   const wrap = cylinderStrip(canvasTexture(makeWrapTexture(fogHex), true), cx, cy, 240, -Math.PI, Math.PI, WRAP.minEl, WRAP.maxEl, 144, -2);
   const det = cylinderStrip(canvasTexture(makeDetailTexture(fogHex), false), cx, cy, 236, deg(-DET.span / 2), deg(DET.span / 2), DET.minEl, DET.maxEl, 48, -1);
-  grp.add(wrap, det);
+  const glow = cylinderStrip(canvasTexture(makeGlowTexture(), false), cx, cy, 235, deg(-DET.span / 2), deg(DET.span / 2), DET.minEl, DET.maxEl, 48, 0);
+  glow.material.opacity = 0; glow.visible = false;
+  grp.add(wrap, det, glow);
+  // F71: panorama tint (multiplier so the horizon haze lands on the warmed fog colour) and the alpenglow opacity
+  grp.userData.setDaylight = (d) => {
+    const h = new THREE.Color().setRGB(d.skyHaze[0], d.skyHaze[1], d.skyHaze[2], THREE.SRGBColorSpace), h0 = new THREE.Color(SKY_HAZE); // ratio in linear space, like the shader
+    wrap.material.color.setRGB(Math.min(1.25, h.r / h0.r), Math.min(1.25, h.g / h0.g), Math.min(1.25, h.b / h0.b));
+    det.material.color.copy(wrap.material.color);
+    glow.material.opacity = d.alpenglow; glow.visible = d.alpenglow > 0.002;
+  };
   return grp;
 }
 

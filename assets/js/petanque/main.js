@@ -21,6 +21,7 @@ import {
 } from './donnee.js';
 import { createAudio } from './audio.js';
 import { createClock } from './clock.js';
+import { createDrift, REDUCED_PROGRESS } from './daylight.js'; // F71
 import * as THREE from '../vendor/three.module.js';
 import { createCharacter, releaseOffset, bendReach } from './character.js';
 import { planRoute, standPoint, pathLength } from './fetch.js';
@@ -950,7 +951,9 @@ function boot() {
     if (debug && params.has('topcam')) hud.hideOverlay();
   }
 
+  const golden = createDrift(), goldenParam = debug && params.has('golden') ? Math.max(0, Math.min(1, +params.get('golden') || 0)) : null; // F71 (?debug&golden=0..1 fixes it)
   function startGame(opts) {
+    golden.reset(); // F71
     userPaused = false;
     token++; thinkToken++; pierreChoice = null; wideHold = false;
     difficulty = opts.difficulty || 'medium';
@@ -2442,6 +2445,7 @@ function boot() {
       audio.setAmbientState({ busy: !!(pending || flying), slow: settings.mode !== 'quick' });
       audio.setEngine(en.on && !pausedNow, en.level, en.pan, en.rev, en.dist);
     }
+    renderer.setDaylight(goldenParam !== null ? goldenParam : reduceMotion() ? REDUCED_PROGRESS : golden.step(match, pausedNow || !playing ? 0 : dt)); // F71
     renderer.render(pausedNow ? 0 : dt);
     nextFrame(frame);
   }
