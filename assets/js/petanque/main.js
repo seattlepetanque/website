@@ -1,7 +1,7 @@
 // Game loop: terrain, world, renderer, rules, AI, toss input (donnée throw), audio and HUD wired together.
 import { C } from './constants.js';
 import { court, setCourt, resetCourt, baseYaw, ahead } from './court.js';
-import { cameraStyle, tvVariant, clampViewOffset, panViewOffset, walkSubject } from './camera.js';
+import { cameraStyle, tvVariant, clampViewOffset, panViewOffset, walkSubject, gatherMoving } from './camera.js';
 import { createDirector, createPlaneCuts } from './director.js';
 import { mulberry32 } from './rng.js';
 import { createTerrain } from './terrain.js';
@@ -147,22 +147,35 @@ function boot() {
   }
   const watchCircle = () => observerView([{ x: court.circle.x, y: court.circle.y }, ahead(5)]); // somebody about to throw
   const aimView = () => (observing() && match ? watchCircle() : shoulderView());
-  // F38: the plane shot (decision in director.js, framing in camera.js, the overlay in render.js). It starts at a quiet moment of AI
-  // play (no boule in flight or in the last second, nobody of the human's side busy) and may overlay the F57 walker follow or the
-  // wide hold; it ends early only when the human becomes busy (their walk, aim, throw, a turn pending, toss, mène end card).
+  // F38: the plane shot (decision in director.js, framing in camera.js solvePlaneShot, the camera in render.js). During AI play it starts
+  // at a quiet moment (no boule in flight or in the last second) and cuts to a dedicated camera at the far end from the lake that frames
+  // the plane, the current player, the cochonnet and the action. HUMAN RULE: from the moment it is the human's turn (they walk to the
+  // circle, aim, throw) until their boule has landed, the plane camera is never used and a running shot ends at once.
   const planeCuts = createPlaneCuts();
   let planeClock = 0, lastFlightAt = -99;
-  const humanBusy = () => !match || !playing || userPaused || !!pending || (!!humanWalk && isHumanId(humanWalk.id)) || !!(circleWalk && isHumanId(circleWalk.id))
+  let humanTurnOn = false; // the human's turn: set in beginTurn / the chooser, cleared when their boule lands (or the turn changes)
+  let turnPlayerId = null, lastThrown = null; // the current player (whoever walks, stands or just threw), the last thrown boule
+  const humanBusy = () => !match || !playing || userPaused || humanTurnOn || !!pending || (!!humanWalk && isHumanId(humanWalk.id)) || !!(circleWalk && isHumanId(circleWalk.id))
     || toss.getPhase() !== 'off' || match.phase === 'meneEnd' || match.phase === 'gameOver' || scoringShown;
+  function planeSubjects() { // world points for the plane camera: the current player, the jack, the action
+    const id = inCircle || turnPlayerId || lastThrowerId, ch = id && cast.get(id), pp = ch ? ch.root.position : court.circle;
+    const jb = jackBody(), jk = jb && !jb.dead ? jb : match && match.jack ? match.jack : { x: court.circle.x, y: court.circle.y + 7 * court.dir };
+    const mv = gatherMoving(world.bodies, flying).filter((m) => m.body.kind !== 'jack' || m.body.state === 'airborne');
+    const action = mv.length ? mv.map((m) => ({ x: m.x, y: m.y, z: m.z })) : lastThrown && world.bodies.includes(lastThrown) ? [{ x: lastThrown.x, y: lastThrown.y, z: 0 }] : [];
+    return { player: { x: pp.x, y: pp.y, z: 0 }, jack: { x: jk.x, y: jk.y, z: 0 }, action };
+  }
   function planeShot(dt) {
     const fp = renderer.floatplane;
     planeClock += dt;
     if (flying) lastFlightAt = planeClock;
+    if (humanTurnOn && flying && isHumanId(flying.owner) && flying.state !== 'airborne') humanTurnOn = false; // their boule has landed
+    if (!match || !playing) humanTurnOn = false;
     const busy = humanBusy();
     const verdict = planeCuts.update({ flight: fp.active ? fp.flight : 0, kind: fp.kind, t: fp.t, visible: fp.opacity > 0.5, allowed: slow() && !reduceMotion(),
       busy, eligible: !busy && !flying && planeClock - lastFlightAt >= 1 });
     if (verdict === 'cut') { renderer.setPlaneShot(true); if (debug && params.has('planelog')) console.info('[plane] cut', fp.kind, fp.t.toFixed(1)); }
-    else if (verdict === 'end') { renderer.setPlaneShot(false); if (debug && params.has('planelog')) console.info('[plane] end', fp.t.toFixed(1)); }
+    else if (verdict === 'end') { renderer.setPlaneShot(false, busy); if (debug && params.has('planelog')) console.info('[plane] end', fp.t.toFixed(1)); }
+    if (planeCuts.on) renderer.setPlaneSubjects(planeSubjects());
   }
   const KEEP_YAW = 35 * DEG; // E12 (see setAdjust); the pan limits live in camera.js (VIEW_PAN, F48)
   let adjusting = false, viewAnim = 0;
@@ -932,7 +945,7 @@ function boot() {
     const body = createBody(kind, { team: kind === 'jack' ? -1 : team, owner });
     world.add(body);
     launch(body, p, from || court.throwFrom);
-    flying = body;
+    flying = body; lastThrown = body.kind === 'boule' ? body : lastThrown;
     clearToss();
     const humanOwner = !!(match && match.players.find((q) => q.id === owner && q.isHuman));
     if (broadcasting()) { // F01: cut to the cochonnet, then the boule comes into view (a jack throw follows the jack from the side)
@@ -1778,6 +1791,7 @@ function boot() {
     if (team === null) return; // mène already ended
     const avail = playersWithBoules(match, team);
     if (avail.length > 1 && avail.some((p) => p.isHuman)) {
+      humanTurnOn = true; renderer.setPlaneShot(false, true); // F38: the human chooses who throws
       refreshHud({ team, playerId: null, text: 'Your team throws next' });
       say2('Your team to play. Who throws?');
       headView(match.jack, undefined, 0.3); // E17: the card covers the middle, so the subject sits high
@@ -1795,6 +1809,7 @@ function boot() {
     thinkToken++; // drop a partner suggestion still being computed
     hud.hideChooser();
     const player = match.players.find((p) => p.id === playerId);
+    turnPlayerId = playerId; humanTurnOn = !!player.isHuman; if (humanTurnOn) renderer.setPlaneShot(false, true); // F38: the human's turn: no plane camera
     refreshHud({ team: player.team, playerId, text: `${player.isHuman ? 'Your throw' : player.name + ' to throw'}` });
     const start = () => {
       if (player.isHuman) humanTurn('boule', playerId, 'Your turn. Turn with a sideways drag, then press where you want the boule to land.');

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPlaneCuts, PLANE_CUT } from '../../assets/js/petanque/director.js';
-import { solvePlaneFraming, applyPlaneFraming, easePlaneFraming, PBG } from '../../assets/js/petanque/camera.js';
+import { solvePlaneShot, planeShotView, easePlaneShot, PSHOT } from '../../assets/js/petanque/camera.js';
 import { C } from '../../assets/js/petanque/constants.js';
 
 const OK = { allowed: true, eligible: true, visible: true };
@@ -87,77 +87,104 @@ test('during AI play a shot starts in at least 90% of flights (random cycle phas
   assert.ok(started / n >= 0.9, `${started}/${n} flights got a shot`);
 });
 
-// ---- the plane as a background element (solver) ----
+// HUMAN RULE: busy (main.js humanBusy: the human's turn from the walk to the circle until their boule has landed) never lets a shot
+// run: no cut while busy, and a running shot ends at the very moment busy starts.
+test('human rule: no plane shot while the human is busy, and a running one ends the moment their turn begins', () => {
+  let seed = 4242;
+  const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+  for (let n = 0; n < 200; n++) {
+    // alternating AI / human turns of random lengths; busy covers the whole human turn, eligible is false while a boule flies
+    const turns = []; let t = 0;
+    while (t < 60) { const human = rnd() < 0.4, len = 4 + rnd() * 8; turns.push({ human, from: t, to: t + len }); t += len; }
+    const cuts = createPlaneCuts({ rand: () => 0 });
+    let on = false;
+    for (let tt = 0; tt <= 55; tt += 0.1) {
+      const turn = turns.find((x) => tt >= x.from && tt < x.to);
+      const busy = turn.human;
+      const v = cuts.update({ flight: 1, kind: 'takeoff', t: tt, allowed: true, visible: true, busy, eligible: !busy });
+      if (v === 'cut') on = true; else if (v === 'end') on = false;
+      if (busy) assert.equal(on, false, `shot still running at ${tt} during the human's turn`);
+      assert.equal(cuts.on, on);
+    }
+  }
+});
+
 let seed = 987654;
 const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
-const ASPECT = 1.6, FOV = 50;
-function project(p, cam, dev) { // independent check: build the camera basis from vectors
-  const a = applyPlaneFraming(cam, dev), f = { x: a.tgt.x - cam.pos.x, y: a.tgt.y - cam.pos.y, z: a.tgt.z - cam.pos.z };
-  const fl = Math.hypot(f.x, f.y, f.z); f.x /= fl; f.y /= fl; f.z /= fl;
-  let r = { x: f.y, y: -f.x, z: 0 }; const rl = Math.hypot(r.x, r.y); r.x /= rl; r.y /= rl;
-  const u = { x: r.y * f.z - r.z * f.y, y: r.z * f.x - r.x * f.z, z: r.x * f.y - r.y * f.x };
-  const d = { x: p.x - cam.pos.x, y: p.y - cam.pos.y, z: p.z - cam.pos.z };
-  const fw = d.x * f.x + d.y * f.y + d.z * f.z; if (fw <= 0) return null;
-  const t = Math.tan(FOV * Math.PI / 360) * a.fovK;
-  return { x: (d.x * r.x + d.y * r.y) / fw / (t * ASPECT), y: (d.x * u.x + d.y * u.y + d.z * u.z) / fw / t, fovK: a.fovK };
-}
+const ASPECT = 1.6;
 // plane positions along the F47 routes: takeoff from about (30,138) toward the court then veering off; landing from far away
 function planePos() {
   const W = C.terrainW, r = rnd();
-  if (r < 0.4) { const s = rnd(); return { x: 30 - s * 60 + (rnd() - 0.5) * 20, y: 138 - s * 110, z: s * s * 40 }; }
-  if (r < 0.7) return { x: W / 2 + (rnd() - 0.5) * 220, y: 40 + rnd() * 200, z: rnd() * 80 };
-  return { x: W / 2 + (rnd() - 0.5) * 300, y: 60 + rnd() * 250, z: rnd() * 120 };
+  if (r < 0.4) { const s = rnd(); return { x: 30 - s * 60 + (rnd() - 0.5) * 20, y: 138 - s * 95, z: s * s * 40 }; }
+  if (r < 0.7) return { x: W / 2 + (rnd() - 0.5) * 120, y: 50 + rnd() * 150, z: rnd() * 80 };
+  return { x: W / 2 + (rnd() - 0.5) * 160, y: 60 + rnd() * 190, z: rnd() * 120 };
 }
-function randomCamera() { // a camera on the court side looking at a subject near the court, any of the usual heights
-  const sub = { x: -1 + rnd() * 6, y: rnd() * 16, z: rnd() * 1.5 };
-  const yaw = (rnd() - 0.5) * 1.0, dist = 3 + rnd() * 12, el = 0.15 + rnd() * 0.7;
-  const pos = { x: sub.x - Math.sin(yaw) * Math.cos(el) * dist, y: sub.y - Math.cos(yaw) * Math.cos(el) * dist, z: sub.z + Math.sin(el) * dist };
-  return { cam: { pos, tgt: sub, fov: FOV, aspect: ASPECT }, sub };
+function scene() {
+  const circleY = rnd() < 0.5 ? 1 : 14, d = circleY < 5 ? 1 : -1, jd = 6 + rnd() * 4;
+  const na = Math.floor(rnd() * 3), action = [];
+  for (let i = 0; i < na; i++) action.push({ x: rnd() * 4, y: rnd() * 15, z: rnd() < 0.5 ? 0.1 : rnd() * 2 });
+  return { plane: planePos(), player: { x: -1 + rnd() * 6, y: rnd() * 15, z: 0 }, jack: { x: 1 + rnd() * 2, y: circleY + d * jd, z: 0 }, action, aspect: ASPECT };
 }
+const inBox = (v, b) => v && Math.abs(v.x) <= b.x + 1e-6 && v.y >= b.lo - 1e-6 && v.y <= b.hi + 1e-6;
 
-test('solver: subject and plane both in frame whenever it fits, deviation clamped, no change when it cannot', () => {
+test('plane shot solver: whenever it fits, plane, player, jack and action are all in the frame with the margins', () => {
   let fits = 0, nones = 0;
-  for (let i = 0; i < 4000; i++) {
-    const { cam, sub } = randomCamera(), plane = planePos();
-    const r = solvePlaneFraming(cam, [sub], plane);
-    if (!r.fit) {
-      nones++;
-      assert.deepEqual([r.dyaw, r.dpitch, r.fovK], [0, 0, 1], 'no change when it cannot fit');
-      continue;
-    }
+  for (let i = 0; i < 600; i++) {
+    const sc = scene(), r = solvePlaneShot(sc);
+    if (!r.fit) { nones++; continue; }
     fits++;
-    assert.ok(Math.abs(r.dyaw) <= PBG.maxYaw + 1e-9 && r.dpitch <= PBG.maxPitch + 1e-9 && r.dpitch >= PBG.minPitch - 1e-9, 'clamped');
-    assert.ok(r.fovK >= 1 && r.fovK <= PBG.maxFovK + 1e-9);
-    assert.ok(1 / r.fovK >= 0.6, 'subject keeps at least 60% of its size');
-    const ps = project(plane, cam, r), ss = project(sub, cam, r);
-    assert.ok(ps && Math.abs(ps.x) <= PBG.planeX + 1e-6 && ps.y >= PBG.planeLo - 1e-6 && ps.y <= PBG.planeHi + 1e-6, `plane in the upper frame ${JSON.stringify(ps)}`);
-    assert.ok(ss && Math.abs(ss.x) <= PBG.subjX + 1e-6 && ss.y >= PBG.subjLo - 1e-6 && ss.y <= PBG.subjHi + 1e-6, `subject in the lower/central frame ${JSON.stringify(ss)}`);
+    assert.ok(r.fov <= PSHOT.fovMax + 1e-9 && r.fov >= PSHOT.fovMin - 1e-9, `fov ${r.fov}`);
+    assert.ok(r.pos.y < 0, 'the camera is at the near end, opposite the lake');
+    assert.ok(r.pos.z >= 2.5 && r.pos.z <= 4.5);
+    assert.ok(inBox(planeShotView(sc.plane, r, ASPECT), PSHOT.planeBox), 'plane in the upper frame');
+    const head = { ...sc.player, z: PSHOT.playerH };
+    for (const p of [sc.player, head, { ...sc.jack, z: 0.05 }, ...sc.action.map((a) => ({ ...a, z: Math.max(0.05, a.z) }))]) assert.ok(inBox(planeShotView(p, r, ASPECT), PSHOT.subjBox), `subject ${JSON.stringify(p)} in frame`);
+    const t = Math.tan(r.fov * Math.PI / 360), a = planeShotView(sc.player, r, ASPECT), b = planeShotView(head, r, ASPECT);
+    assert.ok((b.y - a.y) / 2 >= PSHOT.minPlayer - 1e-6, 'the player is not tiny');
+    assert.ok(t > 0);
   }
-  assert.ok(fits > 300, `fits often enough (${fits}); ${nones} gave no change`);
-  assert.ok(nones > 0, 'some configurations cannot fit (e.g. plane behind the camera)');
+  assert.ok(fits > 200, `fits often enough (${fits}/600, ${nones} no fit)`);
 });
 
-test('solver: a plane already in the upper frame needs no change; one behind the camera gives none', () => {
-  const cam = { pos: { x: 2, y: -6, z: 3 }, tgt: { x: 2, y: 8, z: 0 }, fov: FOV, aspect: ASPECT };
-  const high = solvePlaneFraming(cam, [cam.tgt], { x: 3, y: 120, z: 10 });
-  assert.equal(high.fit, true); assert.equal(high.dyaw, 0); assert.equal(high.dpitch, 0); assert.equal(high.fovK, 1);
-  const behind = solvePlaneFraming(cam, [cam.tgt], { x: 2, y: -100, z: 20 });
-  assert.deepEqual(behind, { fit: false, dyaw: 0, dpitch: 0, fovK: 1 });
-  assert.equal(solvePlaneFraming({ ...cam, tgt: { x: 2, y: -40, z: 0 } }, [{ x: 2, y: 300, z: 0 }], { x: 3, y: 120, z: 10 }).fit, false, 'subject outside the picture: nothing');
+test('plane shot solver: deterministic, and a typical AI moment fits', () => {
+  const sc = { plane: { x: 20, y: 110, z: 20 }, player: { x: 2, y: 1, z: 0 }, jack: { x: 2.5, y: 9, z: 0 }, action: [{ x: 2, y: 6, z: 0.4 }], aspect: ASPECT };
+  const a = solvePlaneShot(sc), b = solvePlaneShot(JSON.parse(JSON.stringify(sc)));
+  assert.equal(a.fit, true); assert.deepEqual(a, b);
 });
 
-test('solver: a lake plane low and far to the side takes a modest pan/tilt/widening', () => {
-  const cam = { pos: { x: 2, y: -4, z: 2.5 }, tgt: { x: 2, y: 6, z: 0 }, fov: FOV, aspect: ASPECT };
-  const r = solvePlaneFraming(cam, [cam.tgt], { x: 120, y: 60, z: 5 });
-  assert.equal(r.fit, true);
-  assert.ok(r.dyaw !== 0 || r.dpitch !== 0 || r.fovK !== 1);
+test('plane shot solver: no fit when it cannot be done (plane too high for the maximum fov, plane behind the camera)', () => {
+  const base = { player: { x: 2, y: 1, z: 0 }, jack: { x: 2.5, y: 9, z: 0 }, action: [], aspect: ASPECT };
+  assert.equal(solvePlaneShot({ ...base, plane: { x: 2, y: 20, z: 300 } }).fit, false, 'straight overhead');
+  assert.equal(solvePlaneShot({ ...base, plane: { x: 2, y: -300, z: 20 } }).fit, false, 'behind the camera');
+  assert.equal(solvePlaneShot({ ...base, action: [{ x: 60, y: 10, z: 0.1 }], plane: { x: -3000, y: 10, z: 10 } }).fit, false, 'points spread wider than the maximum fov');
+  assert.equal(solvePlaneShot({ ...base, plane: null }).fit, false);
 });
 
-test('easing moves smoothly toward the wanted deviation and back to the identity', () => {
-  let d = { dyaw: 0, dpitch: 0, fovK: 1 }; const want = { dyaw: 0.3, dpitch: 0.2, fovK: 1.2 };
-  let last = 0;
-  for (let i = 0; i < 600; i++) { d = easePlaneFraming(d, want, 1 / 60); assert.ok(d.dyaw >= last - 1e-12 && d.dyaw <= 0.3); last = d.dyaw; }
-  assert.ok(Math.abs(d.dyaw - 0.3) < 1e-3);
-  for (let i = 0; i < 1200; i++) d = easePlaneFraming(d, { dyaw: 0, dpitch: 0, fovK: 1 }, 1 / 60);
-  assert.ok(Math.abs(d.dyaw) < 1e-3 && Math.abs(d.fovK - 1) < 1e-3);
+test('plane shot solver: smooth. A slowly moving scene changes the solution a little per step and mostly keeps the anchor', () => {
+  let sol = null, moves = 0, steps = 0, maxAim = 0, maxFov = 0;
+  for (let i = 0; i < 400; i++) { // ~ 40 s at 0.1 s: a plane crossing, a player walking, a boule rolling
+    const k = i / 400;
+    const sc = { plane: { x: 30 - 50 * k, y: 138 - 70 * k, z: 5 + 25 * k }, player: { x: 2 + Math.sin(k * 6) * 1.5, y: 1 + 3 * k, z: 0 },
+      jack: { x: 2.4, y: 8, z: 0 }, action: [{ x: 2, y: 2 + 5 * k, z: 0.1 }], aspect: ASPECT, prev: sol };
+    const r = solvePlaneShot(sc);
+    if (!r.fit) { sol = null; continue; }
+    if (sol) {
+      steps++;
+      if (Math.hypot(r.pos.x - sol.pos.x, r.pos.y - sol.pos.y, r.pos.z - sol.pos.z) > 1e-6) moves++;
+      else { maxAim = Math.max(maxAim, Math.abs(r.yaw - sol.yaw), Math.abs(r.pitch - sol.pitch)); maxFov = Math.max(maxFov, Math.abs(r.fov - sol.fov)); }
+    }
+    sol = r;
+  }
+  assert.ok(steps > 300);
+  assert.ok(moves <= steps * 0.1, `the camera hops between anchors ${moves}/${steps} steps`);
+  assert.ok(maxAim < 0.1 && maxFov < 6, `aim step ${maxAim}, fov step ${maxFov}`);
+});
+
+test('plane shot easing: moves smoothly toward the solution, a missing current starts at it', () => {
+  const sc = { plane: { x: 20, y: 110, z: 20 }, player: { x: 2, y: 1, z: 0 }, jack: { x: 2.5, y: 9, z: 0 }, action: [], aspect: ASPECT };
+  const want = solvePlaneShot(sc);
+  assert.equal(easePlaneShot(null, want, 0.016), want);
+  let cur = { ...want, pos: { ...want.pos, x: want.pos.x + 4 }, yaw: want.yaw + 0.3, fov: want.fov + 10 }, last = Infinity;
+  for (let i = 0; i < 600; i++) { cur = easePlaneShot(cur, want, 1 / 60); const d = Math.abs(cur.pos.x - want.pos.x); assert.ok(d <= last + 1e-12); last = d; }
+  assert.ok(last < 1e-2 && Math.abs(cur.yaw - want.yaw) < 1e-2 && Math.abs(cur.fov - want.fov) < 0.1);
 });

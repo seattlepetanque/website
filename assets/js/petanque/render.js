@@ -7,7 +7,7 @@ import { court } from './court.js';
 import { JACK_END_MARGIN } from './rules.js';
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
-import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, solvePlaneFraming, applyPlaneFraming, easePlaneFraming } from './camera.js';
+import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, solvePlaneShot, easePlaneShot, PSHOT } from './camera.js';
 import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeSkyPanorama, makeLake, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 import { createFloatplane } from './floatplane.js'; // F19
 
@@ -383,7 +383,7 @@ export function createRenderer(canvas, terrain) {
   bouleGeo.rotateX(Math.PI / 2); // texture poles along z; any orientation is fine
   const jackGeo = new THREE.SphereGeometry(1, 20, 12);
   const meshes = new Map(); // id -> { mesh, body, fade, ... }
-  const tmpQ = new THREE.Quaternion(), tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3();
+  const tmpQ = new THREE.Quaternion(), tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3(), tmpV3 = new THREE.Vector3();
 
   function sync(world) {
     const bodies = Array.isArray(world) ? world : (world.bodies || []);
@@ -1282,13 +1282,14 @@ export function createRenderer(canvas, terrain) {
 
   let bcFrame = null; // F01: camera.js state of the current broadcast shot (a new shot is a cut)
   let tvFrame = null, tvPending = null; // E27: the TV shot's state, and a camera request held until the shot has played out
-  // F38: the plane is a background element. While `planeOn`, updateCamera nudges whatever camera is running (camera.js solver) so the
-  // floatplane also falls into the upper part of the frame; the deviation eases in and out and is zero when it cannot fit.
-  let planeOn = false, planeDev = { dyaw: 0, dpitch: 0, fovK: 1 };
-  const PLANE_ID = { dyaw: 0, dpitch: 0, fovK: 1 };
-  function setPlaneShot(on) { planeOn = !!on; }
+  // F38: the dedicated plane camera. While `planeOn` the picture blends (planeK 0..1) into a camera at the end of the court opposite the
+  // lake that keeps the plane, the current player, the cochonnet and the action in frame (camera.js solvePlaneShot, fed by main.js
+  // through setPlaneSubjects). When the solver finds no fit the shot is left (planeK eases to 0). The human's own cameras cut it off fast.
+  let planeOn = false, planeK = 0, planeFast = false, planeShot = null, planeSubj = null;
+  function setPlaneShot(on, fast = false) { planeOn = !!on; if (!on && fast) planeFast = true; if (on && planeK <= 0) planeShot = null; }
+  function setPlaneSubjects(s) { planeSubj = s; }
   function setCamera(m, o = {}, flush = false) {
-    if (m === 'aim' || m === 'shoulder' || m === 'inspect') { planeOn = false; planeDev = PLANE_ID; } // the human's own cameras: no bias at all
+    if (m === 'aim' || m === 'shoulder' || m === 'inspect') { planeOn = false; planeFast = true; } // the human's own cameras: the plane camera leaves at once
     if (mode === 'tv' && m !== 'tv' && m !== 'flight' && !flush && !o.now) { // let the boule settle on screen before the next cut
       if (tvFrame && tvFrame.restT < (TV.hold[tvFrame.variant] || 0) && !reduce()) { tvPending = [m, o]; return; }
     }
@@ -1541,16 +1542,23 @@ export function createRenderer(canvas, terrain) {
     }
     camera.position.copy(cur.pos);
     let lookAt = cur.tgt;
-    if (planeOn || planeDev.dyaw || planeDev.dpitch || planeDev.fovK !== 1) { // F38: the plane in the background
-      const cam = { pos: cur.pos, tgt: cur.tgt, fov, aspect: camera.aspect };
-      const pp = floatplane.pos;
-      const want = planeOn && !reduce() && !paused && mode !== 'aim' && mode !== 'shoulder' && mode !== 'inspect'
-        ? solvePlaneFraming(cam, [cur.tgt], { x: pp.x, y: pp.y, z: pp.z }) : PLANE_ID;
-      planeDev = easePlaneFraming(planeDev, want, dt);
-      if (!planeOn && Math.abs(planeDev.dyaw) + Math.abs(planeDev.dpitch) + Math.abs(planeDev.fovK - 1) < 1e-3) planeDev = PLANE_ID;
-      const a = applyPlaneFraming(cam, planeDev);
-      lookAt = tmpV2.set(a.tgt.x, a.tgt.y, a.tgt.z);
-      if (a.fovK !== 1) { camera.fov = fov * a.fovK; camera.updateProjectionMatrix(); }
+    { // F38: the dedicated plane camera, blended over whatever camera is running
+      let want = false;
+      if (planeOn && !reduce() && planeSubj && planeSubj.player && planeSubj.jack) {
+        const pp = floatplane.pos, sol = solvePlaneShot({ plane: { x: pp.x, y: pp.y, z: pp.z }, player: planeSubj.player, jack: planeSubj.jack,
+          action: planeSubj.action || [], aspect: camera.aspect, prev: planeShot });
+        if (sol.fit) { planeShot = easePlaneShot(planeShot, sol, dt); want = true; }
+      }
+      const rate = planeFast ? PSHOT.blendHuman : want ? PSHOT.blendIn : PSHOT.blendOut;
+      planeK = want ? Math.min(1, planeK + dt * rate) : Math.max(0, planeK - dt * rate);
+      if (planeK <= 0 && !want) { planeShot = null; planeFast = false; }
+      if (planeK > 0 && planeShot) {
+        const k = smooth(planeK);
+        camera.position.lerpVectors(cur.pos, tmpV2.set(planeShot.pos.x, planeShot.pos.y, planeShot.pos.z), k);
+        lookAt = tmpV3.lerpVectors(cur.tgt, tmpV2.set(planeShot.tgt.x, planeShot.tgt.y, planeShot.tgt.z), k);
+        const f = camera.fov + (planeShot.fov - camera.fov) * k;
+        if (Math.abs(f - camera.fov) > 0.01) { camera.fov = f; camera.updateProjectionMatrix(); }
+      }
     }
     camera.lookAt(lookAt);
     // shadow frustum follows what we look at
@@ -1690,5 +1698,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { sync, fadeBody, setCamera, setPlaneShot, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  return { sync, fadeBody, setCamera, setPlaneShot, setPlaneSubjects, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
 }

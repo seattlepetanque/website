@@ -298,22 +298,6 @@ export function viewPoint(p, frame, { aspect = 1.5, fov = 50 } = {}) {
   return { x: dx / fwd / (t * aspect), y: up / fwd / t };
 }
 
-// ---- F38: the plane as a background element ----
-// While a floatplane flies and the human is not busy, whatever camera is running (follow, observer, broadcast, TV, wide) keeps its
-// subject and is nudged so the plane also falls inside the frame, high up behind the subject: a small pan (yaw), tilt (pitch) and
-// widening of the field of view. The solver is pure and works on the final camera: pos/tgt (the subject is what the camera aims at),
-// the plane position and the field of view. It searches a clamped grid for the smallest deviation that puts the plane in the upper
-// part of the frame while the subject stays in the lower/central part and at least ~80% of its normal size. No fit: no change.
-export const PBG = Object.freeze({
-  maxYaw: 0.5, maxPitch: 0.5, minPitch: -0.12, // rad: the clamp on the deviation (pitch up is positive)
-  maxFovK: 1.25, // widening: the subject keeps at least 1/1.25 = 80% of its size (never below 60%)
-  step: 0.025, fovSteps: 6,
-  planeX: 0.88, planeLo: 0.18, planeHi: 0.88, // the plane's allowed screen box: |x| <= planeX, planeLo <= y <= planeHi (y up)
-  subjX: 0.6, subjLo: -0.85, subjHi: 0.3, // the subject's allowed screen box: central/lower part
-  w: { yaw: 1.2, pitch: 1.6, fov: 1.5 }, // cost weights per unit of deviation (an even tilt costs more than a pan)
-  ease: 1.6, // 1/s: how fast the deviation eases in and out
-});
-
 // Normalised screen position of point p for a camera at pos looking by (yaw, pitch) (yaw 0 looks along +y) with vertical fov (rad).
 function screenOf(p, pos, yaw, pitch, tanV, aspect) {
   const dx = p.x - pos.x, dy = p.y - pos.y, dz = (p.z || 0) - pos.z;
@@ -325,56 +309,108 @@ function screenOf(p, pos, yaw, pitch, tanV, aspect) {
   return { x: right / fwd / (tanV * aspect), y: up / fwd / tanV };
 }
 
-// cam: { pos, tgt, fov (vertical degrees), aspect }; subjects: [{x, y, z}] points that must stay in the lower/central frame
-// (default: the aim point); plane: { x, y, z }. Returns { fit, dyaw, dpitch, fovK } (all zero / 1 when nothing is needed or nothing fits).
-export function solvePlaneFraming(cam, subjects, plane) {
-  const none = { fit: false, dyaw: 0, dpitch: 0, fovK: 1 };
-  const { pos, tgt } = cam, aspect = cam.aspect || 1.5, fov = (cam.fov || 50) * Math.PI / 180;
-  const dx = tgt.x - pos.x, dy = tgt.y - pos.y, dz = tgt.z - pos.z;
-  const yaw0 = Math.atan2(dx, dy), pitch0 = Math.atan2(dz, Math.hypot(dx, dy));
-  const subs = subjects && subjects.length ? subjects : [tgt];
-  const tan0 = Math.tan(fov / 2);
-  const inBox = (s, x, lo, hi) => s && Math.abs(s.x) <= x && s.y >= lo && s.y <= hi;
-  const ok = (dyaw, dpitch, k) => {
-    const pitch = pitch0 + dpitch;
-    if (Math.abs(pitch) > 1.3) return false;
-    const tanV = tan0 * k;
-    if (!inBox(screenOf(plane, pos, yaw0 + dyaw, pitch, tanV, aspect), PBG.planeX, PBG.planeLo, PBG.planeHi)) return false;
-    for (const s of subs) if (!inBox(screenOf(s, pos, yaw0 + dyaw, pitch, tanV, aspect), PBG.subjX, PBG.subjLo, PBG.subjHi)) return false;
-    return true;
-  };
-  if (!subs.every((s) => inBox(screenOf(s, pos, yaw0, pitch0, tan0, aspect), 1, -1, 1))) return none; // the subject is not in the picture to begin with
-  if (ok(0, 0, 1)) return { fit: true, dyaw: 0, dpitch: 0, fovK: 1 };
+// ---- F38: the dedicated plane camera ----
+// While a floatplane flies during AI play the picture cuts to a camera at the end of the court OPPOSITE the lake (low y, behind the
+// throwing circle), raised, looking down the court toward the lake. Four things are important and must all stay in frame: the plane
+// (upper part of the picture, over the lake), the current player, the cochonnet and the action (moving boules, else the last
+// thrown one). The solver is pure: it picks one of a small set of anchor positions, an aim (yaw, pitch) and a field of view that
+// keep every point inside the frame with margins, prefers the least movement from the previous solution (so the shot is smooth)
+// and reports no fit (fit: false) when it cannot stay under the maximum field of view; the caller then does not use the shot.
+export const PSHOT = Object.freeze({
+  anchorX: [-1.5, 0.5, 2, 3.5, 5.5], // m across the court: behind and slightly beside the throwing side
+  anchorY: [-3, -6, -9, -12], // m behind the near end (the lake is beyond the far end, y > 43)
+  anchorZ: [2.5, 3.5, 4.5], // m: eye height
+  home: { x: 2, y: -6, z: 3.5 }, // the preferred anchor when nothing else decides
+  fovMin: 28, fovMax: 70, // vertical degrees; above fovMax: no fit
+  planeBox: { x: 0.9, lo: 0.2, hi: 0.92 }, // screen box (x, y in [-1, 1], y up) the plane must stay in: the upper part
+  subjBox: { x: 0.85, lo: -0.85, hi: 0.8 }, // the player, the jack and the action
+  playerH: 1.75, // m: the player's height (feet and head are both framed)
+  minPlayer: 0.05, // the player is at least this fraction of the frame height
+  jackRef: 0.3, minJack: 0.01, // a 0.3 m marker at the jack is at least this fraction of the frame height
+  yawStep: 0.02, yawSteps: 6, pitchLo: -0.5, pitchHi: 0.2, pitchStep: 0.02, // aim search: rad
+  w: { pos: 1, aim: 3, fov: 0.02, size: 0.012, home: 0.05 }, // cost weights: metres, rad, fov degrees, fov degrees (size), metres from home
+  ease: 2.2, // 1/s: how fast the shot camera follows a new solution
+  blendIn: 1.4, blendOut: 1.8, blendHuman: 6, // 1/s: cut-in / cut-out blend of the plane camera over the normal one
+});
+
+// Does the plane shot fit? subjects: { plane, player, jack, action: [points] } (world points; the player is a foot position), aspect,
+// prev: the previous solution (or null). Returns { fit, pos, yaw, pitch, fov (deg), tgt } or { fit: false }.
+export function solvePlaneShot({ plane, player, jack, action = [], aspect = 1.6, prev = null } = {}) {
+  const NONE = { fit: false };
+  if (!plane || !player || !jack) return NONE;
+  const P = PSHOT, tanMax = Math.tan(P.fovMax * Math.PI / 360), tanMinFov = Math.tan(P.fovMin * Math.PI / 360);
+  const pts = [{ p: plane, box: P.planeBox }];
+  const body = [player, { ...player, z: (player.z || 0) + P.playerH }, { ...jack, z: Math.max(0.05, jack.z || 0) }];
+  for (const a of action) { body.push({ ...a, z: Math.max(0.05, a.z || 0) }); if ((a.z || 0) > 0.3) body.push({ ...a, z: 0 }); }
+  for (const b of body) pts.push({ p: b, box: P.subjBox });
+  const n = pts.length, rr = new Float64Array(n), uu = new Float64Array(n);
   let best = null, bestCost = Infinity;
-  const ny = Math.round(PBG.maxYaw / PBG.step), np0 = Math.round(PBG.minPitch / PBG.step), np1 = Math.round(PBG.maxPitch / PBG.step);
-  for (let fi = 0; fi <= PBG.fovSteps; fi++) {
-    const k = 1 + (PBG.maxFovK - 1) * fi / PBG.fovSteps;
-    const cf = PBG.w.fov * (k - 1);
-    if (cf >= bestCost) break;
-    for (let iy = -ny; iy <= ny; iy++) {
-      const dyaw = iy * PBG.step, cy = PBG.w.yaw * Math.abs(dyaw);
-      if (cf + cy >= bestCost) continue;
-      for (let ip = np0; ip <= np1; ip++) {
-        const dpitch = ip * PBG.step, cost = cf + cy + PBG.w.pitch * Math.abs(dpitch);
-        if (cost < bestCost && ok(dyaw, dpitch, k)) { bestCost = cost; best = { fit: true, dyaw, dpitch, fovK: k }; }
-      }
+  const evalAim = (pos, yaw, pitch, anchorCost, prevTan) => {
+    const sy = Math.sin(yaw), cy = Math.cos(yaw), sp = Math.sin(pitch), cp = Math.cos(pitch);
+    let lo = tanMinFov, hi = tanMax;
+    for (let i = 0; i < n; i++) {
+      const p = pts[i].p, dx = p.x - pos.x, dy = p.y - pos.y, dz = (p.z || 0) - pos.z;
+      const fwd = dx * sy * cp + dy * cy * cp + dz * sp;
+      if (fwd < 0.5) return;
+      const r = (dx * cy - dy * sy) / fwd, u = (-dx * sy * sp - dy * cy * sp + dz * cp) / fwd, b = pts[i].box;
+      rr[i] = r; uu[i] = u;
+      lo = Math.max(lo, Math.abs(r) / (b.x * aspect));
+      if (u >= 0) { lo = Math.max(lo, u / b.hi); if (b.lo > 0) hi = Math.min(hi, u / b.lo); }
+      else if (b.lo < 0) lo = Math.max(lo, u / b.lo);
+      else return; // a point that must be in the upper part but lies below the aim
+      if (lo > hi) return;
     }
+    const tan = prevTan ? Math.min(hi, Math.max(lo, prevTan)) : lo; // the least change of fov (else the tightest)
+    const fov = 2 * Math.atan(tan) * 180 / Math.PI;
+    // sizes: the player (feet to head) and a marker at the jack
+    const hPlayer = Math.abs(uu[2] - uu[1]) / tan / 2;
+    const jd = Math.hypot(jack.x - pos.x, jack.y - pos.y, (jack.z || 0) - pos.z);
+    const hJack = P.jackRef / jd / tan / 2;
+    if (hPlayer < P.minPlayer || hJack < P.minJack) return;
+    let cost = anchorCost + P.w.fov * fov + P.w.size * fov;
+    if (prev) cost += P.w.aim * (Math.abs(yaw - prev.yaw) + Math.abs(pitch - prev.pitch)) + P.w.fov * Math.abs(fov - prev.fov) * 4;
+    if (cost < bestCost) { bestCost = cost; best = { pos, yaw, pitch, fov }; }
+  };
+  const prevTan = prev ? Math.tan(prev.fov * Math.PI / 360) : 0;
+  for (const z of P.anchorZ) for (const y of P.anchorY) for (const x of P.anchorX) {
+    const pos = { x, y, z };
+    let ac = P.w.home * Math.hypot(x - P.home.x, y - P.home.y, z - P.home.z);
+    if (prev) ac += P.w.pos * Math.hypot(x - prev.pos.x, y - prev.pos.y, z - prev.pos.z);
+    // azimuth range of all the points, aim around its middle
+    let a0 = Infinity, a1 = -Infinity, e0 = Infinity, e1 = -Infinity;
+    for (const q of pts) {
+      const dx = q.p.x - x, dy = q.p.y - y, dz = (q.p.z || 0) - z, a = Math.atan2(dx, dy), e = Math.atan2(dz, Math.hypot(dx, dy));
+      if (a < a0) a0 = a; if (a > a1) a1 = a;
+      if (e < e0) e0 = e; if (e > e1) e1 = e;
+    }
+    if (a1 - a0 > 2.5) continue;
+    const am = (a0 + a1) / 2, em = (e0 + e1) / 2;
+    const same = prev && prev.pos.x === x && prev.pos.y === y && prev.pos.z === z;
+    for (let k = -P.yawSteps; k <= P.yawSteps; k++) {
+      const yaw = am + k * P.yawStep;
+      for (let pitch = Math.max(P.pitchLo, em - 0.45); pitch <= Math.min(P.pitchHi, em + 0.45) + 1e-9; pitch += P.pitchStep) evalAim(pos, yaw, pitch, ac, prevTan);
+    }
+    if (same) evalAim(pos, prev.yaw, prev.pitch, ac, prevTan);
   }
-  return best || none;
+  if (!best) return NONE;
+  const cp = Math.cos(best.pitch), L = 20;
+  return { fit: true, pos: best.pos, yaw: best.yaw, pitch: best.pitch, fov: best.fov,
+    tgt: { x: best.pos.x + Math.sin(best.yaw) * cp * L, y: best.pos.y + Math.cos(best.yaw) * cp * L, z: best.pos.z + Math.sin(best.pitch) * L } };
 }
 
-// Applies a deviation to a camera: returns { tgt, fovK } with the aim point rotated about the camera (same distance).
-export function applyPlaneFraming(cam, dev) {
-  const { pos, tgt } = cam;
-  const dx = tgt.x - pos.x, dy = tgt.y - pos.y, dz = tgt.z - pos.z, len = Math.hypot(dx, dy, dz);
-  const yaw = Math.atan2(dx, dy) + dev.dyaw, pitch = Math.atan2(dz, Math.hypot(dx, dy)) + dev.dpitch, cp = Math.cos(pitch);
-  return { tgt: { x: pos.x + Math.sin(yaw) * cp * len, y: pos.y + Math.cos(yaw) * cp * len, z: pos.z + Math.sin(pitch) * len }, fovK: dev.fovK };
+// Screen position { x, y } (y up; [-1, 1] inside the frame) of a world point in a plane-shot solution, or null behind the camera.
+export function planeShotView(p, shot, aspect = 1.6) {
+  return screenOf(p, shot.pos, shot.yaw, shot.pitch, Math.tan(shot.fov * Math.PI / 360), aspect);
 }
 
-// Eases a current deviation toward a wanted one (the identity when nothing fits). Returns a new { dyaw, dpitch, fovK }.
-export function easePlaneFraming(cur, want, dt) {
-  const k = 1 - Math.exp(-clamp(dt, 0, 0.1) * PBG.ease);
-  return { dyaw: cur.dyaw + (want.dyaw - cur.dyaw) * k, dpitch: cur.dpitch + (want.dpitch - cur.dpitch) * k, fovK: cur.fovK + (want.fovK - cur.fovK) * k };
+// Eases a shot toward a wanted one (position, yaw, pitch, fov); a missing current starts at the wanted. Returns a new shot.
+export function easePlaneShot(cur, want, dt) {
+  if (!cur) return want;
+  const k = 1 - Math.exp(-clamp(dt, 0, 0.1) * PSHOT.ease), m = (a, b) => a + (b - a) * k;
+  const yaw = cur.yaw + Math.atan2(Math.sin(want.yaw - cur.yaw), Math.cos(want.yaw - cur.yaw)) * k, pitch = m(cur.pitch, want.pitch), cp = Math.cos(pitch);
+  const pos = { x: m(cur.pos.x, want.pos.x), y: m(cur.pos.y, want.pos.y), z: m(cur.pos.z, want.pos.z) };
+  return { fit: true, pos, yaw, pitch, fov: m(cur.fov, want.fov),
+    tgt: { x: pos.x + Math.sin(yaw) * cp * 20, y: pos.y + Math.cos(yaw) * cp * 20, z: pos.z + Math.sin(pitch) * 20 } };
 }
 
 // ---- E27: TV-presentation cameras for AI turns ----
