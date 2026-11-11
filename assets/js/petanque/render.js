@@ -7,7 +7,7 @@ import { court } from './court.js';
 import { JACK_END_MARGIN } from './rules.js';
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
-import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, solvePlaneShot, easePlaneShot, PSHOT } from './camera.js';
+import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, solvePlaneShot, easePlaneShot, PSHOT, scoringTargetBox } from './camera.js';
 import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeSkyPanorama, makeLake, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 import { createFloatplane } from './floatplane.js'; // F19
 
@@ -779,7 +779,7 @@ export function createRenderer(canvas, terrain) {
   // leave free. measure() -> { free: {l,t,r,b}, card: {l,t,r,b} | null } in canvas pixels. A near top-down camera at
   // elevation el; the target and distance are solved by projecting the content into the free box, and the labels are
   // re-placed with the card rect as an obstacle. Re-runs on resize.
-  function fitScoring(measure, el = 1.38) {
+  function fitScoring(measure, el = 1.5) {
     if (!scoringArgs) return;
     scoringFit = { measure, el };
     solveScoring(true);
@@ -788,8 +788,7 @@ export function createRenderer(canvas, terrain) {
     const { jack, o } = scoringArgs, { measure, el } = scoringFit;
     const W = canvas.clientWidth || 1, H = canvas.clientHeight || 1;
     const m = measure(), fr = m.free || { l: 0, t: 0, r: W, b: H };
-    const pad = Math.max(10, Math.min(W, H) * 0.03);
-    const box = { l: fr.l + pad, t: fr.t + pad, r: fr.r - pad, b: fr.b - pad };
+    const cardH = m.card ? m.card.b - m.card.t : 0; // F62: a tall card lifts the centre
     const cam = camera.clone(); cam.aspect = W / H; cam.updateProjectionMatrix();
     const place = (tx, ty, dist) => {
       const gz = terrain.sample(tx, ty).h;
@@ -817,6 +816,8 @@ export function createRenderer(canvas, terrain) {
       for (let it = 0; it < 24; it++) {
         place(tx, ty, dist);
         const bb = bounds(pts), bw = bb.r - bb.l, bh = bb.b - bb.t;
+        // F62: the box is centred in the free rectangle and the content fills ~76% of it, whatever the content's aspect
+        const box = scoringTargetBox(fr, bw / Math.max(1, bh), { cardH, H });
         const s = Math.max(bw / (box.r - box.l), bh / (box.b - box.t));
         const dx = (box.l + box.r) / 2 - (bb.l + bb.r) / 2, dy = (box.t + box.b) / 2 - (bb.t + bb.b) / 2;
         if (Math.abs(s - 1) < 0.01 && Math.abs(dx) < 1 && Math.abs(dy) < 1) break;
@@ -825,12 +826,12 @@ export function createRenderer(canvas, terrain) {
         const a = (cx.x - c0.x) / 0.1, b = (cy.x - c0.x) / 0.1, c = (cx.y - c0.y) / 0.1, d = (cy.y - c0.y) / 0.1, det = a * d - b * c || 1e-6;
         // want the content to move by (dx, dy): move the target the other way
         tx -= (d * dx - b * dy) / det * 0.8; ty -= (-c * dx + a * dy) / det * 0.8;
-        dist = Math.max(0.9, Math.min(16, dist * (s > 1 ? s : Math.max(s, 0.9)) ** 0.9));
+        dist = Math.max(0.35, Math.min(16, dist * (s > 1 ? s : Math.max(s, 0.9)) ** 0.9));
       }
     }
     scoringArgs.pts = pts;
     const fitOpts = { now: true, target: { x: jack.x, y: jack.y }, exact: { x: tx, y: ty, dist }, el };
-    if (cut) setCamera('head', fitOpts); else { opts = fitOpts; computeGoal(0, true); cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt); }
+    if (cut) setCamera('head', fitOpts); else { opts = fitOpts; computeGoal(0, true); cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt); trans = 1; } // F62: a resize re-fit lands at once, a transition in flight must not pull it back
   }
   function labelSprite(text, color, bg, border) {
     const cv = makeCanvas(160, 64), g = cv.getContext('2d');
@@ -1286,7 +1287,8 @@ export function createRenderer(canvas, terrain) {
   // lake that keeps the plane, the current player, the cochonnet and the action in frame (camera.js solvePlaneShot, fed by main.js
   // through setPlaneSubjects). When the solver finds no fit the shot is left (planeK eases to 0). The human's own cameras cut it off fast.
   let planeOn = false, planeK = 0, planeFast = false, planeShot = null, planeSubj = null;
-  function setPlaneShot(on, fast = false) { planeOn = !!on; if (!on && fast) planeFast = true; if (on && planeK <= 0) planeShot = null; }
+  let planeMiss = 0, planeCool = 0; // no-fit hysteresis: seconds without a fit (the last good shot is held up to 1.5 s), seconds before re-entry (one blend per 3 s)
+  function setPlaneShot(on, fast = false) { planeOn = !!on; if (!on && fast) planeFast = true; if (on && planeK <= 0) planeShot = null; if (!on) planeMiss = 0; }
   function setPlaneSubjects(s) { planeSubj = s; }
   function setCamera(m, o = {}, flush = false) {
     if (m === 'aim' || m === 'shoulder' || m === 'inspect') { planeOn = false; planeFast = true; } // the human's own cameras: the plane camera leaves at once
@@ -1547,7 +1549,10 @@ export function createRenderer(canvas, terrain) {
       if (planeOn && !reduce() && planeSubj && planeSubj.player && planeSubj.jack) {
         const pp = floatplane.pos, sol = solvePlaneShot({ plane: { x: pp.x, y: pp.y, z: pp.z }, player: planeSubj.player, jack: planeSubj.jack,
           action: planeSubj.action || [], aspect: camera.aspect, prev: planeShot });
-        if (sol.fit) { planeShot = easePlaneShot(planeShot, sol, dt); want = true; }
+        if (planeCool > 0) planeCool -= dt;
+        if (sol.fit && planeCool <= 0) { planeShot = easePlaneShot(planeShot, sol, dt); want = true; planeMiss = 0; }
+        else if (!sol.fit && planeShot && planeK > 0 && planeMiss < 1.5) { planeMiss += dt; want = true; } // hold the last good solution
+        else if (planeShot && planeK > 0) planeCool = 3; // gave up: blend out, no re-entry for 3 s
       }
       const rate = planeFast ? PSHOT.blendHuman : want ? PSHOT.blendIn : PSHOT.blendOut;
       planeK = want ? Math.min(1, planeK + dt * rate) : Math.max(0, planeK - dt * rate);

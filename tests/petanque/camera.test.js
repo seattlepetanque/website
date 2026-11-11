@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { frameMoving, cameraFromFrame, CAM, frameObserver, walkSubject, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS, broadcastGoal, frameBroadcast, BC } from '../../assets/js/petanque/camera.js';
+import { frameMoving, cameraFromFrame, CAM, frameObserver, walkSubject, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS, broadcastGoal, frameBroadcast, BC, freeViewRect, scoringTargetBox, fitScoringView, SCORING_FIT } from '../../assets/js/petanque/camera.js';
 import { createBody } from '../../assets/js/petanque/physics.js';
 
 const OPTS = { aspect: 1.6, fov: 50, dt: 1 / 60 };
@@ -453,4 +453,57 @@ for (const [name, aspect, fov] of [['landscape', 1.78, 50], ['square', 1, 50], [
 test('F57 wide shot follows the ground height', () => {
   const f = frameCourtWide({ aspect: 1.5, fov: 50, groundAt: () => 2 });
   assert.ok(f.pos.z > 2 + 1.5);
+});
+
+// ---- F62: scoring view fit ----
+const SCORE_VIEWPORTS = [
+  { name: '1200x800', W: 1200, H: 800, bar: 70, card: 62, icons: [[1158, 78, 1194, 114], [1158, 126, 1194, 162], [1082, 706, 1118, 740]] },
+  { name: '500x900', W: 500, H: 900, bar: 85, card: 130, icons: [[458, 92, 496, 128], [458, 140, 496, 176], [382, 780, 418, 812]] },
+  { name: '844x390', W: 844, H: 390, bar: 50, card: 90, icons: [[800, 56, 836, 92], [800, 100, 836, 136]] },
+];
+const rectOf = (v) => freeViewRect({
+  W: v.W, H: v.H, bars: [{ l: 8, t: 4, r: v.W - 8, b: v.bar }], card: { l: 8, t: v.H - v.card, r: v.W - 60, b: v.H - 4 },
+  icons: v.icons.map(([l, t, r, b]) => ({ l, t, r, b })),
+});
+
+test('F62: the free rectangle excludes the top bar, the card and the right icon cluster', () => {
+  for (const v of SCORE_VIEWPORTS) {
+    const f = rectOf(v);
+    assert.ok(f.t >= v.bar, v.name + ' below the score bar');
+    assert.ok(f.b <= v.H - v.card, v.name + ' above the card');
+    assert.ok(f.r <= v.icons[0][0], v.name + ' left of the icon column');
+    assert.ok(f.r - f.l > 100 && f.b - f.t > 40, v.name + ' not degenerate');
+  }
+});
+
+test('F62: ring, badges and labels are centred, inside the free rectangle with a margin, and fill it', () => {
+  // ring r 0.5 m round the jack plus two labels hanging outside the ring edge on the right and below
+  const jack = { x: 2.3, y: 9.2 };
+  const sets = [
+    [{ x: jack.x - 0.5, y: jack.y - 0.5 }, { x: jack.x + 0.5, y: jack.y + 0.5 }, { x: jack.x + 0.9, y: jack.y - 0.2 }, { x: jack.x - 0.2, y: jack.y - 0.75 }],
+    [{ x: jack.x - 0.12, y: jack.y - 0.12 }, { x: jack.x + 0.12, y: jack.y + 0.12 }, { x: jack.x + 0.4, y: jack.y }], // tiny ring, wide labels
+    [{ x: jack.x - 1, y: jack.y - 0.1 }, { x: jack.x + 1, y: jack.y + 0.1 }], // wide and flat
+  ];
+  for (const v of SCORE_VIEWPORTS) for (const pts of sets) {
+    const f = rectOf(v), fit = fitScoringView(pts, f, { cardH: v.card, H: v.H });
+    const sx = (p) => fit.screen.x + (p.x - fit.centre.x) * fit.scale, sy = (p) => fit.screen.y - (p.y - fit.centre.y) * fit.scale;
+    const m = SCORING_FIT.margin - 1e-6;
+    for (const p of pts) {
+      assert.ok(sx(p) >= f.l + m && sx(p) <= f.r - m && sy(p) >= f.t + m && sy(p) <= f.b - m, `${v.name}: point inside the free rectangle`);
+    }
+    const xs = pts.map(sx), ys = pts.map(sy);
+    const w = Math.max(...xs) - Math.min(...xs), h = Math.max(...ys) - Math.min(...ys);
+    const small = Math.min(f.r - f.l, f.b - f.t);
+    assert.ok(Math.max(w, h) >= 0.6 * small, `${v.name}: fills at least 60% of the smaller free dimension (${(Math.max(w, h) / small).toFixed(2)})`);
+    assert.ok(w <= (f.r - f.l) * 0.8 + 1e-6 && h <= (f.b - f.t) * 0.8 + 1e-6, `${v.name}: not more than 80%`);
+    // centred
+    assert.ok(Math.abs((Math.min(...xs) + Math.max(...xs)) / 2 - (f.l + f.r) / 2) < 1e-6);
+  }
+});
+
+test('F62: a tall card lifts the centre; a short one does not', () => {
+  const f = { l: 0, t: 100, r: 500, b: 700 };
+  const flat = scoringTargetBox(f, 1, { cardH: 50, H: 900 }), tall = scoringTargetBox(f, 1, { cardH: 300, H: 900 });
+  assert.ok(tall.t < flat.t && tall.b < flat.b);
+  assert.ok(Math.abs((flat.t + flat.b) / 2 - 400) < 1e-6);
 });

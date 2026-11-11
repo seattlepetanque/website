@@ -1,7 +1,7 @@
 // Game loop: terrain, world, renderer, rules, AI, toss input (donnée throw), audio and HUD wired together.
 import { C } from './constants.js';
 import { court, setCourt, resetCourt, baseYaw, ahead } from './court.js';
-import { cameraStyle, tvVariant, clampViewOffset, panViewOffset, walkSubject, gatherMoving } from './camera.js';
+import { cameraStyle, tvVariant, clampViewOffset, panViewOffset, walkSubject, gatherMoving, freeViewRect } from './camera.js';
 import { createDirector, createPlaneCuts } from './director.js';
 import { mulberry32 } from './rng.js';
 import { createTerrain } from './terrain.js';
@@ -148,7 +148,7 @@ function boot() {
   const watchCircle = () => observerView([{ x: court.circle.x, y: court.circle.y }, ahead(5)]); // somebody about to throw
   const aimView = () => (observing() && match ? watchCircle() : shoulderView());
   // F38: the plane shot (decision in director.js, framing in camera.js solvePlaneShot, the camera in render.js). During AI play it starts
-  // at a quiet moment (no boule in flight or in the last second) and cuts to a dedicated camera at the far end from the lake that frames
+  // at a quiet moment (no boule in flight or in the last second), then STAYS on while the plane flies and is visible (consecutive AI turns) and cuts to a dedicated camera at the far end from the lake that frames
   // the plane, the current player, the cochonnet and the action. HUMAN RULE: from the moment it is the human's turn (they walk to the
   // circle, aim, throw) until their boule has landed, the plane camera is never used and a running shot ends at once.
   const planeCuts = createPlaneCuts();
@@ -156,7 +156,7 @@ function boot() {
   let humanTurnOn = false; // the human's turn: set in beginTurn / the chooser, cleared when their boule lands (or the turn changes)
   let turnPlayerId = null, lastThrown = null; // the current player (whoever walks, stands or just threw), the last thrown boule
   const humanBusy = () => !match || !playing || userPaused || humanTurnOn || !!pending || (!!humanWalk && isHumanId(humanWalk.id)) || !!(circleWalk && isHumanId(circleWalk.id))
-    || toss.getPhase() !== 'off' || match.phase === 'meneEnd' || match.phase === 'gameOver' || scoringShown;
+    || toss.getPhase() !== 'off' || match.phase === 'meneEnd' || match.phase === 'gameOver' || scoringShown || holdSim || wideHold; // F56/F57 keep priority
   function planeSubjects() { // world points for the plane camera: the current player, the jack, the action
     const id = inCircle || turnPlayerId || lastThrowerId, ch = id && cast.get(id), pp = ch ? ch.root.position : court.circle;
     const jb = jackBody(), jk = jb && !jb.dead ? jb : match && match.jack ? match.jack : { x: court.circle.x, y: court.circle.y + 7 * court.dir };
@@ -2213,13 +2213,12 @@ function boot() {
     if (scoringShown) renderer.fitScoring(() => {
       const cv = canvas.getBoundingClientRect(), rel = (r) => ({ l: r.left - cv.left, t: r.top - cv.top, r: r.right - cv.left, b: r.bottom - cv.top });
       const card = root.querySelector('.pt-overlay.pt-mene-end .pt-card');
-      const free = { l: 0, t: 0, r: cv.width, b: cv.height };
-      for (const n of root.querySelectorAll('.pt-board, .pc-bar')) {
-        const r = n.getBoundingClientRect();
-        if (r.height > 0 && r.bottom < cv.top + cv.height * 0.4) free.t = Math.max(free.t, r.bottom - cv.top);
-      }
-      let cr = null;
-      if (card) { cr = rel(card.getBoundingClientRect()); free.b = Math.min(free.b, Math.max(free.t + 40, cr.t)); }
+      // F62: measured from the DOM now and on every resize: the top score bar, the card, and the right-hand icon cluster
+      const vis = (n) => { const r = n.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(n).visibility !== 'hidden' ? rel(r) : null; };
+      const bars = [...root.querySelectorAll('.pt-board, .pc-bar')].map(vis).filter(Boolean);
+      const cr = card ? rel(card.getBoundingClientRect()) : null;
+      const icons = [...root.querySelectorAll('button, .pc-corner')].filter((n) => !(card && card.contains(n)) && !n.closest('.pc-menu, .pt-overlay')).map(vis).filter(Boolean);
+      const free = freeViewRect({ W: cv.width, H: cv.height, bars, card: cr, icons });
       return { free, card: cr };
     });
     if (hold) holdSim = true, clock.pause(); // F56: the camera is on the outcome view and the card is up: the sim waits for the click

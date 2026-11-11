@@ -60,44 +60,34 @@ export function createDirector({ later, show, reduced = () => false }) {
   };
 }
 
-// F38 (reworked): when to bring a flying floatplane into the background of the current camera (render.js nudges it, camera.js solves). A match gets one flight, so the shot must happen reliably: once the plane is
-// visible (opacity > 0.5) the next quiet moment (main.js `eligible`: no boule in flight or just landed, not the human's turn or walk;
-// AI walks and the gaps between AI throws count) starts a shot of 4-7 s. At most two per flight: 90% chance for the first, 50% for a
-// second after a pause. A shot ends early only when the human becomes busy (`busy`), the plane fades or the player clicks (skip()).
+// F38 (reworked again): the plane camera STAYS on for as long as the plane flies and is visible (opacity > 0.5) and it is not the human's
+// turn (`busy`: from the human's turn start until their boule has landed, see main.js humanBusy), across consecutive AI turns, walks,
+// throws and results. It starts at the first quiet moment (`eligible`) and ends only when busy begins, the plane fades or the flight ends,
+// `allowed` goes false (quick mode, reduced motion, pause, game over, outcome view: main.js folds those into busy/allowed) or skip().
+// After a busy/fade end it may start again at the next quiet moment (gap seconds later); a click (skip) ends it for the flight.
+// The solver-no-fit hold (1.5 s) and the blend limits live in render.js (PSHOT.holdMiss, PSHOT.reentry).
 export const PLANE_CUT = Object.freeze({
-  chance: 0.9, // the first shot of a flight
-  chance2: 0.5, // a second one
-  max: 2,
-  gap: 4, // s of plane time between two shots
-  hold: [4, 7], // s of the shot
+  gap: 3, // s of plane time before a shot may start again after it ended (at most one blend per 3 s)
 });
 
 // update: ctx = { flight (id of the running flight, 0 for none), kind, t (plane seconds, frozen while paused), visible, allowed (slow
 // mode, no reduced motion), eligible (a quiet moment to start), busy (the human is busy: end a running shot) }.
 // Returns 'cut', 'end' or null. skip() ends a running shot (true if one was).
-export function createPlaneCuts({ rand = Math.random } = {}) {
-  let id = 0, state = 'idle', shots = 0, want = false, hold = 0, t0 = 0, tEnd = 0;
-  const roll = () => { want = rand() < (shots === 0 ? PLANE_CUT.chance : PLANE_CUT.chance2); hold = PLANE_CUT.hold[0] + rand() * (PLANE_CUT.hold[1] - PLANE_CUT.hold[0]); };
+export function createPlaneCuts() {
+  let id = 0, state = 'idle', tEnd = -Infinity;
   return {
     get on() { return state === 'on'; },
     skip() { if (state !== 'on') return false; state = 'done'; return true; },
     update(ctx) {
       if (ctx.flight !== id) { // a new flight (or none): plan it afresh
         const was = state === 'on';
-        id = ctx.flight; shots = 0; state = id ? 'wait' : 'idle';
-        if (id) roll();
+        id = ctx.flight; state = id ? 'wait' : 'idle'; tEnd = -Infinity;
         if (was) return 'end';
       }
       if (state === 'on') {
-        if (!ctx.allowed || ctx.busy || !ctx.visible || ctx.t - t0 >= hold) {
-          tEnd = ctx.t; shots++;
-          state = shots < PLANE_CUT.max ? 'wait' : 'done';
-          if (state === 'wait') roll();
-          return 'end';
-        }
+        if (!ctx.allowed || ctx.busy || !ctx.visible) { tEnd = ctx.t; state = 'wait'; return 'end'; }
       } else if (state === 'wait') {
-        if (!want) state = 'done';
-        else if (ctx.allowed && ctx.eligible && ctx.visible && (shots === 0 || ctx.t - tEnd >= PLANE_CUT.gap)) { state = 'on'; t0 = ctx.t; return 'cut'; }
+        if (ctx.allowed && !ctx.busy && ctx.eligible && ctx.visible && ctx.t - tEnd >= PLANE_CUT.gap) { state = 'on'; return 'cut'; }
       }
       return null;
     },

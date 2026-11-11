@@ -587,3 +587,53 @@ export function panViewOffset(view, dirX, dirY, dt, lim = VIEW_PAN) {
   const dx = clamp(dirX || 0, -1, 1), dy = clamp(dirY || 0, -1, 1), t = clamp(dt || 0, 0, 0.25);
   return clampViewOffset(view.yaw + dx * lim.yawRate * t, view.pitch + dy * lim.pitchRate * t, lim);
 }
+
+// ---- F62: the outcome (scoring) view fits ring + badges + labels into the free viewport rectangle ----
+export const SCORING_FIT = Object.freeze({
+  fill: 0.76,      // the content's box fills this share of the free rectangle (the larger of its two ratios)
+  margin: 10,      // px kept clear on every side of the free rectangle
+  tallCard: 0.22,  // a card taller than this share of the viewport lifts the centre
+  lift: 0.06,      // share of the free height the centre is lifted by on a tall card
+});
+
+// The free rectangle {l,t,r,b} of a W x H viewport. bars: wide HUD rects at the top (score board); card: the result card
+// rect at the bottom (or null); icons: small controls hugging the right edge (hamburger column, bottom-right buttons). All rects {l,t,r,b}.
+export function freeViewRect({ W, H, bars = [], card = null, icons = [], gap = 8 } = {}) {
+  const f = { l: 0, t: 0, r: W, b: H };
+  for (const q of bars) if (q.b > q.t && q.t < H * 0.4 && q.r - q.l > W * 0.3) f.t = Math.max(f.t, q.b + gap);
+  if (card) f.b = Math.min(f.b, card.t - gap);
+  f.b = Math.max(f.b, f.t + Math.min(60, H * 0.3));
+  for (const q of icons) {
+    if (q.r <= q.l || q.b <= q.t || q.l < W * 0.6) continue; // only the right-hand cluster
+    if (q.b <= f.t || q.t >= f.b) continue;                  // outside the free band
+    if (q.t > f.t + (f.b - f.t) * 0.7) f.b = Math.max(f.t + 40, Math.min(f.b, q.t - gap)); // a low control: shorten, not narrow
+    else f.r = Math.min(f.r, q.l - gap);
+  }
+  f.r = Math.max(f.r, f.l + Math.min(80, W * 0.3));
+  return f;
+}
+
+// The pixel box the content's bounding box should land in: centred in `free` (lifted a little when the card is tall),
+// sized so the content fills `fill` of the free rectangle (the limiting dimension). aspect = content width / height.
+// Returns { l, t, r, b }.
+export function scoringTargetBox(free, aspect, { cardH = 0, H = 1, fill = SCORING_FIT.fill, margin = SCORING_FIT.margin } = {}) {
+  const fw = Math.max(1, free.r - free.l - 2 * margin), fh = Math.max(1, free.b - free.t - 2 * margin);
+  const a = Math.max(0.05, aspect || 1);
+  let w = fw * fill, h = w / a;
+  if (h > fh * fill) { h = fh * fill; w = h * a; }
+  const lift = cardH > H * SCORING_FIT.tallCard ? SCORING_FIT.lift * fh : 0;
+  const cx = (free.l + free.r) / 2, cy = (free.t + free.b) / 2 - lift;
+  return { l: cx - w / 2, t: cy - h / 2, r: cx + w / 2, b: cy + h / 2 };
+}
+
+// Pure fit for a top-down view (+y up the screen): world points -> { scale px/m, box, centre, screen }: with `scale` pixels per metre
+// the points' bounding box lands in `box` (scoringTargetBox), its world centre `centre` shown at pixel `screen`.
+export function fitScoringView(pts, free, opts = {}) {
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const p of pts) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+  const bw = Math.max(1e-6, x1 - x0), bh = Math.max(1e-6, y1 - y0);
+  const box = scoringTargetBox(free, bw / bh, opts);
+  const scale = Math.min((box.r - box.l) / bw, (box.b - box.t) / bh);
+  const sx = (box.l + box.r) / 2, sy = (box.t + box.b) / 2, mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+  return { scale, box, centre: { x: mx, y: my }, screen: { x: sx, y: sy } };
+}

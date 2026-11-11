@@ -1,11 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPlaneCuts, PLANE_CUT } from '../../assets/js/petanque/director.js';
+import { createPlaneCuts } from '../../assets/js/petanque/director.js';
 import { solvePlaneShot, planeShotView, easePlaneShot, PSHOT } from '../../assets/js/petanque/camera.js';
 import { C } from '../../assets/js/petanque/constants.js';
 
 const OK = { allowed: true, eligible: true, visible: true };
-const seq = (...v) => { let i = 0; return () => v[i++ % v.length]; };
 
 // run a flight half a second at a time, returns [[t, verdict], ...]
 function run(cuts, kind, flight, mut = () => ({}), end = 50) {
@@ -17,96 +16,86 @@ function run(cuts, kind, flight, mut = () => ({}), end = 50) {
   return log;
 }
 
-test('a flight gets a shot of 4-7 s as soon as it is quiet and visible, at most two', () => {
+test('a shot starts at the first quiet moment and stays for the whole flight (no duration or count limit)', () => {
   for (const kind of ['takeoff', 'landing']) {
-    const log = run(createPlaneCuts({ rand: () => 0.1 }), kind, 1);
-    assert.deepEqual(log.map((l) => l[1]), ['cut', 'end', 'cut', 'end']);
-    assert.equal(log[0][0], 0, 'right away');
-    const len = log[1][0] - log[0][0];
-    assert.ok(len >= PLANE_CUT.hold[0] - 0.01 && len <= PLANE_CUT.hold[1] + 0.5, `length ${len}`);
-    assert.ok(log[2][0] - log[1][0] >= PLANE_CUT.gap);
+    const cuts = createPlaneCuts();
+    const log = run(cuts, kind, 1, () => ({}), 120);
+    assert.deepEqual(log, [[0, 'cut']]);
+    assert.ok(cuts.on);
+    assert.equal(cuts.update({ flight: 0, kind, t: 0, ...OK, busy: false }), 'end', 'the flight ending ends it');
   }
 });
 
-test('the chance rolls: first shot 90%, second 50%, planned afresh per flight', () => {
-  assert.deepEqual(run(createPlaneCuts({ rand: seq(0.95) }), 'takeoff', 1), [], 'declined');
-  const c = createPlaneCuts({ rand: seq(0.89, 0.5, 0.6, 0.5) });
-  assert.equal(run(c, 'takeoff', 1).length, 2, 'second roll 0.6 declines');
-  assert.equal(run(c, 'takeoff', 1).length, 0, 'the same flight is done');
-  assert.ok(run(c, 'landing', 2).length > 0, 'a new flight is planned afresh');
+test('waits for a quiet moment; not being eligible later does not end a running shot', () => {
+  assert.deepEqual(run(createPlaneCuts(), 'takeoff', 1, () => ({ eligible: false })), [], 'never quiet, never started');
+  const log = run(createPlaneCuts(), 'takeoff', 1, (t) => ({ eligible: t >= 12 && t < 13 }));
+  assert.deepEqual(log, [[12, 'cut']]);
 });
 
-test('waits for a quiet moment, and a shot ends at once when the human becomes busy', () => {
-  assert.deepEqual(run(createPlaneCuts({ rand: () => 0 }), 'takeoff', 1, () => ({ eligible: false })), [], 'never quiet, never started');
-  const log = run(createPlaneCuts({ rand: () => 0 }), 'takeoff', 1, (t) => ({ eligible: t >= 12 }));
-  assert.equal(log[0][1], 'cut'); assert.ok(log[0][0] >= 12);
-  const l3 = run(createPlaneCuts({ rand: () => 0 }), 'takeoff', 1, (t) => ({ busy: t >= 2 && t < 20 }));
-  assert.equal(l3[1][1], 'end'); assert.equal(l3[1][0], 2);
-  // not eligible any more (an AI boule flies) does NOT end a running shot
-  const l4 = run(createPlaneCuts({ rand: () => 0 }), 'takeoff', 1, (t) => ({ eligible: t < 1 }));
-  assert.ok(l4[1][0] >= PLANE_CUT.hold[0]);
-});
-
-test('quick mode / reduced motion (allowed false) and an invisible plane give no shot; fading ends it', () => {
-  assert.deepEqual(run(createPlaneCuts({ rand: () => 0 }), 'landing', 1, () => ({ allowed: false })), []);
-  assert.deepEqual(run(createPlaneCuts({ rand: () => 0 }), 'landing', 1, () => ({ visible: false })), []);
-  const l = run(createPlaneCuts({ rand: () => 0 }), 'landing', 1, (t) => ({ visible: t < 3 }));
-  assert.deepEqual(l, [[0, 'cut'], [3, 'end']]);
+test('quick mode / reduced motion / pause (allowed false) and an invisible plane give no shot; fading ends it', () => {
+  assert.deepEqual(run(createPlaneCuts(), 'landing', 1, () => ({ allowed: false })), []);
+  assert.deepEqual(run(createPlaneCuts(), 'landing', 1, () => ({ visible: false })), []);
+  assert.deepEqual(run(createPlaneCuts(), 'landing', 1, (t) => ({ visible: t < 3 })), [[0, 'cut'], [3, 'end']]);
+  assert.deepEqual(run(createPlaneCuts(), 'landing', 1, (t) => ({ allowed: t < 3 })), [[0, 'cut'], [3, 'end']]);
 });
 
 test('a click ends a running shot once (no more this flight); the flight finishing ends it too', () => {
-  const cuts = createPlaneCuts({ rand: () => 0 });
-  const v = cuts.update({ flight: 1, kind: 'takeoff', t: 0, ...OK, busy: false });
-  assert.equal(v, 'cut'); assert.ok(cuts.on);
+  const cuts = createPlaneCuts();
+  assert.equal(cuts.update({ flight: 1, kind: 'takeoff', t: 0, ...OK, busy: false }), 'cut'); assert.ok(cuts.on);
   assert.equal(cuts.skip(), true); assert.equal(cuts.skip(), false);
   assert.equal(cuts.update({ flight: 1, kind: 'takeoff', t: 20, ...OK, busy: false }), null, 'does not restart');
-  const c2 = createPlaneCuts({ rand: () => 0 });
+  const c2 = createPlaneCuts();
   for (let t = 0; t < 3; t += 0.5) c2.update({ flight: 1, kind: 'takeoff', t, ...OK, busy: false });
   assert.equal(c2.update({ flight: 0, kind: 'takeoff', t: 0, ...OK, busy: false }), 'end');
 });
 
-// Synthetic AI play: a throw (boule in the air + rolling) 4-6 s, a walk to the circle 4-6 s, thinking 1 s; one plane flight of 40 s
-// starting at a random moment of that cycle. Eligible = nothing flying (and 1 s after), busy never (all AI).
-test('during AI play a shot starts in at least 90% of flights (random cycle phases, both kinds)', () => {
+// Synthetic AI play lasting longer than 40 s: throws (boule in the air + rolling) 3-5 s, walks 4-6 s, thinking 1 s; one flight of 60 s.
+// Eligible = nothing flying (and 1 s after). The shot is on continuously from the first quiet moment until the plane is gone.
+test('during a long run of AI turns the shot is active continuously from the first quiet moment until the plane fades', () => {
   let seed = 12345;
   const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
-  let started = 0; const n = 400;
-  for (let i = 0; i < n; i++) {
-    let calls = 0; // the first roll is stratified so the 90% chance shows as exactly 90% of flights, the rest is random
-    const cuts = createPlaneCuts({ rand: () => (calls++ === 0 ? (i + 0.5) / n : rnd()) });
+  for (let i = 0; i < 200; i++) {
+    const cuts = createPlaneCuts();
     const throwS = 3 + rnd() * 2, walkS = 4 + rnd() * 2, cycle = throwS + walkS + 1, phase = rnd() * cycle;
-    const kind = i % 2 ? 'takeoff' : 'landing';
-    let cut = false;
-    for (let t = 0; t <= 40; t += 0.1) {
+    const fadeAt = 55; let first = null, ends = 0;
+    for (let t = 0; t <= 60; t += 0.1) {
       const c = (t + phase) % cycle, flying = c < throwS;
-      const visible = kind === 'takeoff' ? t < 26 : t > 4 && t < 30;
-      if (cuts.update({ flight: 1, kind, t, visible, allowed: true, busy: false, eligible: !flying && c >= throwS + 1 }) === 'cut') cut = true;
+      const v = cuts.update({ flight: 1, kind: 'landing', t, visible: t < fadeAt, allowed: true, busy: false, eligible: !flying && c >= throwS + 1 });
+      if (v === 'cut' && first === null) first = t; else if (v === 'cut') assert.fail('restarted');
+      if (v === 'end') { ends++; assert.ok(t >= fadeAt - 1e-9 && t < fadeAt + 0.2, `ended at ${t}`); }
+      if (first !== null && t < fadeAt - 1e-9) assert.ok(cuts.on, `off at ${t}`);
     }
-    if (cut) started++;
+    assert.ok(first !== null && first <= cycle, `first quiet moment ${first}`);
+    assert.equal(ends, 1);
   }
-  assert.ok(started / n >= 0.9, `${started}/${n} flights got a shot`);
 });
 
-// HUMAN RULE: busy (main.js humanBusy: the human's turn from the walk to the circle until their boule has landed) never lets a shot
-// run: no cut while busy, and a running shot ends at the very moment busy starts.
-test('human rule: no plane shot while the human is busy, and a running one ends the moment their turn begins', () => {
+// HUMAN RULE: busy (main.js humanBusy: the human's turn from the walk to the circle until their boule has landed; also the outcome view,
+// F56 hold and F57 wide shot) never lets a shot run: no cut while busy, and a running shot ends at the very moment busy starts. It may
+// start again at the next quiet moment after the human's turn (gap), while the plane still flies.
+test('human rule: no plane shot while the human is busy, a running one ends the moment their turn begins, and it returns after', () => {
   let seed = 4242;
   const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
   for (let n = 0; n < 200; n++) {
-    // alternating AI / human turns of random lengths; busy covers the whole human turn, eligible is false while a boule flies
     const turns = []; let t = 0;
     while (t < 60) { const human = rnd() < 0.4, len = 4 + rnd() * 8; turns.push({ human, from: t, to: t + len }); t += len; }
-    const cuts = createPlaneCuts({ rand: () => 0 });
-    let on = false;
+    const cuts = createPlaneCuts();
+    let on = false, cutsN = 0;
     for (let tt = 0; tt <= 55; tt += 0.1) {
       const turn = turns.find((x) => tt >= x.from && tt < x.to);
       const busy = turn.human;
       const v = cuts.update({ flight: 1, kind: 'takeoff', t: tt, allowed: true, visible: true, busy, eligible: !busy });
-      if (v === 'cut') on = true; else if (v === 'end') on = false;
+      if (v === 'cut') { on = true; cutsN++; } else if (v === 'end') { on = false; assert.equal(busy, true, 'ends only for the human'); }
       if (busy) assert.equal(on, false, `shot still running at ${tt} during the human's turn`);
+      else if (cutsN) assert.ok(on || tt - turn.from < 3.01, `AI turn at ${tt} without the plane camera`);
       assert.equal(cuts.on, on);
     }
   }
+});
+
+test('hysteresis: re-entry waits the gap after an end (at most one blend per 3 s)', () => {
+  const log = run(createPlaneCuts(), 'takeoff', 1, (t) => ({ busy: t >= 5 && t < 5.5 }), 20);
+  assert.deepEqual(log, [[0, 'cut'], [5, 'end'], [8, 'cut']]);
 });
 
 let seed = 987654;
