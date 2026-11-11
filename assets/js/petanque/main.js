@@ -38,7 +38,10 @@ const AIM_MAX = 0.6; // rad of aim either side of straight ahead
 const MAX_STEPS = 24; // physics steps per frame; backlog beyond this is dropped
 const DEG = Math.PI / 180;
 const params = new URLSearchParams(location.search);
-const debug = params.has('debug');
+// F84: `debug` is not declared here. Hugo's js.Build defines it: the literal false in a production build (esbuild then
+// drops every `debug && ...` / `if (debug)` branch with its strings), and globalThis.__dbg under `hugo server` and
+// development builds, where it is set from ?debug just below. The set-up code is itself dropped in production.
+if (globalThis.__DEBUG__ !== false) globalThis.__dbg = params.has('debug');
 const modelTimeout = +params.get('modeltimeout') || 5000; // ms; ?modeltimeout=600000 for virtual-time screenshots
 const useMeshes = params.get('figures') === 'mesh'; // stick figures by default; ?figures=mesh loads the Kenney models (opt-in; ?figures=stick is the same as the default)
 const AI_MIN_THINK = 800; // ms: the AI never answers faster than this
@@ -159,7 +162,7 @@ function boot() {
   }
   let thinkToken = 0; // bumped to drop stale partner-suggestion results
   let pierreChoice = null; // cached AI choice for Pierre while the chooser is open
-  const pickHuman = params.get('humanturn'); // debug: stop at the human's first boule (or 'chooser')
+  const pickHuman = debug ? params.get('humanturn') : null; // debug: stop at the human's first boule (or 'chooser')
 
   // Controls (F32): F48 hold-to-use view icons (pan, read the ground, overhead) top right; speaker,
   // fullscreen and pause icons bottom right; Resume / New game / End game and the Mode (Slow / Quick) choice on the paused card; no raw sliders
@@ -668,7 +671,7 @@ function boot() {
   // Per frame: animate, keep feet on the terrain, everyone watches the boule in flight (or the jack)
   function tickCast(dt) {
     if (frozen || holdSim) return; // F55: holdSim: the sim waits for the click on Next mène (players and idle fidgets stand still)
-    if (fetchScript || f02Script) { // ?debug&fetch: fixed steps; with &fetchat the animation is pumped synchronously (headless frames are too few)
+    if (debug && (fetchScript || f02Script)) { // ?debug&fetch: fixed steps; with &fetchat the animation is pumped synchronously (headless frames are too few)
       if (fetchFreezeAt && !fetchPump) return;
       dt = 1 / 60; clock.tick(1000 / 60);
     }
@@ -960,7 +963,7 @@ function boot() {
     if (debug && params.has('holdhead')) setView('head'); // ?debug&humanturn&holdhead: the overhead view as while its icon is held (screenshots)
     say2(text);
     if (pickHuman !== null || store(HINT_KEY) !== '1') hud.showHint(HINT_TEXT);
-    if (demo) { // ?debug&humanturn&demo: a scripted toss preview for screenshots
+    if (debug && demo) { // ?debug&humanturn&demo: a scripted toss preview for screenshots
       // &loft=15 (degrees), &dist=7 (m ahead of the circle), &dx=0.9 (m across), &tir (snap onto the jack)
       const jb = jackBody();
       const tir = params.has('tir') && jb;
@@ -1075,7 +1078,7 @@ function boot() {
   const ailog = debug && params.has('ailog');
   let aiLogRec = null;
   function aiLogPlan(player, choice) {
-    if (!ailog || !choice.from) return;
+    if (!debug || !ailog || !choice.from) return;
     const hand = handFrom(player.id, choice.loft, aiYaw), j = jackBody();
     aiLogRec = {
       player: player.id, difficulty, intent: choice.intent, style: choice.style, loftDeg: +(choice.loft * 180 / Math.PI).toFixed(1),
@@ -1087,7 +1090,7 @@ function boot() {
     };
   }
   function aiLogResult(was) {
-    if (!aiLogRec || !was || was.kind !== 'boule') return;
+    if (!debug || !aiLogRec || !was || was.kind !== 'boule') return;
     const j = jackBody(), rec = aiLogRec;
     aiLogRec = null;
     console.log('[ailog]', JSON.stringify({ ...rec, restY: +((was.y - court.circle.y) * court.dir).toFixed(2), dead: was.dead, toJackM: j && !was.dead ? +Math.hypot(was.x - j.x, was.y - j.y).toFixed(2) : null }));
@@ -1133,7 +1136,7 @@ function boot() {
     const showArc = debug && params.has('aispot'); // the arc, cone, donnée and legal zone stay hidden from players (D18)
     renderer.setThrowPreview(null);
     renderer.showJackZone(false);
-    if (showArc) {
+    if (debug && showArc) {
       const skill = scaledSkill(SKILL[player.id] || SKILL.human, difficulty);
       const cone = coneFor({ skill, from, landing: choice.donnee, loft: choice.loft, energyFrac: choice.energyFrac });
       const env = coneEnvelope({ from, landing: choice.donnee, loft: choice.loft, cone, terrain: world.terrain });
@@ -1402,7 +1405,7 @@ function boot() {
   }
   // The head camera follows the fetch loosely: it frames the fetcher and where they are going (never over an aim)
   function fetchCam(job, ids, spots = []) {
-    if (pending || flying || job.jack || !fetchAlive(job) || (job.scripted && !params.has('fetchcam'))) return;
+    if (pending || flying || job.jack || !fetchAlive(job) || (job.scripted && !(debug && params.has('fetchcam')))) return;
     const pts = ids.map((i) => cast.get(i).root.position).concat(spots).map((q) => ({ x: q.x, y: q.y }));
     const cx = pts.reduce((s, q) => s + q.x, 0) / pts.length, cy = pts.reduce((s, q) => s + q.y, 0) / pts.length;
     if (observing()) { observerView(pts); return; }
@@ -1848,6 +1851,7 @@ function boot() {
     if (debug && params.has('px')) humanPlaceMarker();
   }
   function humanPlaceMarker() { // ?debug&px=2&py=8.5: show the marker without a pointer
+    if (!debug) return;
     const p = { x: +params.get('px'), y: +params.get('py') || 8.5 };
     renderer.setPlaceMarker({ ...p, valid: jackPlaceValid(p, match.geometry) });
   }
@@ -1864,7 +1868,7 @@ function boot() {
       placeView();
       // E03: an AI's target stays hidden from players; ?debug&showtarget shows it in the aispot / jackplace=ai debug views
       const showTarget = debug && params.has('showtarget') && (params.has('aispot') || params.get('jackplace') === 'ai');
-      if (showTarget) renderer.setPlaceMarker({ x: spot.x, y: spot.y, valid: true });
+      if (debug && showTarget) renderer.setPlaceMarker({ x: spot.x, y: spot.y, valid: true });
     }
     const fetched = jackFetch;
     await Promise.all([sleep(debug && params.has('jphold') ? 1e8 : 2000), fetched && fetched.ready]); // ?debug&jackplace=ai&jphold keeps the marker up for screenshots
@@ -1932,13 +1936,14 @@ function boot() {
   }
   // ?debug&jackplace[=ai]: skip the throw and fail the jack, so the placement shows at once
   function forceInvalidJack(team) {
+    if (!debug) return;
     const spot = { x: +params.get('jx') || 2, y: +params.get('jy') || 5.2 };
     removeJack();
     world.add(createBody('jack', { team: -1, x: spot.x, y: spot.y }));
     renderer.sync(world);
     match = apply(match, { type: 'jackThrown', team, jack: spot });
     jackFailed(spot, '');
-    if (params.has('yellow')) { // ?debug&jackplace&yellow: set the jack down at once; the first rest counts as a yellow card
+    if (debug && params.has('yellow')) { // ?debug&jackplace&yellow: set the jack down at once; the first rest counts as a yellow card
       cancelFetch(); jackFetch = null; placeJack({ x: +params.get('yx') || 2, y: +params.get('yy') || 8.5 });
       for (let g = 0; flying && !world.settled() && g < 240 * C.hardCapSeconds; g++) world.step();
       if (!world.settled()) world.forceRest();
@@ -2077,7 +2082,7 @@ function boot() {
     refreshHud(null);
     // F56: in a slow mène the outcome view and the card wait for the click (the sim clock is held); the ring, jack return, gathering and
     // collecting then start from nextMene (startMeneEndWork). Otherwise (quick, instant, game over) they start now.
-    const hold = slow() && match.phase === 'meneEnd' && !(instant && !params.has('meneend'));
+    const hold = slow() && match.phase === 'meneEnd' && !(instant && !(debug && params.has('meneend')));
     const winTeam = r.void ? null : r.team, workTok = token;
     meneEndWork = () => {
       if (workTok !== token || !match || (match.phase !== 'meneEnd' && match.phase !== 'gameOver')) return;
@@ -2123,7 +2128,7 @@ function boot() {
       return { free, card: cr };
     });
     if (hold) holdSim = true, clock.pause(); // F56: the camera is on the outcome view and the card is up: the sim waits for the click
-    if (instant && !params.has('meneend')) later(() => nextMene(), 0);
+    if (instant && !(debug && params.has('meneend'))) later(() => nextMene(), 0);
   }
 
   // F56: the score card and Next mène show as soon as the outcome view is up and the sim clock pauses (holdSim: no sepia, no pause card;

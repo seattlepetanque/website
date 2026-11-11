@@ -123,7 +123,7 @@ function wingGeometry(side, wingCol, edgeCol) {
 export function makeButterflies(z, seed) {
   const q = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams();
   if (seed === undefined) seed = +q.get('seed') || (Date.now() % 100000);
-  const dbg = q.has('debug') && q.has('butterflies'); // ?debug&butterflies: a visit right at the start, and every 20 s
+  const dbg = globalThis.__DEBUG__ !== false && q.has('debug') && q.has('butterflies'); // ?debug&butterflies: a visit right at the start, and every 20 s
   const sched = createVisitScheduler(seed, { debug: dbg });
   const group = new THREE.Group(); group.position.z = z; group.visible = false;
   const body = new THREE.BoxGeometry(0.1, 0.014, 0.014);

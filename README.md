@@ -127,6 +127,7 @@ Debug URLs (add the query to `/game.html`; a debug mode that starts a match ente
 - `?debug&freezethrow` (in a match), `&freezeat=T` (stop the simulation at T seconds), `&timerframes` (drive frames from timers; it can hang headless Chrome, so use `--virtual-time-budget` without it).
 - `?figures=mesh`: use the Kenney mesh models instead of the stick figures (`?figures=stick` is the default).
 - `?seed=N`: fixes the court and random numbers, so the same N gives the same game.
+- Production build: the `?debug...` flags exist only in `hugo server` and `--environment development` builds. A plain `hugo` / `hugo --environment production` build (what deploy.sh runs) defines `debug` as false at bundle time, so esbuild removes every debug branch (js.Build `defines` in `layouts/_default/game.html`; unbundled node tests keep debug available). `npm run check:prod` builds both and checks the debug-only strings are gone from production.
 
 `GAME-PLAN.md` describes the design. `GAME-BACKLOG.md` lists the work items and their history.
 

@@ -6,7 +6,10 @@
 {{- with resources.Get "css/game.css" | minify | fingerprint }}
 <link rel="stylesheet" href="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}">
 {{- end }}
-{{- with resources.Get "js/petanque/main.js" | js.Build (dict "format" "esm" "minify" true "target" "es2020") | fingerprint }}
+{{- /* F84: production build strips the ?debug features. `hugo server` and --environment development keep them (globalThis.__DEBUG__ true; main.js reads ?debug into globalThis.__dbg); any other build defines both as the literal false so esbuild drops every debug branch. */}}
+{{- $dev := or hugo.IsServer (eq hugo.Environment "development") }}
+{{- $defines := cond $dev (dict "globalThis.__DEBUG__" "true" "debug" "globalThis.__dbg") (dict "globalThis.__DEBUG__" "false" "debug" "false") }}
+{{- with resources.Get "js/petanque/main.js" | js.Build (dict "format" "esm" "minify" true "target" "es2020" "defines" $defines) | fingerprint }}
 <script type="module" src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}"></script>
 {{- end }}
 {{ end }}

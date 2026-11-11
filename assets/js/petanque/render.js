@@ -470,7 +470,7 @@ export function createRenderer(canvas, terrain) {
   // Jack finder: at 6-10 m the jack is a few pixels, so a bobbing chevron (constant screen size) floats over it.
   // ?debug&jackvis=a|c|ac|none compares the options (a = chevron, c = bright orange jack).
   const jackVisParam = (() => {
-    try { const q = new URLSearchParams(location.search); return q.has('debug') ? q.get('jackvis') : null; } catch (e) { return null; }
+    try { const q = new URLSearchParams(location.search); return globalThis.__DEBUG__ !== false && q.has('debug') ? q.get('jackvis') : null; } catch (e) { return null; }
   })();
   const jv = jackVisParam === null ? { a: true, c: true }
     : { a: jackVisParam.includes('a'), c: jackVisParam.includes('c') };
