@@ -147,15 +147,22 @@ function boot() {
   }
   const watchCircle = () => observerView([{ x: court.circle.x, y: court.circle.y }, ahead(5)]); // somebody about to throw
   const aimView = () => (observing() && match ? watchCircle() : shoulderView());
-  // F38: the occasional plane shot (decision in director.js, framing in camera.js, the overlay in render.js). Never while the human
-  // is busy (their walk, aim, throw or a turn pending), any boule is in flight, a toss or the end-of-mène card is up.
+  // F38: the plane shot (decision in director.js, framing in camera.js, the overlay in render.js). It starts at a quiet moment of AI
+  // play (no boule in flight or in the last second, nobody of the human's side busy) and may interrupt the F57 walker follow or the
+  // wide hold; it ends early only when the human becomes busy (their walk, aim, throw, a turn pending, toss, mène end card).
   const planeCuts = createPlaneCuts();
-  const humanFree = () => !!match && playing && !userPaused && !pending && !flying && !humanWalk && !(circleWalk && isHumanId(circleWalk.id))
-    && toss.getPhase() === 'off' && match.phase !== 'meneEnd' && match.phase !== 'gameOver' && !scoringShown;
-  function planeShot() {
+  let planeClock = 0, lastFlightAt = -99;
+  const humanBusy = () => !match || !playing || userPaused || !!pending || (!!humanWalk && isHumanId(humanWalk.id)) || !!(circleWalk && isHumanId(circleWalk.id))
+    || toss.getPhase() !== 'off' || match.phase === 'meneEnd' || match.phase === 'gameOver' || scoringShown;
+  function planeShot(dt) {
     const fp = renderer.floatplane;
-    const verdict = planeCuts.update({ flight: fp.active ? fp.flight : 0, kind: fp.kind, t: fp.t, visible: fp.opacity > 0.4, allowed: slow() && !reduceMotion(), eligible: humanFree() });
-    if (verdict === 'cut') renderer.setPlaneShot(true); else if (verdict === 'end') renderer.setPlaneShot(false);
+    planeClock += dt;
+    if (flying) lastFlightAt = planeClock;
+    const busy = humanBusy();
+    const verdict = planeCuts.update({ flight: fp.active ? fp.flight : 0, kind: fp.kind, t: fp.t, visible: fp.opacity > 0.5, allowed: slow() && !reduceMotion(),
+      busy, eligible: !busy && !flying && planeClock - lastFlightAt >= 1 });
+    if (verdict === 'cut') { renderer.setPlaneShot(true); if (debug && params.has('planelog')) console.info('[plane] cut', fp.kind, fp.t.toFixed(1)); }
+    else if (verdict === 'end') { renderer.setPlaneShot(false); if (debug && params.has('planelog')) console.info('[plane] end', fp.t.toFixed(1)); }
   }
   const KEEP_YAW = 35 * DEG; // E12 (see setAdjust); the pan limits live in camera.js (VIEW_PAN, F48)
   let adjusting = false, viewAnim = 0;
@@ -2457,7 +2464,7 @@ function boot() {
       fp.schedule(match && !pausedNow && playing ? dt : 0, match, reduceMotion() || settings.mode !== 'slow');
       const en = fp.engine;
       audio.setEngine(en.on && !pausedNow, en.level, en.pan, en.rev, en.dist);
-      if (!pausedNow) planeShot(); // F38
+      if (!pausedNow) planeShot(dt); // F38
     }
     renderer.render(pausedNow ? 0 : dt);
     nextFrame(frame);
