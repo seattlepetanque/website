@@ -296,7 +296,7 @@ function boot() {
     for (const [label, name, p] of SOUNDS) {
       mkBtn(panel, label, 'pc-sound').addEventListener('click', () => { audio.unlock(); audio.play(name, p); });
     }
-    for (const [label, name] of [['Ambience: bird', 'bird'], ['Ambience: breeze swell', 'breeze'], ['Ambience: airplane (25 s)', 'plane'], ['Ambience: floatplane engine (10 s)', 'floatplane'], ['Ambience: musette accordion (7-10 s)', 'accordion'], ['Ambience: church bell (4 strikes)', 'bell'], ['Ambience: cicada + cricket (12 s)', 'cicada']]) {
+    for (const [label, name] of [['Ambience: bird', 'bird'], ['Ambience: breeze swell', 'breeze'], ['Ambience: airplane (25 s)', 'plane'], ['Ambience: floatplane engine (10 s)', 'floatplane'], ['Ambience: musette accordion (~20-28 s, fades)', 'accordion'], ['Ambience: church bell (4 strikes)', 'bell'], ['Ambience: cicada (12 s)', 'cicada']]) {
       mkBtn(panel, label, 'pc-sound').addEventListener('click', () => audio.playAmbient(name));
     }
     drawer.append(panel);

@@ -1,4 +1,4 @@
-// F66: pure scheduling logic for the rare ambient events (distant musette accordion, church bell, cicada/cricket swells).
+// F66: pure scheduling logic for the rare ambient events (distant musette accordion, church bell, cicada swells).
 // No audio, no DOM, no Math.random: everything is driven by a seed and the time passed to tick(), so it is unit-testable.
 // createAmbientSchedule(seed, cfg?) -> { tick(now, state) -> event | null, reset(now) }
 //   now    audio-clock seconds (monotonic; the context is suspended while the game is paused, so paused time never counts)
@@ -8,9 +8,10 @@
 // ---- tunables (seconds unless noted) ----
 export const SCHEDULE = {
   // `first` = delay before the first one, `gap` = delay from the END of the previous one to the next (play-clock seconds).
-  accordion: { first: [90, 240], gap: [240, 480] }, // one every 4-8 minutes
+  // accordion: one every 4-8 minutes; `tail` = its fade-out after the phrase (must match AMBIENT.accordion.fadeOut in ambient.js)
+  accordion: { first: [90, 240], gap: [240, 480], tail: 7 },
   bell: { first: [300, 420], gap: [300, 600], strikes: [3, 6], spacing: [2.3, 2.7], tail: 7 }, // one every 5-10 minutes
-  cicada: { first: [20, 60], gap: [45, 140], dur: [10, 30], cricketChance: 0.35 },
+  cicada: { first: [20, 60], gap: [45, 140], dur: [10, 30] },
   tonalSeparation: 60, // min seconds between the end of an accordion/bell event and the start of the other kind
   settle: 4, // a tonal event may start only this long after the last busy moment
   quickRate: 0.5, // play-clock speed in quick mode (events are rarer there; they are also played quieter by ambient.js)
@@ -43,8 +44,24 @@ export const PHRASES = [
     ['Dm', [[74, 2], [null, 1]]],
   ] },
 ];
-export const phraseDuration = (v) => { const p = PHRASES[v]; return p.bars.length * 3 * 60 / p.bpm; };
+// Each phrase is played PHRASE_PASSES times back to back, so an accordion piece lasts about 14-21 s.
+export const PHRASE_PASSES = 2;
+export const phraseBars = (v) => { const out = []; for (let i = 0; i < PHRASE_PASSES; i++) out.push(...PHRASES[v].bars); return out; };
+export const phraseDuration = (v) => phraseBars(v).length * 3 * 60 / PHRASES[v].bpm;
 export const midiHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
+
+// Accordion loudness multiplier 0..1 at time t (s) of a piece lasting `duration` s (the fade-out ends it).
+// fadeIn / fadeOut: smoothstep ramps at the start and end. swellPeriod / swellDepth: a breathing swell that
+// drifts between 1 and (1 - swellDepth). 0 before the start and at/after the end.
+export const smoothstep = (x) => { const c = Math.min(1, Math.max(0, x)); return c * c * (3 - 2 * c); };
+export function accordionEnvelope(t, env) {
+  const { duration, fadeIn, fadeOut, swellPeriod, swellDepth } = env;
+  if (t < 0 || t >= duration) return 0;
+  const inG = fadeIn > 0 ? smoothstep(t / fadeIn) : 1;
+  const outG = fadeOut > 0 ? smoothstep((duration - t) / fadeOut) : 1;
+  const swell = 1 - swellDepth * (0.5 - 0.5 * Math.cos(2 * Math.PI * t / swellPeriod));
+  return inG * outG * swell;
+}
 
 export function mulberry32(seed) {
   let a = seed >>> 0;
@@ -84,7 +101,7 @@ export function createAmbientSchedule(seed, cfg = SCHEDULE) {
       const ev = { kind, start: now };
       if (kind === 'accordion') {
         ev.variant = Math.floor(rand() * PHRASES.length);
-        ev.dur = phraseDuration(ev.variant);
+        ev.dur = phraseDuration(ev.variant) + cfg.accordion.tail; // audible span incl. the fade-out
         ev.pan = rr([-0.7, 0.7]);
       } else {
         const B = cfg.bell;
@@ -103,7 +120,7 @@ export function createAmbientSchedule(seed, cfg = SCHEDULE) {
     if (clock >= next.cicada && clock >= end.cicada) {
       const C = cfg.cicada, dur = rr(C.dur);
       end.cicada = clock + dur; next.cicada = end.cicada + rr(C.gap);
-      return { kind: 'cicada', start: now, dur, cricket: rand() < C.cricketChance, pan: rr([-0.8, 0.8]), hz: rr([4300, 5600]) };
+      return { kind: 'cicada', start: now, dur, pan: rr([-0.8, 0.8]), hz: rr([4300, 5600]) };
     }
     return null;
   }
