@@ -168,34 +168,82 @@ export function solveLaunch({ from = C.throwFrom, landing, loft, terrain }) {
   return { yaw, speed: r.speed, loft: useLoft, backspin: backspinForLoft(loft), sidespin: 0 };
 }
 
-// Base sigmas: lat and long are fractions of throw distance (long is the low-loft value), loft in radians
+// Base sigmas: lat and long are fractions of throw distance (long is the low-loft value), loft in radians.
+// maxSpeed is the throw "effort" (m/s, see effortFor) the player can deliver with good control (D02).
 export const SKILL = Object.freeze({
-  human: Object.freeze({ lat: 0.012, long: 0.03, loft: 1.5 * DEG }),
-  marcel: Object.freeze({ lat: 0.011, long: 0.022, loft: 1.2 * DEG }), // pointeur: tight long
-  odette: Object.freeze({ lat: 0.008, long: 0.03, loft: 1.4 * DEG }), // tireur: tight lateral
-  pierre: Object.freeze({ lat: 0.01, long: 0.033, loft: 1.6 * DEG }), // tireur-ish, a bit looser
+  human: Object.freeze({ lat: 0.012, long: 0.03, loft: 1.5 * DEG, maxSpeed: 11.6 }),
+  marcel: Object.freeze({ lat: 0.011, long: 0.022, loft: 1.2 * DEG, maxSpeed: 11.3 }), // pointeur: tight long, weaker arm
+  odette: Object.freeze({ lat: 0.008, long: 0.027, loft: 1.4 * DEG, maxSpeed: 12.4 }), // tireur: tight lateral, strong
+  pierre: Object.freeze({ lat: 0.009, long: 0.031, loft: 1.6 * DEG, maxSpeed: 12.2 }), // tireur-ish, a bit looser, strong
 });
-export const difficultyScale = Object.freeze({ easy: 2.8, medium: 1.6, hard: 0.75 });
-const LONG_GROWTH = 5 / 3; // longitudinal sigma at LOFT_MAX relative to LOFT_MIN
+// The one difficulty scaling: multiplies an AI's lat/long/loft sigmas. D02 set 2.3 / 1.35 / 0.65; D22's balance runs
+// against the scripted pointer added x0.85 / x1.4 / x2.0 on top (tactics.js), folded in here: 1.955 / 1.89 / 1.3.
+export const difficultyScale = { easy: 1.95, medium: 1.9, hard: 1.3 }; // plain object: tests pin the D02 values (see ai.test.js)
+const LONG_GROWTH = 1.85; // longitudinal sigma at LOFT_MAX relative to LOFT_MIN
+const LAT_GROWTH = 1.25; // lateral sigma at LOFT_MAX relative to LOFT_MIN
+// Near-max throws are less accurate: both sigmas are multiplied by 1 + ENERGY_K * max(0, energyFrac - ENERGY_KNEE)^2
+export const ENERGY_KNEE = 0.7, ENERGY_K = 9;
+export const energyPenalty = (energyFrac) => 1 + ENERGY_K * Math.max(0, energyFrac - ENERGY_KNEE) ** 2;
 
-// Scale an AI skill by difficulty (the human is never scaled)
+// Scale an AI skill by difficulty (the human is never scaled); strength is not scaled
 export function scaledSkill(skill, difficulty = 'medium') {
   const s = typeof skill === 'string' ? SKILL[skill] : skill;
   const f = difficultyScale[difficulty] || 1;
-  return { lat: s.lat * f, long: s.long * f, loft: s.loft * f };
+  return { lat: s.lat * f, long: s.long * f, loft: s.loft * f, maxSpeed: s.maxSpeed };
 }
 
-// Sigmas in metres, metres, radians; grow with distance and (longitudinally) with loft.
-// `skill` is a { lat, long, loft } object or a SKILL name.
-export function coneFor({ skill, from = C.throwFrom, landing, loft }) {
+// Sigmas in metres, metres, radians; grow with distance, with loft, and with the fraction of the throw budget used.
+// `skill` is a { lat, long, loft } object or a SKILL name; energyFrac defaults to no penalty.
+export function coneFor({ skill, from = C.throwFrom, landing, loft, energyFrac = 0 }) {
   const s = typeof skill === 'string' ? SKILL[skill] : skill;
   const dist = Math.hypot(landing.x - from.x, landing.y - from.y);
   const t = Math.max(0, Math.min(1, (loft - LOFT_MIN) / (LOFT_MAX - LOFT_MIN)));
+  const pen = energyPenalty(energyFrac);
   return {
-    sigmaLat: dist * s.lat,
-    sigmaLong: dist * s.long * (1 + (LONG_GROWTH - 1) * t),
-    sigmaLoft: s.loft,
+    sigmaLat: dist * s.lat * (1 + (LAT_GROWTH - 1) * t) * pen,
+    sigmaLong: dist * s.long * (1 + (LONG_GROWTH - 1) * t) * pen,
+    sigmaLoft: s.loft * pen,
   };
+}
+
+// --- Throw energy budget (D02) -------------------------------------------------------------
+// Effort is launch speed weighted by how hard the loft is to deliver: a low roulette is cheap for its speed, a
+// high lob costs more (more of the throw goes into height). Knots [loft deg, weight].
+const EFFORT_KNOTS = [[8, 0.76], [20, 0.86], [32, 1], [45, 1.05], [55, 1.14], [60, 1.21], [70, 1.42], [75, 1.55]];
+export function effortFor(speed, loft) {
+  const d = loft / DEG, k = EFFORT_KNOTS;
+  let w = k[k.length - 1][1];
+  if (d <= k[0][0]) w = k[0][1];
+  else for (let i = 1; i < k.length; i++) {
+    if (d <= k[i][0]) { w = k[i - 1][1] + (d - k[i - 1][0]) / (k[i][0] - k[i - 1][0]) * (k[i][1] - k[i - 1][1]); break; }
+  }
+  return speed * w;
+}
+export const maxEffortOf = (skill) => (typeof skill === 'string' ? SKILL[skill] : skill).maxSpeed || SKILL.human.maxSpeed;
+
+// Fraction of the budget the throw needs (may exceed 1)
+export function energyFor({ from = C.throwFrom, landing, loft, skill, terrain }) {
+  const sl = solveLaunch({ from, landing, loft, terrain });
+  return effortFor(sl.speed, sl.loft) / maxEffortOf(skill);
+}
+
+// Pull the donnée toward the thrower along the aim line until the throw fits the budget.
+// Returns { landing, clamped, energyFrac } where energyFrac is for the final throw (<= 1 when it fits).
+export function fitToBudget({ from = C.throwFrom, landing, loft, skill, terrain }) {
+  const e0 = energyFor({ from, landing, loft, skill, terrain });
+  if (e0 <= 1) return { landing, clamped: false, energyFrac: e0 };
+  const dx = landing.x - from.x, dy = landing.y - from.y;
+  const at = (k) => ({ x: from.x + dx * k, y: from.y + dy * k });
+  let lo = 0, hi = 1; // lo fits (or is the thrower), hi does not
+  const minK = Math.min(1, 0.5 / (Math.hypot(dx, dy) || 1));
+  if (energyFor({ from, landing: at(minK), loft, skill, terrain }) > 1) return { landing: at(minK), clamped: true, energyFrac: 1 };
+  lo = minK;
+  for (let i = 0; i < 14; i++) {
+    const mid = (lo + hi) / 2;
+    if (energyFor({ from, landing: at(mid), loft, skill, terrain }) <= 1) lo = mid; else hi = mid;
+  }
+  const out = at(lo);
+  return { landing: out, clamped: true, energyFrac: Math.min(1, energyFor({ from, landing: out, loft, skill, terrain })) };
 }
 
 // Unit vectors along the throw and to its right (toward +x at yaw 0)
@@ -270,11 +318,32 @@ export function coneEnvelope({ from = C.throwFrom, landing, loft, cone, terrain 
   };
 }
 
-// Noiseless sim on the perceived terrain; returns the thrown body's path (every ~1/30 s) until it settles
-export function predictRoll({ world, terrain, throwParams, from = C.throwFrom, kind = 'boule', rand, maxSeconds = 12 }) {
-  let seed = 12345; // fixed local rng so the guide never flickers
+// --- Roughness allowance (D16 for the AI, D19 for the roll guide) -----------------------------
+// The perceived terrain has no micro-roughness (the ground jitter), which slows a low throw's roll: on real gravel a
+// 14 degree roulette rests 1 to 3 m short of where the smooth model says (D16: perceived 9.0 m vs real 6.3 m).
+// A planner (the AI, or the human's roll guide) therefore assumes extra rolling resistance for low throws.
+// Calibrated with tests/petanque/measure-throws.js: planned rest vs target over AI-vs-AI mènes (mean shortfall
+// 1.1 m roulette / 0.75 m demi before, about 0.1 m after). Full effect at 14 degrees, fading to nothing by 45.
+export const ROUGH_K = 1.0;
+export const ROUGH_LOFT_FULL = 14 * DEG, ROUGH_LOFT_NONE = 45 * DEG;
+export function roughness(loft, k = ROUGH_K) {
+  return 1 + k * Math.max(0, Math.min(1, (ROUGH_LOFT_NONE - loft) / (ROUGH_LOFT_NONE - ROUGH_LOFT_FULL)));
+}
+// `view` with its rolling resistance scaled by roughness(loft). Pass the perceived terrain; `rough` is false when
+// there is no unseen roughness (a stub terrain's view is the terrain itself).
+export function feltTerrain(view, loft, rough = true, k = ROUGH_K, factor) {
+  const f = rough ? (factor || roughness(loft, k)) : 1;
+  if (f === 1) return view;
+  return { ...view, sample(x, y) { const s = view.sample(x, y); return { ...s, friction: s.friction * f }; }, perceived() { return this; } };
+}
+
+// Noiseless sim on the perceived terrain (with the low-loft roughness allowance, D19); returns the thrown body's
+// path (every ~1/30 s) until it settles
+export function predictRoll({ world, terrain, throwParams, from = C.throwFrom, kind = 'boule', rand, maxSeconds = 12, seed: seed0 = 12345, factor }) {
+  let seed = seed0; // fixed local rng so the guide never flickers
   const r = rand || (() => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; });
-  const w = world.clone(terrain.perceived(), r);
+  const view = terrain.perceived();
+  const w = world.clone(feltTerrain(view, throwParams.loft, view !== terrain, ROUGH_K, factor), r);
   const b = launch(createBody(kind, { team: -1 }), throwParams, from);
   w.add(b);
   b.state = 'airborne';
@@ -288,4 +357,110 @@ export function predictRoll({ world, terrain, throwParams, from = C.throwFrom, k
   }
   path.push({ x: b.x, y: b.y, z: b.z });
   return path;
+}
+
+// --- Roll band (D21) -----------------------------------------------------------------------
+// The roll guide as a gist: a smooth mean roll-out from touchdown to rest, a half-width that grows with the spread
+// of the jittered rolls, and the covariance of the rest points. Built from 17 noiseless sims (the centre plus two rings
+// of 8, with the cone's variance) on the perceived terrain with the D19 roughness allowance.
+// The paths are resampled by arc length to a few control points, averaged and smoothed (no pebble wiggles).
+const BAND_K = 7, BAND_OUT = 4; // control points; output points per control span
+const BAND_OFFSETS = [[0, 0]]; // centre, plus two rings of 8 (1.85 and 0.9 sigma: the set has unit variance)
+for (const r of [1.85, 0.9]) for (let k = 0; k < 8; k++) BAND_OFFSETS.push([Math.cos(k * Math.PI / 4 + (r < 1 ? Math.PI / 8 : 0)) * r, Math.sin(k * Math.PI / 4 + (r < 1 ? Math.PI / 8 : 0)) * r]);
+// The band predicts the mean of many real rolls, so it needs a slightly different allowance than a single planned
+// roll: longer at 14 degrees, shorter at 30 (fitted over seeds 1-13 with the test in donnee.test.js).
+const BAND_ROUGH = [[14, 2.45], [30, 1.7], [45, 1.15], [60, 0.9]];
+export function bandRoughness(loft) {
+  const d = loft / DEG, k = BAND_ROUGH;
+  if (d <= k[0][0]) return k[0][1];
+  for (let i = 1; i < k.length; i++) if (d <= k[i][0]) return k[i - 1][1] + (d - k[i - 1][0]) / (k[i][0] - k[i - 1][0]) * (k[i][1] - k[i - 1][1]);
+  return k[k.length - 1][1];
+}
+const bandCaches = new WeakMap(); // terrain -> Map (cached by quantised donnée and loft)
+
+function resampleByLength(pts, K) {
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+  const L = cum[cum.length - 1], out = [];
+  for (let k = 0; k < K; k++) {
+    const s = L * k / (K - 1);
+    let i = 1;
+    while (i < pts.length - 1 && cum[i] < s) i++;
+    const seg = cum[i] - cum[i - 1], t = seg > 1e-9 ? (s - cum[i - 1]) / seg : 0;
+    out.push({ x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t });
+  }
+  return out;
+}
+const catmull = (p0, p1, p2, p3, t) => 0.5 * (2 * p1 + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (3 * p1 - p0 - 3 * p2 + p3) * t * t * t);
+
+// { world, terrain, from, landing, loft, cone, kind, seed } -> { center: [{x,y,z}], halfWidths, restMean, restCov: {xx,xy,yy}, control }
+export function predictRollBand({ world, terrain, from = C.throwFrom, landing, loft, cone, kind = 'boule', seed = 12345 }) {
+  const view = terrain.perceived();
+  let bandCache = bandCaches.get(terrain);
+  if (!bandCache) bandCaches.set(terrain, bandCache = new Map());
+  // quantised donnée and loft; the world's boules are part of the key
+  let sig = world.bodies.length;
+  for (const b of world.bodies) sig += b.x * 7.3 + b.y * 3.1;
+  const q = (v, s) => Math.round(v / s);
+  const key = `${q(landing.x, 0.01)},${q(landing.y, 0.01)},${q(loft, 0.0035)},${kind},${seed},${sig.toFixed(3)},${q(from.z || 0, 0.01)}`;
+  if (bandCache.has(key)) return bandCache.get(key);
+
+  const a = axes(from, landing);
+  const sims = [];
+  for (const [zl, zg] of BAND_OFFSETS) {
+    const lat = zl * cone.sigmaLat, lon = zg * cone.sigmaLong;
+    const land = { x: landing.x + a.rx * lat + a.ux * lon, y: landing.y + a.ry * lat + a.uy * lon };
+    const tp = solveLaunch({ from, landing: land, loft, terrain: view });
+    tp.from = from;
+    tp.sidespin = Math.max(-SIDESPIN_MAX, Math.min(SIDESPIN_MAX, zl * SIDESPIN_PER_SIGMA));
+    const full = predictRoll({ world, terrain, throwParams: tp, from, kind, seed, factor: bandRoughness(loft), rand: () => 0.5 }); // rand 0.5: no tilt or bounce jitter, so the roll is a smooth function of the donnée
+    const hit = full.findIndex((p) => p.z <= terrain.sample(p.x, p.y).h + 0.1);
+    const path = hit < 0 ? [full[full.length - 1], full[full.length - 1]] : full.slice(hit);
+    if (path.length < 2) path.push(path[0]);
+    sims.push(path);
+  }
+  const rs = sims.map((p) => resampleByLength(p, BAND_K));
+  const n = rs.length;
+  let ctl = [];
+  for (let k = 0; k < BAND_K; k++) ctl.push({ x: rs.reduce((s, r) => s + r[k].x, 0) / n, y: rs.reduce((s, r) => s + r[k].y, 0) / n });
+  const restMean = { x: ctl[BAND_K - 1].x, y: ctl[BAND_K - 1].y };
+  let sxx = 0, sxy = 0, syy = 0;
+  for (const r of rs) {
+    const dx = r[BAND_K - 1].x - restMean.x, dy = r[BAND_K - 1].y - restMean.y;
+    sxx += dx * dx / n; sxy += dx * dy / n; syy += dy * dy / n;
+  }
+  // smooth the mean path (endpoints fixed)
+  for (let it = 0; it < 2; it++) {
+    const c0 = ctl;
+    ctl = c0.map((p, k) => (k === 0 || k === BAND_K - 1) ? p : { x: (c0[k - 1].x + 2 * p.x + c0[k + 1].x) / 4, y: (c0[k - 1].y + 2 * p.y + c0[k + 1].y) / 4 });
+  }
+  // lateral spread at each control point, across the path's local direction
+  const hw = [];
+  for (let k = 0; k < BAND_K; k++) {
+    const pa = ctl[Math.max(0, k - 1)], pb = ctl[Math.min(BAND_K - 1, k + 1)];
+    let tx = pb.x - pa.x, ty = pb.y - pa.y;
+    const tl = Math.hypot(tx, ty);
+    if (tl < 1e-3) { tx = a.ux; ty = a.uy; } else { tx /= tl; ty /= tl; }
+    let s2 = 0;
+    for (const r of rs) s2 += ((r[k].x - ctl[k].x) * -ty + (r[k].y - ctl[k].y) * tx) ** 2 / n;
+    hw.push(Math.max(0.05, Math.sqrt(s2)));
+  }
+  const hws = hw.map((h, k) => (k === 0 || k === BAND_K - 1) ? h : (hw[k - 1] + 2 * h + hw[k + 1]) / 4);
+  const g = (i) => ctl[Math.max(0, Math.min(BAND_K - 1, i))], h = (i) => hws[Math.max(0, Math.min(BAND_K - 1, i))];
+  const center = [], halfWidths = [];
+  for (let k = 0; k < BAND_K - 1; k++) {
+    for (let j = 0; j < BAND_OUT; j++) {
+      const t = j / BAND_OUT;
+      const x = catmull(g(k - 1).x, g(k).x, g(k + 1).x, g(k + 2).x, t), y = catmull(g(k - 1).y, g(k).y, g(k + 1).y, g(k + 2).y, t);
+      center.push({ x, y, z: terrain.sample(x, y).h });
+      halfWidths.push(Math.max(0.05, catmull(h(k - 1), h(k), h(k + 1), h(k + 2), t)));
+    }
+  }
+  const last = ctl[BAND_K - 1];
+  center.push({ x: last.x, y: last.y, z: terrain.sample(last.x, last.y).h });
+  halfWidths.push(hws[BAND_K - 1]);
+  const out = { center, halfWidths, restMean, restCov: { xx: sxx, xy: sxy, yy: syy }, control: ctl };
+  bandCache.set(key, out);
+  if (bandCache.size > 40) bandCache.delete(bandCache.keys().next().value);
+  return out;
 }

@@ -130,3 +130,41 @@ test('keyboard path', () => {
   assert.equal(log.throws.length, 1);
   assert.ok(Math.abs(log.throws[0].donnee.y - 8.05) < 1e-9);
 });
+
+test('place phase: click on a valid spot places, invalid gives a hint, keys move the marker', () => {
+  const log = { prev: [], placed: [], bad: [] };
+  const ok = (p) => Math.hypot(p.x - 2, p.y - 1) >= 6 && Math.hypot(p.x - 2, p.y - 1) <= 10;
+  const m = createTossMachine({
+    pick: (x, y) => ({ x: x / 100, y: y / 100 }), size: () => ({ w: W, h: H }),
+    placeValid: ok,
+    onPlacePreview: (v) => log.prev.push(v),
+    onPlace: (p) => log.placed.push(p),
+    onPlaceInvalid: (p) => log.bad.push(p),
+  });
+  m.setPhase('place');
+  m.hover(200, 850);
+  assert.equal(log.prev.at(-1).valid, true);
+  m.hover(200, 300);
+  assert.equal(log.prev.at(-1).valid, false);
+  m.down(1, 200, 300, 0); m.up(1, 200, 300, 10); // invalid release: hint, still placing
+  assert.equal(log.bad.length, 1);
+  assert.equal(log.placed.length, 0);
+  assert.equal(m.phase, 'place');
+  m.down(2, 200, 850, 20); m.move(2, 210, 860, 30); m.up(2, 210, 860, 40);
+  assert.deepEqual(log.placed, [{ x: 2.1, y: 8.6 }]);
+  assert.equal(m.phase, 'off');
+  assert.equal(log.prev.at(-1), null);
+  // keyboard
+  log.placed.length = 0; log.bad.length = 0;
+  m.setPhase('place');
+  m.key('ArrowDown'); // from (2, 9): 8.75
+  assert.ok(Math.abs(log.prev.at(-1).point.y - 8.75) < 1e-9);
+  assert.equal(m.key('Escape'), false); // Esc is left to the page
+  m.key('Enter');
+  assert.equal(log.placed.length, 1);
+  m.setPhase('place');
+  for (let i = 0; i < 20; i++) m.key('ArrowDown'); // walks out of the zone
+  m.key('Enter');
+  assert.equal(log.placed.length, 1);
+  assert.equal(log.bad.length, 1);
+});

@@ -252,3 +252,287 @@ C13 outcome (numbers from `measure-human.js 160`, `measure-release.js`, real sti
 - **Not done:** the bundle always includes `GLTFLoader` (about 110 KB unminified) even though the models only download with `?figures=mesh` (Hugo's js.Build does not split chunks); mesh mode is otherwise as C11 left it (odd scale, bun under the sun hat, short arms so plombées start low); in all-AI debug matches Sam still speaks as "You" in commentary; waiting characters have no shadow; the AI launch table is still built on the first AI turn; the mène-end card covers the boules by the jack in the gathered view (the head view just before it shows them with labels).
 - **A human should play-test:** the toss on a mouse, trackpad and phone (pull length for loft, dwell to start a toss, thumb dragging without scrolling the page, cancelling by dragging back up); cone fairness at 6 to 10 m (about 86% of throws inside the outer ellipse, 39% inside the inner one); how the roulette run-out feels now that crouched releases are low (touchy: about 3.5 m of rest per metre of donnée); walk-in, reaction and gathering timing (CAST_SPEED 2.4 m/s, 800 ms reaction cut, 2.2 s before the gathered shot) and whether the reaction cut is too short or interrupts the next turn; the shoulder view with Odette or Pierre standing (their bodies fill the lower left); the commentary tone and repetition across a whole game; audio levels by ear (clack, crunch, roll); phone layout of the toss readout and the setup card in portrait and landscape.
 - From the C13 mène-end screenshot: in all-AI debug matches the scoreboard says "Sam" but quotes still read "You: …". The mène-end card covers the boules by the jack in the gathering shot.
+
+---
+
+# Round 3 backlog
+
+From the user's play-testing (2026-11-01). Round 1 and 2 contracts still apply: units, axes, `constants.js`, the test and build checks, agents don't commit, and don't edit files owned by another in-progress item. D01, D03, D04 and D07 all touch `main.js` and/or `render.js`, so run them one after another, or split the files clearly.
+
+| ID | Status | Model | Deps | Title |
+|---|---|---|---|---|
+| D00 | done | sonnet | — | Invalid jack: the other team places it |
+| D01 | done | sonnet | — | Full-window game view; no page scrolling while playing |
+| D02 | done | sonnet | — | Throw energy limit: far lobs pulled closer, higher lobs less accurate |
+| D03 | done | haiku | — | Hide the planned trajectory for AI players |
+| D04 | done | sonnet | — | Make the cochonnet easy to see |
+| D05 | done | sonnet | — | Rolling sound as faint ticks against pebbles, not white noise |
+| D06 | done | sonnet | — | Out of bounds on every side; dead balls placed beyond the far end line |
+| D07 | done | sonnet | — | Measuring lines between throws; numbered scoring circle at mène end |
+| D08 | done | sonnet | D01–D07, D09–D22 | Round 3 review |
+| D09 | done | sonnet | — | Flight camera follows every moving object, the cochonnet first when it moves fast |
+| D10 | done | sonnet | — | 6×6 lumber round the court; out-of-bounds balls turn grey, ghost through live balls, bounce off the boards |
+| D11 | done | sonnet | D10 | Players fetch dead balls and walk the cochonnet to its spot |
+| D12 | done | sonnet | — | Paused game: frozen, sepia, UI inert, free orbit camera |
+| D13 | done | sonnet | D04, D16 | AI tactics system (GAME-PLAN §12): first version built; tuning in D22 |
+| D14 | done | sonnet | — | Placed cochonnet: legal region runs out to the strings; settle the ground under it |
+| D15 | done | sonnet | — | Surroundings: grass, nearby trees, Seattle skyline with Mount Rainier and the Space Needle |
+| D16 | done | sonnet | — | Investigate AI throws that fall far short, and why Pierre misses most shots |
+| D17 | done | haiku | — | Bright orange cochonnet; arrow only while the human aims, fading after the throw |
+| D18 | done | haiku | — | No target marking for AI throws (boules or cochonnet) |
+| D19 | done | haiku | — | Roll guide over-predicts low throws (same perceived-terrain bias D16 fixed for the AI) |
+| D20 | done | haiku | D13 | Centre the "who throws" choice on screen |
+| D21 | done | sonnet | D13 | Simpler, steadier roll guide: a gist of direction and distance, flaring with uncertainty |
+| D22 | done | sonnet | D13 | Tune tactics: defensive when down on boules, and rebalance difficulty and teams |
+
+### D00 Invalid jack: the other team places it (sonnet)
+Current rule (FIPJP): if the jack throw is invalid (out of bounds, closer than 6 m, further than 10 m, or within 1 m of a line), the opposing team places the jack by hand anywhere valid. The team that threw the jack still plays the first boule. Replace the current hand-over (other team throws again):
+- **rules.js:** an invalid `jackThrown` moves to a new phase `'jackPlace'` with `placingTeam = 1 - event.team`, keeping `jackTeam = event.team`. A new event `{ type: 'jackPlaced', team, jack }` must come from `placingTeam` and be valid (otherwise it is ignored). It then moves to `'play'` with the jack set and `jackTeam` unchanged. Update tests.
+- **AI placing:** a pure helper in `ai.js`, `chooseJackPlacement({ match, player, difficulty, rand, terrain })`, picks a valid spot that suits its team: a distance and lateral position the placing team's pointeur likes, away from big rocks and slopes it can see on the perceived terrain, with a little randomness. Show a short line ("Odette places the cochonnet at 7.5 m"), then place it with a small drop animation.
+- **Human placing:** when it's team 0's turn to place, the human clicks or taps on the court. While hovering or dragging, draw a marker on the ground: a green circle where the spot is valid, a red X where it isn't, and the legal-zone arcs. A click or tap on a valid spot places the jack; on an invalid spot it does nothing except a short status hint. Keyboard: arrows move the marker, Enter places. Put the pointer handling in toss.js as a `'place'` phase (callbacks `onPlacePreview({ point, valid })`, `onPlace(point)`), or in a small new module, and the marker drawing in render.js (`setPlaceMarker({ x, y, valid } | null)`).
+- **Status line:** when the jack is invalid, explain why ("Too short: 5.2 m. Marcel & Odette place the cochonnet.").
+- Keep `?debug&autotest` working, and add `?debug&jackplace` that forces an invalid human-team jack so the human placement UI shows, plus `?debug&jackplace=ai` for the AI placing.
+
+### D01 Full-window game view (sonnet)
+After the setup screen's Start, the game takes over the whole browser window: the canvas and all game UI (scoreboard, whose turn, chooser, buttons, status line, mène and game-over panels, toss readout) fit inside the viewport with no page scrolling, on desktop and on phones in portrait and landscape. Use a fixed full-viewport layer (or the Fullscreen API where available, with the fixed layer as fallback), `100dvh` sizing, and safe-area insets. Overlay the HUD on the canvas or lay it out compactly around it. Keep a clear way out: an Exit or Menu button and Esc go back to the normal page. The site header and footer stay hidden while playing. Respect `prefers-reduced-motion`. Check with screenshots at 1200×800, 1440×900, 390×844 and 844×390 that nothing scrolls and nothing is cut off.
+
+### D02 Throw energy limit (sonnet)
+Very high, very accurate lobs are unrealistic and make the game too easy. Add an internal energy budget for a throw: the launch speed (or kinetic energy) a player can deliver with good control, per player in `SKILL` (Odette and Pierre a bit stronger as tireurs, Marcel less). When a toss needs more than the budget (a high lob to a far donnée), pull the donnée toward the thrower along the aim line until the throw fits. Do it live in the preview, so the donnée marker visibly slides closer as you pull for more loft, and show it in the readout (e.g. "max reach"). Also make the cone grow with loft more strongly, and with the fraction of the budget used: near-max throws are less accurate. Apply the same rule to the AI through `donnee.js` (candidates outside the budget get clamped or dropped), and to the human jack throw. Retune so a high plombée at 9–10 m is hard and risky. Re-measure human-vs-AI balance and jack legality.
+
+### D03 Hide the planned trajectory for AI players (haiku)
+Don't show the AI's arc, cone, ellipses or roll guide before it throws. Keep the short pause and the "Marcel picks his spot…" line, and optionally a small marker at its donnée. Remove the cone drawing from the AI turn path in `main.js`, and keep `?debug&aispot` working; it may show the arc only when debug is on.
+
+### D04 Make the cochonnet easy to see (sonnet)
+At 6–10 m the jack is a few pixels. Try and compare, with screenshots, at least:
+- a bouncing arrow or chevron floating above the jack (camera-facing sprite, gently bobbing, constant screen size);
+- a soft ring or halo on the ground around it;
+- a slightly brighter or emissive material.
+
+Optionally try a narrower field of view or an adjusted shoulder camera, but keep the aim view usable. Pick the clearest that doesn't clutter the scene, show it in the shoulder, head and flight views, and hide or fade it when the camera is close to the jack. Make it work on phones.
+
+### D05 Rolling sound as pebble ticks (sonnet)
+The rolling sound still reads as white noise. Replace the continuous filtered noise with sparse, very quiet, dry ticks of the boule against pebbles. Their rate follows rolling speed, with slight random timing and pitch, and an occasional slightly louder tick when the physics reports a stone contact. Keep it near silent overall: barely audible under the landing and collision sounds. The jack's rolling ticks are lighter and higher. Put the tuning in `SOUND.roll` and update the `?debug&sounds` audition buttons.
+
+### D06 Out of bounds on every side (sonnet)
+A ball is out of bounds when, seen from above, the whole ball is outside the string line on any side: left, right, front (far end) or back (behind the circle). Verify `physics.js` applies this on all four sides with tests, including balls that roll back toward the circle, and make sure nothing (terrain padding, boards, clamping in `terrain.sample`) stops a ball reaching or crossing a line. When a boule goes out, it stops being simulated (dead, as now) and is moved to the far end of the court, just beyond the far string line, lined up neatly so dead boules are visible and don't clutter the play area. A dead jack follows the existing dead-jack rules; move it there too if the mène continues. Update scoring and measuring so dead balls are never counted. Update the renderer so dead balls show at their new spot, perhaps slightly greyed.
+
+### D07 Measuring lines and scoring circle (sonnet)
+- **Between throws:** during the interstitial camera moves (after a throw settles and before the next aim), show measuring lines from the cochonnet to the closest boule of each team, labelled with distances. Use the team colours, and clear them when aiming starts.
+- **At mène end:** the camera shows a transparent filled circle on the ground, centred on the jack, just large enough to contain every scoring boule. Each scoring boule is numbered 1, 2, 3… in order of closeness. Show the opponent's best boule just outside the circle, unnumbered, for comparison. Fit the camera so the circle and numbers read clearly, and make sure the mène-end card doesn't cover them (move the card or shrink it).
+
+### D00 notes
+- Invalid jack → `'jackPlace'` (rules.js `jackFault()` gives the reason); the other team places it on a wide overhead view with the 6/10 m arcs; green ring = valid, red X = invalid; AI shows its marker ~2 s with a personality line; the jack drops 10 cm and play resumes with the original thrower's team. Debug: `?debug&jackplace`, `?debug&jackplace=ai`, `&jx/&jy`, `&px/&py`, `&jphold`.
+- Not seen in a browser: the drop and the hand-back to play (physics test says it settles in ~1 s and moves < 2.5 cm). A rock under the chosen spot could nudge the jack on the drop.
+
+### D10 notes
+- Timbers 0.14 m square, 0.4 m outside the strings (`lumberGap`), exported as `LUMBER`; restitution 0.35. Out balls become ghosts (`dead` + `ghost`), collide only with ground, stones and timbers; outside the timbers μr = 0.8 with heavy landing loss; a ghost still moving after 3 s (`ghostMaxTime`) is stopped. In AI sims an out ball stops on the spot (keeps decisions ≈ 50 ms). `terrainPad` is now 2.5 m. D11 helpers: `deadRowSlot(i)`, `deadJackSpot()`, `placeDeadBall()`. New `lumber` physics event (no sound yet). `?debug&lumber` scene.
+- Not done: the ground beyond the timbers still reads much like the court gravel (darker earth tint is subtle; soft diagonal patches); string lines are flat at z = 0.012 and break up over terrain bumps (old issue); a ghost stopped by the 3 s timer can overlap a live boule until D11 fetches it; timber collision isn't swept (fine below ~30 m/s); `?debug&timerframes&play` now hangs headless Chrome (use `?debug&play` with a 4–8 s budget).
+
+### Void mène investigation (2026-11-01)
+- The user saw a void mène whose card measured a boule to a jack sitting in the court. Since D10, a dead (ghost) jack bounces off the timbers and can come to rest back inside the strings (6 of 160 simulated side knocks), looking alive; by the rules it stays dead and the mène is void when nobody has boules left. In 12 headless AI matches both voids were dead-jack voids. The user's card showed the live-jack text, which the code shouldn't produce for a dead jack, so the cause there is unconfirmed (possibly a page mid-reload, or a human-only path). The card now states the void reason and logs `[void mène]` details to the console; an unexplained void logs a warning. D11 (fetching dead balls) also removes the confusing dead jack from the court.
+
+### D01 notes
+- Start/Resume enters a fixed full-viewport layer (plus requestFullscreen where allowed); Exit or Esc returns to the page with a "Game paused" bar (Resume / New game). Debug sliders and "Throw (raw)" removed at the user's request; `?debug&play` enters the layer for screenshots; the sounds audition panel is a collapsible drawer.
+- Not done: `viewport-fit=cover` isn't set (iOS letterboxes instead of using the notch area; setting it in baseof.html affects every page). While paused, AI timers still run, so an AI throw can launch and sit frozen until Resume. On phone landscape the mène-end card and first-time hint cover a fair share of the court (D07 reworks the card).
+
+### D02 notes
+- Effort = launch speed × loft weight (0.76 at 8° → 1.55 at 75°) against `SKILL.*.maxSpeed` (human 11.6, Marcel 11.3, Odette 12.4, Pierre 12.2). Human reach: demi-portée to 10 m fine; 60° tops out ≈ 8.4 m, 65° ≈ 6.3 m, 70° ≈ 4.6 m.
+- Cone: lateral ×(1 + 0.25·t), long ×(1 + 0.85·t) with loft fraction t, all × (1 + 9·max(0, energyFrac − 0.7)²). Coverage test unchanged. `difficultyScale` now 2.3 / 1.35 / 0.65.
+- AI jack legality on Easy fell to 82% (Medium/Hard ≈ 97%). The "Max reach" status line isn't cleared when you unclamp. The main.js preview hook (`fitToss`) was committed with D01 because both edited main.js at once.
+
+### D09 Flight camera follows all moving objects (sonnet)
+Today the flight camera tracks only the thrown boule. Instead, while anything is moving, frame every moving body: the thrown boule, any boule it knocks, and the cochonnet.
+- Each frame, gather the live bodies that are airborne or rolling above a small speed threshold, plus the thrown boule until it settles. Fit the camera (position, target and distance) so all of them stay in view with a margin. Smooth it with damping and limits on pan, zoom and rotation speed, so it never jitters or jumps when a body starts or stops.
+- If the cochonnet is moving fast (above a threshold, or projected to reach a string line), make it the primary focus. Aim at where it is heading (current position plus velocity times a short look-ahead, clamped near the court bounds), so the viewer sees whether it goes out of bounds. Keep the other moving boules in frame when possible, giving the jack priority when they can't all fit.
+- When everything has stopped, hand over smoothly to the head view as now.
+- Keep the camera above the ground and outside characters, keep the court orientation readable (no flipping behind the play), respect `prefers-reduced-motion` (fewer, gentler moves), and work on phone aspect ratios.
+- Put the logic in a pure helper (e.g. `frameMoving(bodies, jack, aspect, fov, prev) → { target, distance, yaw, pitch }`) with tests: one boule tracked; two diverging bodies both in view; a fast jack chosen as primary; and smoothing that bounds the per-frame change.
+- Add a debug path that scripts a shot knocking the jack hard, e.g. `?debug&jackshot`, and check it with screenshots or a short frame sequence.
+
+### D10 Lumber surround and ghost out-of-bounds balls (sonnet)
+Replaces D06's instant relocation of dead balls.
+- **Lumber:** 6×6 timbers (actual 0.14 m × 0.14 m) round the whole court, outside the string lines, with a gap of about 0.3–0.5 m between line and timber. Pick the distance so a ball can clearly be out before it reaches the wood. Make it a constant. Render it as weathered wood (a procedural grain texture, slightly uneven tops, butt joints at the corners), casting shadows. Extend the terrain or ground plane outside the timbers.
+- **Out-of-bounds physics:** when a ball goes out (whole ball past the string, as now), it turns grey at once and becomes a ghost. It keeps being simulated against the ground, stones and the lumber, but no longer collides with any live boule or the cochonnet, and live balls pass through it. It doesn't affect scoring, measuring or the AI.
+- **Lumber collisions:** ghosts and live balls bounce off the timbers (box collision with sensible restitution, about 0.3–0.4 for wood, plus friction). A live ball can't reach the timber without first being out, so in practice only ghosts hit it. A thrown ball that flies over the timber lands outside it and keeps rolling. Out there the ground has strong drag (a high-rolling-resistance zone), so it stops within a metre or two.
+- **Settling:** a throw is settled when every body, ghosts included, is at rest (or a ghost has rolled for more than ~3 s). Dead balls stay where they stop; D11 has the players carry them away.
+- Update `physics.js` (static lumber boxes, ghost flag, outside drag zone), `terrain.js` (ground outside the timbers), `render.js` (lumber, ghost look), and the tests: ghosts pass through live balls, bounce off timbers, stop quickly outside them, never count, no NaN. Remove D06's relocation, and drop its tests where they no longer apply. Keep AI sims (`world.clone`) consistent.
+
+### D11 Players fetch dead balls and place the cochonnet (sonnet)
+Design principle (GAME-PLAN §10): simulate how people really move about during a game, walking to things, picking them up, handing them over, rather than objects teleporting.
+- **Fetching:** after a throw settles, the thrower's teammate (or the thrower if alone) walks to each dead ball that has come to rest. They bend and pick it up (the ball attaches to the hand), then carry it to its place:
+  - a dead boule goes to the row of out-of-play balls just beyond the far string, set down in its slot;
+  - a dead cochonnet goes to the player who will place it (D00 rules), handed over hand to hand.
+  Use `walkTo`, a new bend/pick-up and put-down pose in `character.js`, and the hand position.
+- **AI placing the cochonnet:** the placing character walks out to the chosen spot, crouches, sets the jack down (attached to the hand until release), and walks back.
+- **Human placing:** after the click, the human's character walks out and places it, and the human can skip the walk. Keep the game responsive: the next throw may start while the fetcher is still walking back, if they're out of the shoulder view.
+- **Timing:** walks at a natural pace (about 1.2–1.5 m/s), skipped or sped up in `instant`/autotest and under `prefers-reduced-motion` (teleport with a short fade). Characters avoid walking through the court's live boules where cheap (step around or along the side), and step over the lumber.
+- **Camera:** stays on the head or follows the fetcher loosely while a fetch runs; never blocks the human's next aim.
+- Add a `?debug&fetch` path that scripts a boule and a jack going out, and check the walk, pick-up and carry with a few frame screenshots.
+
+### D12 Paused game: frozen, sepia, UI inert, free orbit camera (sonnet)
+When the game is paused (Exit in the game, or Esc, per D01):
+- **Freeze everything:** the physics step, character animation and walks, AI thinking and its timers (D01 noted AI timers keep running while paused), throw-reveal sleeps, reaction cuts, camera transitions and audio (suspend the context or stop scheduling ticks). Resume continues exactly where it stopped, with no time jump. Use one pause clock or gate that every timer and sleep in main.js goes through, rather than ad-hoc checks.
+- **Sepia:** render the 3D scene in sepia (a post-process pass, or a full-screen shader quad over the frame; keep it cheap) and the game UI too: the scoreboard, buttons, dock and toss readout, via a CSS `filter: sepia(…)` on the game layer, so the whole game reads as a paused photograph. The page's paused bar (Resume / New game) stays in normal colour and fully interactive.
+- **UI inert:** game widgets don't respond (`inert` attribute or `pointer-events: none` plus `tabindex=-1`), and the toss input is off.
+- **Free camera:** any drag on the scene orbits the camera around a point on the ground (the point under the screen centre when the pause began, or the jack). The wheel or a pinch zooms toward that point. Clamp it to stay above the ground and within a sensible distance. On Resume the camera eases back to where it was before the pause.
+- Respect `prefers-reduced-motion` (no animated sepia fade). Check that the paused game shown on the normal page (not full window) still looks right.
+- Add `?debug&paused` to enter the paused state for screenshots. Tests for the pause clock: timers don't fire while paused, and fire with the remaining delay after resume.
+
+### D13 AI tactics system (sonnet)
+Today the AI picks a throw by Monte Carlo over candidates, scoring each end state, plus a few hand-tuned bonuses (shoot bonus, style preferences). It has no real game sense. Build a coherent tactics layer.
+
+**Step 1: design (write it before any code).** Add a "Tactics" section to GAME-PLAN.md and get it reviewed (the orchestrator shows it to the user before step 2). It must cover:
+- **The situation the AI reads:** score and target, mène number, who holds the point and by how much, boules in hand for each team (the boule advantage), boules on the ground and their spread, the jack's position and risk (near a line, could be shot out), the player's role, skill and personality, and who's left to throw on each team.
+- **The decisions:** point vs shoot vs shoot the jack (*tirer le bouchon*). Which boule to shoot. Where to point (in front of the jack as a "blocker", or behind it as a safety). Who on the team throws next (also used for Pierre's suggestion).
+- **Principles to encode**, each with a short rationale:
+  - **Boule advantage:** when down on boules compared with the other team, play defensively: point rather than shoot, and avoid gambling.
+  - **Up on boules:** you can afford to shoot or try for more points.
+  - **Shooting to bring in more:** shoot an opponent boule when it would bring your more distant boules into scoring, or remove several of their points.
+  - **Risk to your own boules:** don't shoot when a miss or a carreau-gone-wrong could knock away your own good boules, or move the jack toward the opponent's boules.
+  - **Last boules and score pressure:** near 13, or with the last boules of the mène, value securing a point over a big gamble. Facing a big loss, consider shooting the jack out to void the mène, which only works if the other team has no boules left.
+  - **Placing a defensive boule:** a boule in front of the jack can block, or one behind it covers a shot jack.
+- **The architecture:** how tactics plug into the existing Monte Carlo. Options: tactics set candidate weights or priors and a risk-aversion level, and the evaluator scores end states with tactics-aware terms such as expected points this mène, the boule advantage after the throw, and the probability of losing the point. Keep the decision explainable, so it can feed commentary ("Odette shoots — we're up on boules").
+- **Personality and difficulty:** e.g. Marcel cautious and Pierre reckless; Easy makes more tactical mistakes, Hard plays near-optimally.
+- **Testing:** a scenario test table, each a fixed court state with the expected decision (point or shoot, target), plus full-match statistics: AI vs AI and AI vs a scripted human, win rates by difficulty, and the mix of decisions.
+
+**Step 2: implement** the agreed design in `ai.js` (or a new `tactics.js`), with scenario tests and updated measurements. Make sure decision time stays within budget (medium ≤ ~50 ms), and that Pierre's suggestions and the commentary use the tactical reason.
+
+### D14 Placed cochonnet: legal region runs out to the strings (sonnet)
+After a bad initial throw, the placing team may put the cochonnet anywhere 6–10 m from the circle, right out to the string lines, without the 1 m margin that applies to a thrown jack. Keep the thrown-jack validity rule (`jackValid`, with its 1 m margin) unchanged.
+- **Rules:** add a placement validity check (e.g. `jackPlaceValid`): 6–10 m from the circle centre, with the whole jack inside the strings, and no margin. `jackPlaced` uses it. Tests for spots near each side string, just inside and just outside.
+- **Rendering:** during placement, draw the legal zone across the full court width. The 6 m and 10 m arcs run string to string, optionally with a faint fill between them, clipped to the strings. Draw the green ring and red X per the new rule. Don't change the zone drawn for the thrown jack.
+- **AI placement:** `chooseJackPlacement` may use the full width, but keeps its personality preferences.
+- **Physics near the edge:** a jack placed near a string must stay exactly where it was put, not glance off a pebble or roll on a slope out of bounds. When placing, settle the ground locally: remove stones within ~0.15 m of the spot, and flatten the height field in a small radius (a gentle local "pad" blended into the surroundings, recorded like a divot so it resets each mène). Then set the jack at rest directly, without the drop bounce, or keep the drop and guarantee no lateral motion. Test that a jack placed 1 cm inside a string on a steep seeded terrain stays put and stays live.
+- `?debug&jackplace` should show the full-width zone.
+
+### D15 Surroundings: grass, trees, Seattle skyline (sonnet)
+Give the court a Seattle park setting.
+- **Grass:** replace the dark earth beyond the timbers with grass. Use a procedural grass texture (varied greens, a little noise and clover patches) on the ground out to the horizon, plus a band of instanced grass tufts or blades close to the timbers for depth. Keep it cheap: instanced, with few triangles, and fewer tufts on phones. Leave a strip of worn, bare earth right next to the timbers where people walk. The grass is visual only; the physics outside the timbers stays as D10 set it.
+- **Trees:** a few trees nearby (e.g. 4–8, set back 4–15 m from the court, not blocking the shoulder or head views). Mix Pacific Northwest conifers (Douglas fir, western red cedar shapes) with one or two broadleaf trees (bigleaf maple). Low-poly and stylised to match the stick figures, built procedurally in code (cones, icosahedra, simple trunks) with gentle colour variation. They cast soft shadows; optionally add a slight sway.
+- **Sky and skyline:** a sky background (a large cylinder or sphere, or `scene.background` with an equirectangular canvas texture) painted procedurally on a canvas at runtime. It has a soft Pacific Northwest sky gradient with light clouds, Mount Rainier (a broad, snow-capped stratovolcano silhouette, hazy with distance) and a Seattle skyline with a recognisable Space Needle silhouette (the saucer top on a tapering waisted tower) among generic downtown towers. Place them in the direction the shoulder camera usually faces (down the court), so Rainier and the Needle show in the background of normal play. Don't use photos or third-party images, so there are no licensing questions. Match the haze and fog colour to the sky, and the sun direction to the existing shadows. Make sure the skyline reads at phone resolution.
+- **Performance:** keep the frame rate on phones (pixel ratio ≤ 2), use texture sizes around 2048×512 for the panorama, and don't add per-frame cost beyond the instanced grass.
+- Check with screenshots from the shoulder view (Rainier and the Needle visible beyond the court), the head view, and a phone portrait view.
+
+### D16 Investigate short AI throws and Pierre's missed shots (sonnet)
+From play-testing: the AI sometimes throws very low balls that stop far short of the cochonnet, and Pierre misses most of his shots. Investigate first, report the findings with numbers, then fix.
+- **Reproduce and instrument:** add a `?debug&ailog` mode (and a Node harness) that logs, for every AI throw: the player, difficulty, intent and style, planned donnée and loft, the release point the plan used vs the release point the throw actually used (character hand vs `releasePoint`), whether `fitToBudget` clamped it and by how much, `energyFrac`, the sampled cone error, the actual landing spot, the final rest position, and the distance to the jack or target. Collect a few hundred throws from Node AI-vs-AI matches with the real `executeThrow` and release points.
+- **Suspects for short low throws:**
+  - Plan vs execution mismatch in the release point: the AI plans with one `from`, but the character's real hand position (crouched, low) is used at launch.
+  - `fitToBudget` pulling a donnée much closer than intended, which then still gets thrown.
+  - Roulette or low-loft candidates on rough gravel, where the roll-out table (flat terrain) overestimates the roll.
+  - The energy penalty inflating the longitudinal sigma.
+  - A candidate chosen because every other candidate scored worse (e.g. clamped options dropped).
+  - Bugs in the roll-out lookup or in `predictRoll` refinement.
+
+  Measure planned rest point vs actual for each style and find which cause dominates.
+- **Pierre's shooting:** measure Pierre's shot rate (how often he chooses to shoot), hit rate (target moved), carreau rate and outcomes, against Odette's. Check his SKILL (lateral sigma for a tir at ~7–9 m vs the boule's 7.5 cm width), his shoot bonus and `stylePref`, the tir aim point (`SNAP_SHORT`, landing just short), the energy budget and penalty for a fast shot, and whether he shoots from situations where a hit is unlikely (long distance, partly hidden target). Decide whether he should shoot less often, aim better, or both. A tireur should hit roughly 40–60% at Medium and more at Hard, with Pierre slightly below Odette.
+- **Fix** the causes found, keep human-vs-AI balance roughly as tuned in D02, and add regression tests: planned vs actual rest within tolerance on flat terrain for each style, no AI throw ends more than ~2 m short of its intended rest on flat terrain without a physics reason, and tireur hit rates in range.
+- Report before/after tables.
+
+### D17 Bright orange cochonnet; arrow only while the human aims (haiku)
+Follow-up to D04.
+- **Colour:** make the cochonnet bright orange (e.g. `#ff7a00`, with a slight emissive boost so it stays vivid in shade) instead of yellow, in every view. The dead or ghost jack stays greyed.
+- **Arrow:** show the chevron only while the human player is aiming or tossing: from the start of the human's aim phase (turning, placing the donnée, pulling for loft) until release. Hide it during AI turns, the flight, settling, reactions, mène end and jack placement, unless placement is by the human; decide what reads best. After the human releases the throw, fade it out over ~0.4 s, or instantly under `prefers-reduced-motion`.
+- **Never while the cochonnet is being thrown:** the arrow is a guide for the human aiming a boule at the jack. Hide it whenever the cochonnet itself is in the air or rolling (a human or AI jack throw), and during the jack throw's aim and toss phase, when there is no jack to point at.
+- Implement it as a `renderer.setJackArrow(visible)` (or similar) toggle that `main.js` calls at the start of the human aim and on release. Keep D04's distance fade and the hide rules (inspect, measuring, dead jack). Update `?debug&jackvis` if needed.
+- Check with screenshots: human aiming (arrow on), an AI turn (no arrow), and just after release (fading or gone).
+
+### D18 No target marking for AI throws (haiku)
+D03 hid the AI's arc and cone but kept a small donnée ring on the ground. Remove the AI's target marking entirely, for both boule and cochonnet throws: no donnée ring, no snapped-target marker, no preview of any kind. Keep the short pause and the "Marcel picks his spot…" line. Also hide the yellow legal-zone arcs during the AI's jack throw (they only help a human aiming). Keep `?debug&aispot` showing the full preview for debugging. This is a small change in `main.js` (`showAiSpot`); check with an AI-turn screenshot that nothing is drawn before the throw.
+
+### D16 notes
+- Root cause of short throws: the AI planned on the perceived terrain, which has no ground jitter, so roulettes were predicted to roll 2–3 m too far (Medium roulettes landed 1.9 m short on average, 85% of them over 1 m short). The fixed-step refine search also oscillated. Fixed with a low-loft roughness allowance (`AI.roughK`) and a secant refine. Medium roulettes now average 0.25 m short, and 8% are over 1 m short. Release point, budget clamps and the energy penalty were ruled out.
+- Pierre shot 78% of the time and moved the target 20%: poor tir aim (32°, 0.45 m short), a flat +0.6 shoot bonus, and a lateral sigma close to the contact width. Fixed with a 22° tir aimed 0.6 m short plus a closer option, `AI.minHit` (40% simulated hit rate to shoot) with the bonus scaled by hit rate, and slightly tighter Pierre and Odette skills. Medium tireur hit rates are now 32–46%, Hard 62–72%, with Pierre below Odette.
+- Knocked-jack report: no stale jack found in the committed or the new AI; a regression test moves the jack and checks the plan follows it. The user's game was likely running D16's mid-edit code.
+
+### D15 notes
+- `scenery.js`: tileable grass texture, instanced tufts (7000 desktop / 2200 phone), 8 low-poly trees (Douglas fir, cedar, maple), and a 2048×800 runtime-painted panorama on an inside cylinder spanning 140° around +y (Rainier ~12° left of down-court, downtown and the Space Needle right of centre). Fog pushed to 30–170 m; the terrain mesh eases down to the grass plane 1–1.9 m outside the timbers (visual only).
+- Not done: on desktop the shoulder camera sees only ~9° above the horizon, so the top HUD covers Rainier's summit and the Needle's saucer (fine on phone portrait). Fix by lowering or compressing the skyline vertically, or tilting the shoulder camera up slightly. Tree sway skipped.
+
+### D07 notes
+- Between throws: team-coloured ribbons from the jack to each team's closest live boule with edge-to-edge cm labels; cleared on aim or launch. Mène end: a translucent circle in the scoring team's colour sized to the farthest scoring boule (trimmed so the best rival sits just outside), numbered badges by closeness, the rival ringed with a grey cm label; the head view frames it above the card, and the gather cut is skipped while it shows. `?debug&measure` scene.
+- Not done: a between-throws label placed "beyond the boule" along its line can end up next to a different boule (seen in the debug scene); badges can overlap a neighbour in very tight mènes; the centred game-over card still covers the circle; landscape phones untested.
+
+### D19 Roll guide over-predicts low throws (haiku)
+The human's roll guide (`predictRoll` in donnee.js) simulates on `terrain.perceived()`, which has no ground jitter, so it over-predicts how far roulettes and low demi-portées roll. This is the bias D16 found for the AI. Apply the same low-loft roughness allowance D16 added in ai.js (`roughness()` / `AI.roughK`; move the helper into donnee.js so both share it) to `predictRoll`. Test that the predicted rest for 14° and 30° throws on seeded gravel matches the mean real rest within ~0.3 m, and leave plombée unchanged.
+
+### D20 Centre the "who throws" choice (haiku)
+The You throw / Pierre throws choice is a critical decision, but in the full-window layout it sits in the bottom-left strip. Make it a centred card over the court: a short heading ("Your team to play"), Pierre's suggestion (D13 adds who he thinks should throw), and two large buttons, "You throw" and "Pierre throws", with the suggested one visually marked (e.g. a "Pierre suggests" tag), not pre-selected. Focus moves to the card for keyboard users; Enter or Space activates and arrow keys switch. Keep the court visible behind it with a translucent backdrop. It must fit on phones in portrait and landscape. The card closes as soon as a choice is made. Remove the old strip version. Depends on D13 because D13 changes the suggestion text in `hud.js`.
+
+### D20 notes
+- Centred card over the court (heading, Pierre's suggestion, two large buttons, "Pierre suggests" tag on his pick, focus and arrow keys); old strip removed. The one-line `hud.setSuggestion(text, who.id)` call in main.js was committed with a later main.js change. Keyboard use not tested in a browser.
+
+### D12 notes
+- `clock.js` pause clock (frame-driven; sleep/later/cancelAll) with tests; main.js routes waits, AI min-think, reactions and the AI decision through it; pausing freezes physics, characters and rolling audio, sets `inert` on the game widgets, turns the toss off, draws the scene in sepia (render-target shader pass) and the widgets via CSS, and lets drags orbit and zoom around a ground point, easing back on resume. `?debug&paused`. Committed in two parts: standalone files first, main.js/render.js wiring with the next shared-file commit.
+- Not checked: the paused bar staying in colour, the inert widgets, the orbit and zoom, and reduced motion. The agent ran the 19:22 stash/pop; all agents were told to check their edits.
+
+### D14 notes
+- `jackPlaceValid` / `jackPlaceFault` (6–10 m, whole jack inside the strings), `terrain.settleSpot` (stones within 0.15 m removed, 0.35 m pad flattened, reset with divots), placed jack set at rest with no drop; `chooseJackPlacement` searches the full width; the placement zone is drawn string to string with a faint fill. Committed in two parts (rules/terrain/tests first; ai.js, render.js, main.js with the shared-file commit).
+- Not done: removed stones stay drawn (meshes built once); the pad isn't shown in the ground mesh (a few mm); small skewed triangles where the fill is clipped at the strings.
+
+### D22 notes
+- The "shoots more when down" figure was mostly a measurement artefact (down-and-not-holding courts have boules worth shooting; up-and-holding ones don't), plus real bugs: appetite divided the downOnBoules penalty (Pierre and Odette barely restrained), and the gate and prior were too weak. Fixed: shoot gate +0.6 per boule down, prior −0.4 per boule down, appetite no longer weakens it. Medium, 100 matches, "shoot% when a shot is on": down 24–28%, even 29%, up 38–44% (Hard 24–30 / 42 / 45–48). Easy shows no trend by design (half-weight boule advantage + 30% errors). New seeded trend test.
+- Balance (100 matches, AI team vs a pointer that now plans with `planPoint`): Easy 38%, Medium 46%, Hard 71%, via `DIFFICULTY.*.skillMul` (0.85 / 1.4 / 2.0) in tactics.js stacked on donnee's `difficultyScale`. Follow-up: fold `skillMul` into `difficultyScale`. Hard is now looser than D16's Hard accuracy. Hard v Hard 68% for Marcel & Odette, 53% with a symmetric harness: the rest is the skill table (Pierre looser than Odette) and the human stand-in, not an AI fault.
+- Scenarios: Marcel shoots in scenario 4 (60% of seeds at Hard); Odette shoots the jack in scenario 9 (~90%); Marcel also shoots the jack in scenario 9 (it is right there), and points in a two-point variant. `npm test` ≈ 6–9 s. Also commits D14's full-width `chooseJackPlacement`.
+
+### D11 notes
+- `fetch.js` (pure route planning around live boules, high-step over timbers, where to stand for a pick-up) with tests; character.js bend/pick-up/put-down (`playBend`), carrying, a `give` stance and waypoint walks. After a throw settles the thrower's teammate fetches each dead ball to `deadRowSlot`/`deadJackSpot`; a failed cochonnet is fetched and handed to the placer, who walks it out and sets it down (the human can skip their walk). `nextTurn` waits up to 20 s while a fetcher is in view (click or key skips). Instant mode teleports; reduced motion teleports after ~0.4 s (no fade yet). `?debug&fetch` with `&fetchat`, `&followc`, `&fetchcam`.
+- Not seen in a live game: the full real-time flow (only the scripted scene). The placer's put-down with the tiny jack in the fist wasn't visible; the camera only loosely follows a dead-ball fetch and stays wide during the jack hand-over; mesh figures untried.
+
+### D09 notes
+- `camera.js` `frameMoving`: airborne bodies, rolling > 0.05 m/s and the thrown body until it settles (ghosts at weight 0.3 while rolling); a jack faster than 2 m/s or heading out within 1 s becomes primary with look-ahead (≤ 3 m); distance ≤ 16 m, yaw ±0.6, pitch 0.12–0.95, ≥ 0.4 m above ground; capped springs, slow zoom-in. The flight mode uses it when given `bodies`. `?debug&jackshot` (`&jspeed&jloft&jyaw`) and `&freezeat=T`. Committed in two parts.
+- Not seen in a browser: the jack becoming primary after a strike (verified in a Node sim and tests; the browser shot's seed differs). The thrower's body fills early flight frames from behind the circle (unchanged from before).
+
+### D21 notes
+- `predictRollBand`: 17 noiseless sims across the cone, smoothed to 25 points, half-widths and a rest ellipse, cached; recomputed only after 5 cm / 1° and eased over 150 ms; drawn as nested translucent orange strips with a dashed centre and a faint rest ellipse. Mean rest within ~0.1 m of real at 14°/30°/55°. Committed in two parts like D12.
+
+### D21 Simpler, steadier roll guide (sonnet)
+Today the roll guide traces one noiseless simulated path on the perceived terrain. Every pebble and slope bends it, so it draws a complex wiggly shape that jumps with every pixel of drag. Replace it with a gist:
+- **Shape:** a smooth, gently curved band from the landing ellipse to the expected rest point, showing roughly where and how far the boule will roll. It flares out toward the end to show the spread of likely rest positions (e.g. a soft wedge or teardrop ending in a small rest ellipse). No pebble-by-pebble wiggles.
+- **Computing it:** run a handful of jittered sims (e.g. 8–12 across the landing cone and terrain jitter, cheap and cached) or use a smoothed analytic roll-out (direction from the throw and the large-scale slope, distance from the roll table with D19's roughness allowance). Draw the mean path, smoothed, plus the spread of rest points. Keep it under a few ms per update.
+- **Stability:** the guide must change smoothly as you drag. Debounce or throttle updates (e.g. recompute when the donnée moves more than ~5 cm or loft changes more than ~1°), interpolate between results, and keep a fixed random seed per throw so it doesn't flicker.
+- **Looks:** keep the orange-dashes palette but as a soft translucent band with a dashed centre line and a faint rest ellipse, readable from the shoulder view, distinct from the cone.
+- It depends on D13, which touches `predictRoll` in `donnee.js` for D19. Tests: the band's mean rest is within ~0.3 m of the average real rest on seeded gravel for 14°, 30° and 55° throws, and a 1-pixel drag changes the drawn rest point by at most a few cm.
+
+### D13 notes
+- Built: `tactics.js` (situation model, candidate families with priors and reasons, analytic shot pruning, risk λ, evaluator and dead-jack payoff, personality and difficulty tables with 30/8/2% tactical errors, `explain`, `whoThrows`, Pierre's 50/50 advice blend); `ai.js` successive halving with a 40 ms Medium time guard, decisions return `why`/`family`/`who`/`alt`; `why.*`, `suggest.*`, `who.*` line pools; Pierre's chooser suggestion names who should throw; the AI side picks its thrower with `whoThrows`. Medium decision ≈ 24 ms (scenario courts). Tests: `tactics.test.js` (static checks and the §12.8 scenarios), harness `measure-tactics.js`. `match.test.js` now runs 2 seeds with a 40 s limit (flaky under heavy load).
+- Deviations from §12 are listed in the D13 report: boule advantage measured before the throw, HOLDER_BONUS 0.25, R3 raises the removal gain, blockers only when something is on the ground, errors never shoot the jack, scenario 7/9/12 tweaks, EPnet tuned on scenarios rather than fitted to rollouts.
+- Statistics (20 matches per row, noisy): AI team vs scripted pointer won 90% at Medium (old AI 75%), 70% Easy, 90% Hard; vs shooter 95%, vs tactician 35%; Hard v Hard 90% for Marcel & Odette (teams asymmetric). Voids 1–5%. Shot target-moved: Pierre 40%, Odette 43%, Marcel 46%.
+- **Wrong:** the AI shoots more when down on boules (~25%) than when up and holding (9–13%), the opposite of the core principle.
+
+### D19 notes
+- Roughness helper moved to donnee.js and applied in `predictRoll`: 14° roll guide error +1.69 m → −0.08 m, 30° +0.34 → −0.26 m, plombée unchanged.
+
+### D22 Tune tactics (sonnet)
+Fix and tune the first version of the tactics system (D13 notes):
+- **Down on boules → defensive:** the AI currently shoots more when down on boules than when up. Find why (e.g. boule advantage measured before the throw so even hands read zero, the removal-gain gate, the λ sign, the "up on boules" prior scaling) and fix it so shoot rate falls clearly when down on boules and rises when up, as in GAME-PLAN §12.3. Add a statistical test for the trend.
+- **Balance:** with ≥100 matches per row on a quiet machine, target AI-team win rates vs the scripted pointer of ~30–45% Easy, ~50% Medium, ~60–75% Hard (or matched to a scripted "reasonable human"), and Hard v Hard ≈ 50% (find the team asymmetry: Pierre's skill, the human seat's stand-in, or the jack team).
+- **Scenario fidelity:** make Marcel point in scenario 9 and shoot in scenario 4 per §12.8, and raise Odette's jack shot rate in scenario 9, or document why the design should change.
+- Keep `npm test` under ~15 s (move heavy Monte Carlo checks to measure scripts or reduce seeds).
+
+### D08 Round 3 review (sonnet)
+Run `npm test`, the build check and the full-match test, take screenshots on desktop and phone, review the code for bugs, and add a "Round 3 remaining issues" list at the end of this file.
+
+## Round 3 remaining issues
+
+D08 review (2026-11-02). Fixed in the review: debug match modes (`autotest`, `jackplace`, `aispot`, `humanturn`) started paused and an instant match never ran (they now enter the full-window view themselves); a drag to orbit the paused scene, or Esc, skipped the cochonnet walk or the fetch wait; a New game while paused re-enabled the toss; New game now also clears the placement marker, scoring flag, fetch gate, last thrower and chevron, and restores stones removed under a placed jack; removed stones are hidden (D14); between-throws labels avoid neighbouring boules and each other (D07); reduced motion fades fetched balls out and in (D11); trees sway slowly (D15); `?debug&paused` waits for the camera to settle; D22's `skillMul` is folded into `difficultyScale` (Easy 1.95, Medium 1.9, Hard 1.3; the tests pin the D02 values 2.3 / 1.35 / 0.65 for their scenario assertions); dead code in main.js removed (`dropping`/`onDropped`, `CAST_ALL`, unused imports and values).
+
+Not done:
+- The ground beyond the timbers still reads much like the court gravel; string lines are flat and break up over bumps; timber collision is not swept (fine below ~30 m/s); `&timerframes` hangs headless Chrome.
+- The pad flattened under a placed cochonnet is not in the ground mesh (a few mm); small skewed triangles remain where the placement zone fill is clipped at the strings.
+- `viewport-fit=cover` is not set (iOS letterboxes); phone landscape untested (mène-end card, hint and card sizes); the centred game-over card still covers the scoring circle; badges can overlap in very tight mènes.
+- On desktop the top HUD covers Rainier's summit and the Needle's saucer in the shoulder view (fine in phone portrait).
+- Mesh figures (`?figures=mesh`) were not tried with fetching, carrying or the cochonnet hand-over; the put-down with the tiny jack in the fist is hard to see; the fetch camera only loosely follows and stays wide during the jack hand-over.
+- The "Max reach" status line is not cleared when you unclamp.
+- Pierre is looser than Odette in the skill table, so Hard v Hard is not 50/50 (about 68% for Marcel and Odette).
+- A headless screenshot of the paused page showed the site header and title blank (the DOM and classes were correct), so check by eye that leaving the full-window view repaints the whole page.
+- Keyboard use of the who-throws card, and the paused view's orbit, zoom and reduced motion, are untested in a browser.
+- The void-mène report in the user's game (live-jack text on a dead-jack mène) is unconfirmed; the card logs `[void mène]` details to the console.
+
+A human should play-test:
+- Toss feel: the pull for loft, the energy limit and the "Max reach" message, shooting (press near a boule), and how forgiving Easy, Medium and Hard are for you.
+- Roll band usefulness: is the orange band readable and steady as you drag, does it match where boules really stop, and is it right to have it on by default only at Easy?
+- AI tactics and difficulty: does Medium feel fair (about 46% for the AI against the scripted pointer) and Hard hard (about 71%), do the players point when behind on boules and shoot when ahead, and do their spoken reasons match what they do?
+- Fetch pacing: how long fetching dead balls and carrying the cochonnet takes in real time, the wait before your turn while a fetcher is in view (click or key skips), whether the camera follows well, and the jack hand-over and placement.
+- Pause and orbit: Exit then drag and zoom (mouse and touch), Resume mid-throw, mid-fetch and while an AI is thinking, and New game from the paused bar.
+- Sound levels: the pebble-tick rolling, landings, timber hits (still silent: the `lumber` event has no sound), and the mute button.

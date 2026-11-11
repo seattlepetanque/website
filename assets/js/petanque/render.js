@@ -2,6 +2,9 @@
 import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
 import { mulberry32 } from './rng.js';
+import { LUMBER } from './physics.js';
+import { frameMoving, cameraFromFrame } from './camera.js';
+import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeSkyPanorama, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 
 const TRANSITION = 0.6; // seconds for camera moves
 
@@ -34,6 +37,47 @@ function gravelTexture() {
   return t;
 }
 
+// Weathered grey-brown timber: grain streaks run along u, with a few knots and splits
+function woodTexture() {
+  const W = 512, H = 128, cv = makeCanvas(W, H), g = cv.getContext('2d');
+  const rand = mulberry32(21);
+  g.fillStyle = '#cdc4b4';
+  g.fillRect(0, 0, W, H);
+  for (let i = 0; i < 90; i++) { // broad tonal bands
+    g.fillStyle = `hsla(${28 + rand() * 12}, ${8 + rand() * 18}%, ${38 + rand() * 30}%, ${0.12 + rand() * 0.2})`;
+    g.fillRect(0, rand() * H, W, 1 + rand() * 7);
+  }
+  for (let i = 0; i < 260; i++) { // fine wavy grain lines (wrap at the tile edges)
+    const y0 = rand() * H, amp = 0.4 + rand() * 1.6, ph = rand() * 6.28, fr = 0.01 + rand() * 0.02;
+    g.strokeStyle = `hsla(${24 + rand() * 12}, ${10 + rand() * 15}%, ${22 + rand() * 25}%, ${0.15 + rand() * 0.3})`;
+    g.lineWidth = 0.5 + rand() * 1.3;
+    g.beginPath();
+    for (let x = 0; x <= W; x += 8) { const y = y0 + Math.sin(x * fr * 6.2832 + ph) * amp; if (x) g.lineTo(x, y); else g.moveTo(x, y); }
+    g.stroke();
+  }
+  for (let i = 0; i < 4; i++) { // knots
+    const x = rand() * W, y = 20 + rand() * (H - 40), rx = 6 + rand() * 9;
+    for (let k = 4; k >= 1; k--) {
+      g.strokeStyle = `hsla(25, 25%, ${18 + k * 4}%, 0.45)`; g.lineWidth = 1.2;
+      g.beginPath(); g.ellipse(x, y, rx * k / 2.2, rx * k / 5, 0, 0, 6.283); g.stroke();
+    }
+  }
+  for (let i = 0; i < 5; i++) { // checks (splits) along the grain
+    const x = rand() * W, y = rand() * H;
+    g.strokeStyle = 'rgba(40,28,18,0.65)'; g.lineWidth = 1.1;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + 25 + rand() * 50, y + (rand() - 0.5) * 3); g.stroke();
+  }
+  for (let i = 0; i < 1500; i++) { // silvery weathering speckle
+    g.fillStyle = `rgba(${200 + rand() * 40}, ${195 + rand() * 40}, ${185 + rand() * 40}, ${rand() * 0.12})`;
+    g.fillRect(rand() * W, rand() * H, 1 + rand() * 3, 1);
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
 // Grayscale groove bump maps: team 0 = parallel rings, team 1 = crossing grooves
 function grooveTexture(team) {
   const W = 512, H = 256, cv = makeCanvas(W, H), g = cv.getContext('2d');
@@ -60,21 +104,18 @@ function grooveTexture(team) {
 
 // Sky dome with a vertical colour gradient
 function makeSky() {
-  const geo = new THREE.SphereGeometry(200, 24, 16);
-  const pos = geo.attributes.position, col = new Float32Array(pos.count * 3);
-  const top = new THREE.Color('#2f7ae0'), hor = new THREE.Color('#cfe0f2'), c = new THREE.Color();
+  // clear summer sky: deeper blue overhead fading to a pale haze at the horizon (same gradient as the panorama and fog)
+  const geo = new THREE.SphereGeometry(200, 48, 64);
+  // sphere's pole is +y; rotate so +z is up
+  geo.rotateX(Math.PI / 2);
+  const pos = geo.attributes.position, col = new Float32Array(pos.count * 3), c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
-    const t = Math.max(0, Math.min(1, pos.getZ(i) / 120));
-    c.copy(hor).lerp(top, Math.pow(t, 0.45));
+    skyColor(Math.asin(Math.max(-1, Math.min(1, pos.getZ(i) / 200))) * 180 / Math.PI, c);
     col.set([c.r, c.g, c.b], i * 3);
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  // sphere's pole is +y; rotate so +z is up
-  geo.rotateX(Math.PI / 2);
-  return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
+  return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false, toneMapped: false }));
 }
-
-// Tiny scene baked to an environment map so the steel has something to reflect
 function makeEnvMap(renderer) {
   const s = new THREE.Scene();
   s.add(makeSky());
@@ -111,10 +152,11 @@ export function createRenderer(canvas, terrain) {
   renderer.toneMappingExposure = 1.0;
 
   const scene = new THREE.Scene();
-  const FOG = new THREE.Color('#cfdcea');
+  const FOG = new THREE.Color(SKY_HAZE);
   scene.background = FOG;
-  scene.fog = new THREE.Fog(FOG, 14, 60);
+  scene.fog = new THREE.Fog(FOG, 30, 170);
   scene.add(makeSky());
+  scene.add(makeSkyPanorama(C.terrainW / 2, C.terrainL / 2, SKY_HAZE));
   scene.environment = makeEnvMap(renderer);
 
   const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 300);
@@ -136,14 +178,25 @@ export function createRenderer(canvas, terrain) {
   const grid = terrain.heightGrid(0.05);
   const { w: gw, h: gh } = grid;
   const pos = new Float32Array(gw * gh * 3), uv = new Float32Array(gw * gh * 2), colr = new Float32Array(gw * gh * 3);
-  const packed = new THREE.Color('#e6d9bd'), loose = new THREE.Color('#fff0d2'), tint = new THREE.Color();
+  const WHITE = new THREE.Color('#ffffff');
+  let edgeZ = 0; // the grass plane sits just below the lowest terrain point; the mesh eases down to it past the timbers
+  for (let k = 0; k < grid.data.length; k++) edgeZ = Math.min(edgeZ, grid.data[k]);
+  edgeZ -= 0.004;
+  const earth = new THREE.Color('#8f8365'), packed = new THREE.Color('#e6d9bd'), loose = new THREE.Color('#fff0d2'), tint = new THREE.Color();
   for (let j = 0; j < gh; j++) {
     for (let i = 0; i < gw; i++) {
       const k = j * gw + i, x = grid.x0 + i * grid.step, y = grid.y0 + j * grid.step;
       const s = terrain.sample(x, y);
-      pos.set([x, y, grid.data[k]], k * 3);
+      const gd = Math.hypot(Math.max(-C.lumberGap - C.lumberSize - x, x - C.terrainW - C.lumberGap - C.lumberSize, 0), Math.max(-C.lumberGap - C.lumberSize - y, y - C.terrainL - C.lumberGap - C.lumberSize, 0));
+      const ez = smooth(Math.max(0, Math.min(1, (gd - 1.0) / 0.9)));
+      pos.set([x, y, grid.data[k] + (edgeZ + 0.003 - grid.data[k]) * ez], k * 3);
       uv.set([x * 2, y * 2], k * 2);
       tint.copy(packed).lerp(loose, Math.max(0, Math.min(1, s.loose)));
+      // beyond the timbers the ground is darker, rougher earth
+      const o = C.lumberGap + C.lumberSize;
+      const ox = Math.max(-o - x, x - C.terrainW - o, 0), oy = Math.max(-o - y, y - C.terrainL - o, 0);
+      tint.lerp(earth, smooth(Math.max(0, Math.min(1, Math.hypot(ox, oy) / 0.5))) * 0.75);
+      tint.lerp(WHITE, smooth(Math.max(0, Math.min(1, (Math.hypot(ox, oy) - 0.8) / 0.6)))); // grass takes over (see scenery.js)
       colr.set([tint.r, tint.g, tint.b], k * 3);
     }
   }
@@ -166,22 +219,55 @@ export function createRenderer(canvas, terrain) {
     map: gravel, vertexColors: true, roughness: 0.95, metalness: 0, envMapIntensity: 0.4,
   }));
   terrainMesh.receiveShadow = true;
+  const grass = grassTexture();
+  blendGrassIntoTerrain(terrainMesh.material, grass);
   scene.add(terrainMesh);
 
-  // Darker surroundings
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(400, 400),
-    new THREE.MeshStandardMaterial({ color: '#7b6f56', roughness: 1, metalness: 0, envMapIntensity: 0.2 }),
-  );
-  ground.position.set(C.terrainW / 2, C.terrainL / 2, -0.03);
-  ground.receiveShadow = true;
+  // Grass beyond the terrain mesh, out to the horizon (the mesh blends into it past the timbers)
+  const ground = makeGrassPlane(grass, C.terrainW / 2, C.terrainL / 2, 600, edgeZ);
   scene.add(ground);
+  scene.add(makeTufts(terrain, isPhone()));
+  const trees = makeTrees(terrain);
+  scene.add(trees);
+  let swayT = 0; // D15: a slow lean of each tree about its foot; frozen when paused (render dt 0), none under reduced motion
+
+  // Lumber surround: weathered 6x6 timbers, one mesh per board section (long sides split with butt joints,
+  // slightly different tone and top height per board), casting and receiving shadows
+  const woodMap = woodTexture();
+  const lumberGroup = new THREE.Group();
+  {
+    const lr = mulberry32(31), tones = ['#ffffff', '#f0e6d8', '#fff4e6', '#e6dac8', '#f5ecde'];
+    const sz = C.lumberSize;
+    for (const bx of LUMBER) {
+      const alongY = bx.y1 - bx.y0 > bx.x1 - bx.x0;
+      const len = alongY ? bx.y1 - bx.y0 : bx.x1 - bx.x0;
+      const n = Math.max(1, Math.round(len / 4.4)), seg = len / n;
+      for (let i = 0; i < n; i++) {
+        const gapJ = 0.004;
+        const l = seg - (n > 1 ? gapJ : 0);
+        const hTop = sz + (lr() - 0.5) * 0.01; // uneven tops, up to +-5 mm
+        const geo = new THREE.BoxGeometry(l, sz, hTop + 0.1);
+        const uv = geo.attributes.uv, uo = lr(), vo = lr();
+        for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) * l / 1.6 + uo, uv.getY(k) * 0.9 + vo);
+        const mat = new THREE.MeshStandardMaterial({ map: woodMap, color: tones[Math.floor(lr() * tones.length)], roughness: 0.92, metalness: 0, envMapIntensity: 0.3 });
+        const m = new THREE.Mesh(geo, mat);
+        const c0 = (alongY ? bx.y0 : bx.x0) + seg * (i + 0.5);
+        const zc = hTop - (hTop + 0.1) / 2;
+        if (alongY) { m.rotation.z = Math.PI / 2; m.position.set((bx.x0 + bx.x1) / 2, c0, zc); } else m.position.set(c0, (bx.y0 + bx.y1) / 2, zc);
+        m.castShadow = true; m.receiveShadow = true;
+        lumberGroup.add(m);
+      }
+    }
+  }
+  scene.add(lumberGroup);
 
   // Visible stones
   const stones = terrain.visibleStones();
+  let stoneInst = null; // { mesh, mats, shown } so stones removed under a placed jack (D14) can be hidden
   if (stones.length) {
     const sg = new THREE.IcosahedronGeometry(1, 0);
     const stoneMesh = new THREE.InstancedMesh(sg, new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0, flatShading: true, envMapIntensity: 0.3 }), stones.length);
+    const mats = [];
     const rand = mulberry32(99), m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sv = new THREE.Vector3(), pv = new THREE.Vector3(), col = new THREE.Color();
     stones.forEach((s, i) => {
       const h = terrain.sample(s.x, s.y).h;
@@ -193,6 +279,7 @@ export function createRenderer(canvas, terrain) {
       pv.set(s.x, s.y, h + r * 0.25);
       m.compose(pv, q, sv);
       stoneMesh.setMatrixAt(i, m);
+      mats.push(m.clone());
       const t = rand();
       col.setHSL(0.09 + rand() * 0.04, 0.1 + t * 0.25, 0.3 + rand() * 0.3);
       stoneMesh.setColorAt(i, col);
@@ -200,6 +287,22 @@ export function createRenderer(canvas, terrain) {
     stoneMesh.castShadow = true;
     stoneMesh.receiveShadow = true;
     scene.add(stoneMesh);
+    stoneInst = { mesh: stoneMesh, mats, shown: stones.map(() => true) };
+  }
+  // Hide the stones the terrain has removed (and show them again after a reset)
+  const zeroMat = new THREE.Matrix4().makeScale(0, 0, 0);
+  function syncStones() {
+    if (!stoneInst) return;
+    const now = terrain.visibleStones();
+    let dirty = false;
+    now.forEach((s, i) => {
+      const vis = !s.gone;
+      if (stoneInst.shown[i] === vis) return;
+      stoneInst.shown[i] = vis;
+      stoneInst.mesh.setMatrixAt(i, vis ? stoneInst.mats[i] : zeroMat);
+      dirty = true;
+    });
+    if (dirty) stoneInst.mesh.instanceMatrix.needsUpdate = true;
   }
 
   // Boundary strings and throwing circle
@@ -228,7 +331,10 @@ export function createRenderer(canvas, terrain) {
     new THREE.MeshStandardMaterial({ color: '#a9bde0', metalness: 1, roughness: 0.3, bumpMap: grooves[0], bumpScale: 1.5, envMapIntensity: 2.2 }),
     new THREE.MeshStandardMaterial({ color: '#e8aa6a', metalness: 1, roughness: 0.3, bumpMap: grooves[1], bumpScale: 1.5, envMapIntensity: 2.2 }),
   ];
-  const jackMat = new THREE.MeshStandardMaterial({ color: '#ffa81c', metalness: 0, roughness: 0.45, emissive: '#3a1c00' });
+  // Dead (out of play) bodies: greyed and dulled
+  const deadBouleMat = new THREE.MeshStandardMaterial({ color: '#a4a8b0', metalness: 0.45, roughness: 0.5, envMapIntensity: 0.9 });
+  const deadJackMat = new THREE.MeshStandardMaterial({ color: '#8a7a5e', metalness: 0, roughness: 0.6 });
+  const jackMat = new THREE.MeshStandardMaterial({ color: '#ff7a00', metalness: 0, roughness: 0.45, emissive: '#4a1e00' }); // bright orange, lit a little from within so it stays vivid in shade
   const bouleGeo = new THREE.SphereGeometry(1, 40, 24);
   bouleGeo.rotateX(Math.PI / 2); // texture poles along z; any orientation is fine
   const jackGeo = new THREE.SphereGeometry(1, 20, 12);
@@ -264,14 +370,98 @@ export function createRenderer(canvas, terrain) {
       e.body = b;
       e.mesh.position.set(b.x, b.y, b.z);
       if (e.ring) e.ring.position.set(b.x, b.y, terrain.sample(b.x, b.y).h + 0.004);
-      e.mesh.visible = !(b.dead && b.z < -1);
+      e.mesh.visible = true; // dead bodies stay visible at their spot beyond the far line, greyed
+      const baseMat = b.dead ? (b.kind === 'jack' ? deadJackMat : deadBouleMat) : (b.kind === 'jack' ? (jv.c ? jackBright : jackMat) : bouleMats[b.team ? 1 : 0]);
+      if (e.fade) { // D11 reduced motion: a ball fades out and in instead of being carried
+        if (!e.fadeMat || e.fadeBase !== baseMat) { e.fadeMat = baseMat.clone(); e.fadeBase = baseMat; e.fadeMat.transparent = true; }
+        e.fadeMat.opacity = e.fade.k;
+        e.mesh.material = e.fadeMat;
+      } else e.mesh.material = baseMat;
+      if (b.kind === 'jack') jackLive = e;
     }
     for (const [id, e] of meshes) {
       if (seen.has(id)) continue;
       scene.remove(e.mesh);
       if (e.ring) scene.remove(e.ring);
+      if (e === jackLive) jackLive = null;
       meshes.delete(id);
     }
+  }
+
+  // Fade a body out (dir -1) or in (dir +1) over `dur` seconds of render time (reduced motion only; see main.js kickFetch)
+  function fadeBody(id, dir, dur = 0.3) {
+    const e = meshes.get(id);
+    if (!e) return;
+    e.fade = { k: dir > 0 ? 0 : 1, dir, dur };
+  }
+  function updateFades(dt) {
+    for (const e of meshes.values()) {
+      const f = e.fade;
+      if (!f) continue;
+      f.k = Math.max(0, Math.min(1, f.k + f.dir * dt / f.dur));
+      if (f.k >= 1 && f.dir > 0) { e.fade = null; if (e.fadeMat) e.mesh.material = e.fadeBase; }
+      e.mesh.visible = !(f.dir < 0 && f.k <= 0);
+    }
+  }
+
+  // Jack finder: at 6-10 m the jack is a few pixels, so a bobbing chevron (constant screen size) floats over it,
+  // and a soft ground halo shows in the head view. ?debug&jackvis=a|b|c|ab|ac|bc|abc|none compares the options.
+  const jackVisParam = (() => {
+    try { const q = new URLSearchParams(location.search); return q.has('debug') ? q.get('jackvis') : null; } catch (e) { return null; }
+  })();
+  const jv = jackVisParam === null ? { a: true, b: false, c: true, headRing: true }
+    : { a: jackVisParam.includes('a'), b: jackVisParam.includes('b'), c: jackVisParam.includes('c'), headRing: false };
+  const jackBright = new THREE.MeshStandardMaterial({ color: '#ff8a1e', metalness: 0, roughness: 0.4, emissive: '#ff6a00', emissiveIntensity: 0.6 });
+  const jackChevron = (() => {
+    const cv = makeCanvas(64, 96), g = cv.getContext('2d');
+    g.lineJoin = 'round';
+    g.beginPath(); g.moveTo(32, 90); g.lineTo(6, 44); g.lineTo(20, 44); g.lineTo(20, 8); g.lineTo(44, 8); g.lineTo(44, 44); g.lineTo(58, 44); g.closePath(); // down arrow
+    g.lineWidth = 9; g.strokeStyle = '#241608'; g.stroke();
+    g.fillStyle = '#ffd84a'; g.fill();
+    const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+    const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false, depthWrite: false, fog: false, sizeAttenuation: false }));
+    spr.center.set(0.5, 0); spr.scale.set(0.026, 0.039, 1); spr.renderOrder = 20; spr.visible = false; spr.frustumCulled = false;
+    scene.add(spr);
+    return spr;
+  })();
+  const jackHalo = (() => {
+    const cv = makeCanvas(128, 128), g = cv.getContext('2d');
+    const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    gr.addColorStop(0, 'rgba(255,241,194,0)'); gr.addColorStop(0.5, 'rgba(255,241,194,0)');
+    gr.addColorStop(0.68, 'rgba(255,241,194,0.95)'); gr.addColorStop(0.82, 'rgba(255,241,194,0.35)'); gr.addColorStop(1, 'rgba(255,241,194,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+    const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, fog: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
+    m.renderOrder = 10; m.visible = false;
+    scene.add(m);
+    return m;
+  })();
+  let jackLive = null, jackT = 0;
+  // The chevron is only wanted while the human aims a boule (D17): main.js switches it on and off, and it fades over ~0.4 s
+  let arrowWant = false, arrowK = 0;
+  function setJackArrow(on) { arrowWant = !!on; if (reduce()) arrowK = arrowWant ? 1 : 0; }
+  function updateJackMark(dt) {
+    jackT += dt;
+    arrowK = reduce() ? (arrowWant ? 1 : 0) : Math.max(0, Math.min(1, arrowK + (arrowWant ? dt : -dt) / 0.4));
+    const e = jackLive, on = e && !e.body.dead && mode !== 'inspect' && !measure.children.length && !scoring.children.length && !placeMarker.visible;
+    if (!on) { jackChevron.visible = false; jackHalo.visible = false; return; }
+    const p = e.mesh.position, dist = camera.position.distanceTo(p);
+    const k = Math.max(0, Math.min(1, (dist - 1.5) / 1.5)); // fade out inside ~1.5 m, fully on by 3 m
+    const ndcH = dist * Math.tan(camera.fov * Math.PI / 360); // metres per unit of NDC height at the jack
+    if (jv.a && k > 0 && arrowK > 0) {
+      const bob = reduce() ? 0 : 0.5 + 0.5 * Math.sin(jackT * 4.5);
+      jackChevron.position.set(p.x, p.y, p.z + e.body.r + ndcH * (0.03 + 0.03 * bob));
+      jackChevron.material.opacity = k * arrowK;
+      jackChevron.visible = true;
+    } else jackChevron.visible = false;
+    const kh = Math.max(0, Math.min(1, (dist - 0.9) / 0.8)); // the halo is a ground mark, so it can stay closer in
+    if ((jv.b || (jv.headRing && mode === 'head')) && kh > 0) {
+      const gz = terrain.sample(p.x, p.y).h + 0.012;
+      jackHalo.position.set(p.x, p.y, gz);
+      jackHalo.scale.setScalar(Math.max(0.2, ndcH * 0.07));
+      jackHalo.material.opacity = kh * 0.9;
+      jackHalo.visible = true;
+    } else jackHalo.visible = false;
   }
 
   // Divot decals: a pool of soft dark discs just above the ground, reused in a ring
@@ -326,46 +516,229 @@ export function createRenderer(canvas, terrain) {
     }
   }
   scene.add(jackZone);
-  function showJackZone(on) { jackZone.visible = !!on; }
+  // D14: the zone for a hand-placed jack runs string to string: both arcs across the whole court width, with a
+  // faint fill between them, clipped at the side strings and the far string
+  const placeZone = new THREE.Group();
+  placeZone.visible = false;
+  {
+    const mat = new THREE.MeshBasicMaterial({ color: '#ffd24a', transparent: true, opacity: 0.85, depthTest: false });
+    const c = C.circle, W = C.terrainW, L = C.terrainL;
+    const edge = (rad, a) => ({ x: c.x + rad * Math.sin(a), y: c.y + rad * Math.cos(a) });
+    const inside = (p) => p.x >= 0 && p.x <= W && p.y <= L;
+    for (const rad of [C.jackMinDist, C.jackMaxDist]) {
+      for (let a = -Math.PI / 2; a <= Math.PI / 2; a += 0.006) {
+        const p = edge(rad, a);
+        if (!inside(p)) continue;
+        const m = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.05, 0.004), mat);
+        m.position.set(p.x, p.y, terrain.sample(p.x, p.y).h + 0.008);
+        m.rotation.z = -a;
+        m.renderOrder = 3;
+        placeZone.add(m);
+      }
+    }
+    // faint fill: a grid of polar cells between the arcs, skipping cells that leave the court
+    const pos = [], idx = [], na = 90, nr = 6, vi = new Map();
+    const vert = (i, j) => {
+      const k = i * 100 + j;
+      if (!vi.has(k)) {
+        const a = -Math.PI / 2 + Math.PI * i / na, rad = C.jackMinDist + (C.jackMaxDist - C.jackMinDist) * j / nr;
+        const p = edge(rad, a);
+        const x = Math.min(W, Math.max(0, p.x)), y = Math.min(L, p.y);
+        pos.push(x, y, terrain.sample(x, y).h + 0.006);
+        vi.set(k, pos.length / 3 - 1);
+      }
+      return vi.get(k);
+    };
+    for (let i = 0; i < na; i++) {
+      for (let j = 0; j < nr; j++) {
+        const q = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]];
+        const cen = edge(C.jackMinDist + (C.jackMaxDist - C.jackMinDist) * (j + 0.5) / nr, -Math.PI / 2 + Math.PI * (i + 0.5) / na);
+        if (!inside(cen)) continue;
+        const v = q.map(([a, b]) => vert(a, b));
+        idx.push(v[0], v[1], v[2], v[0], v[2], v[3]);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    const fill = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: '#ffd24a', transparent: true, opacity: 0.16, depthTest: false, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+    fill.renderOrder = 2;
+    placeZone.add(fill);
+  }
+  scene.add(placeZone);
+  function showJackZone(on, mode) {
+    jackZone.visible = !!on && mode !== 'place';
+    placeZone.visible = !!on && mode === 'place';
+  }
+
+  // Placement marker for an invalid jack: a green ring on a valid spot, a red X on an invalid one
+  const placeMarker = new THREE.Group();
+  placeMarker.visible = false;
+  {
+    const mk = (color) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, depthTest: false, depthWrite: false, fog: false, side: THREE.DoubleSide });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.3, 40), mk('#3ddc5a'));
+    const dot = new THREE.Mesh(new THREE.CircleGeometry(0.05, 16), mk('#3ddc5a'));
+    const ok = new THREE.Group();
+    ok.add(ring, dot);
+    const bad = new THREE.Group();
+    for (const a of [Math.PI / 4, -Math.PI / 4]) {
+      const bar = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.1), mk('#ff3b30'));
+      bar.rotation.z = a;
+      bad.add(bar);
+    }
+    for (const g of [ok, bad]) g.traverse((o) => { o.renderOrder = 6; });
+    placeMarker.add(ok, bad);
+    placeMarker.userData = { ok, bad };
+  }
+  scene.add(placeMarker);
+  function setPlaceMarker(p) {
+    if (!p) { placeMarker.visible = false; return; }
+    const s = terrain.sample(p.x, p.y);
+    placeMarker.position.set(p.x, p.y, s.h + 0.02);
+    nrm.set(s.nx || 0, s.ny || 0, s.nz || 1).normalize();
+    placeMarker.quaternion.setFromUnitVectors(upZ, nrm);
+    placeMarker.userData.ok.visible = !!p.valid;
+    placeMarker.userData.bad.visible = !p.valid;
+    placeMarker.visible = true;
+  }
 
   // Measuring tape: lines from the jack to each measured boule, with cm labels
   const measure = new THREE.Group();
   scene.add(measure);
+  const scoring = new THREE.Group(); // D07: the mène-end circle, number badges and rival ring
+  scene.add(scoring);
   function clearMeasure() {
-    for (const o of [...measure.children]) {
-      measure.remove(o);
-      if (o.material && o.material.map) o.material.map.dispose();
-      if (o.material) o.material.dispose();
-      if (o.geometry && o.geometry !== divotGeo) o.geometry.dispose();
+    for (const g of [measure, scoring]) {
+      for (const o of [...g.children]) {
+        g.remove(o);
+        if (o.material && o.material.map) o.material.map.dispose();
+        if (o.material) o.material.dispose();
+        if (o.geometry && o.geometry !== divotGeo) o.geometry.dispose();
+      }
     }
   }
-  function labelSprite(text, color) {
+  // Ground-hugging geometry (follows the bumps so it never z-fights or sinks): annulus r0..r1 around (cx, cy)
+  function groundRing(cx, cy, r0, r1, color, opacity, zoff, order) {
+    const segs = 72, rows = r0 > 0 ? 1 : 8, pos = [], idx = [];
+    for (let i = 0; i <= rows; i++) {
+      const r = r0 + (r1 - r0) * i / rows;
+      for (let k = 0; k < segs; k++) {
+        const a = k / segs * Math.PI * 2, x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+        pos.push(x, y, terrain.sample(x, y).h + zoff);
+      }
+    }
+    for (let i = 0; i < rows; i++) for (let k = 0; k < segs; k++) {
+      const a = i * segs + k, b = i * segs + (k + 1) % segs, c = a + segs, d = b + segs;
+      idx.push(a, b, c, b, d, c);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide, fog: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 }));
+    m.renderOrder = order; m.frustumCulled = false;
+    return m;
+  }
+  // A flat ribbon along the ground from a to b (shortened by ra and rb at the ends)
+  function groundRibbon(a, b, ra, rb, w, color, opacity, zoff, order) {
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len <= ra + rb + 0.005) return null;
+    const dx = (b.x - a.x) / len, dy = (b.y - a.y) / len, nx = -dy * w / 2, ny = dx * w / 2;
+    const n = Math.max(2, Math.ceil((len - ra - rb) / 0.04)), pos = [], idx = [];
+    for (let i = 0; i <= n; i++) {
+      const t = ra + (len - ra - rb) * i / n, x = a.x + dx * t, y = a.y + dy * t, z = terrain.sample(x, y).h + zoff;
+      pos.push(x + nx, y + ny, z, x - nx, y - ny, z);
+      if (i < n) idx.push(2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 1, 2 * i + 3, 2 * i + 2);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: opacity < 1, opacity, depthWrite: false, side: THREE.DoubleSide, fog: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 }));
+    m.renderOrder = order; m.frustumCulled = false;
+    return m;
+  }
+  function badgeSprite(text, fill, edge) {
+    const cv = makeCanvas(96, 96), g = cv.getContext('2d');
+    g.beginPath(); g.arc(48, 48, 42, 0, Math.PI * 2);
+    g.fillStyle = fill; g.fill(); g.lineWidth = 7; g.strokeStyle = edge; g.stroke();
+    g.font = '800 56px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = '#fff'; g.fillText(text, 48, 52);
+    const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthTest: false, transparent: true, fog: false }));
+    spr.renderOrder = 6; spr.scale.set(0.15, 0.15, 1);
+    return spr;
+  }
+  // D07 mène end: soft disc on the jack holding every scoring boule, numbered badges, and the best rival outlined.
+  // o: { radius, fill, edge, items: [{ x, y, n }], rival: { x, y, r, label } | null }
+  function showScoring(jack, o) {
+    clearMeasure();
+    scoring.add(groundRing(jack.x, jack.y, 0, o.radius, o.fill, 0.3, 0.014, 2));
+    scoring.add(groundRing(jack.x, jack.y, o.radius - 0.012, o.radius + 0.006, o.edge, 0.95, 0.018, 3));
+    const placed = [];
+    for (const it of o.items) {
+      let lift = 0.11;
+      for (const q of placed) if (Math.hypot(q.x - it.x, q.y - it.y) < 0.16) lift = Math.max(lift, q.lift + 0.16);
+      placed.push({ x: it.x, y: it.y, lift });
+      const spr = badgeSprite(String(it.n), o.edge, '#fff');
+      spr.position.set(it.x, it.y, terrain.sample(it.x, it.y).h + 0.073 + lift);
+      scoring.add(spr);
+    }
+    if (o.rival) {
+      const rv = o.rival, r = rv.r || 0.037;
+      scoring.add(groundRing(rv.x, rv.y, r + 0.004, r + 0.02, '#e8e8e8', 0.95, 0.018, 3));
+      scoring.add(groundRing(rv.x, rv.y, 0, r + 0.004, '#777777', 0.28, 0.016, 2));
+      if (rv.label) {
+        const spr = labelSprite(rv.label, '#fff', 'rgba(110,110,110,0.88)');
+        spr.center.set(0.5, 1); // just below the rival, on screen
+        spr.position.set(rv.x, rv.y - r - 0.03, terrain.sample(rv.x, rv.y).h + 0.04);
+        scoring.add(spr);
+      }
+    }
+  }
+  function labelSprite(text, color, bg) {
     const cv = makeCanvas(160, 64), g = cv.getContext('2d');
     g.font = '700 38px system-ui, sans-serif';
     g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillStyle = 'rgba(20,40,75,0.82)';
+    g.fillStyle = bg || 'rgba(20,40,75,0.82)';
     g.beginPath(); g.roundRect(6, 8, 148, 48, 12); g.fill();
     g.fillStyle = color;
     g.fillText(text, 80, 33);
     const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthTest: false, transparent: true, fog: false }));
     spr.renderOrder = 5;
-    spr.scale.set(0.34, 0.136, 1);
+    spr.scale.set(0.27, 0.108, 1);
     return spr;
   }
-  // items: [{ x, y, label, scored }]; jack: { x, y }
-  function showMeasure(jack, items) {
+  // Between throws (D07): ribbons from the jack's edge to the closest boule of each team, with team-coloured cm labels
+  // items: [{ x, y, r, label, color, dark }]; jack: { x, y, r }; others: [{ x, y }] every other live boule, which a label
+  // must stay clear of. The label sits beyond its boule, away from the jack, unless that lands on a neighbour or on
+  // the other label, in which case the nearest clear direction round the boule is used.
+  function showMeasure(jack, items, others = []) {
     clearMeasure();
-    const jz = terrain.sample(jack.x, jack.y).h + 0.012;
+    const jz = terrain.sample(jack.x, jack.y).h;
+    const taken = []; // centres of labels already placed
     for (const it of items) {
-      const color = it.scored ? '#ffd24a' : '#c9d2e6';
-      const iz = terrain.sample(it.x, it.y).h + 0.012;
-      const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(jack.x, jack.y, jz), new THREE.Vector3(it.x, it.y, iz)]);
-      const line = new THREE.Line(geo, new THREE.LineDashedMaterial({ color, dashSize: 0.04, gapSize: it.scored ? 0.0 : 0.03, depthTest: false, transparent: true, opacity: 0.95 }));
-      line.computeLineDistances();
-      line.renderOrder = 4;
-      measure.add(line);
-      const spr = labelSprite(it.label, color);
-      spr.position.set((jack.x + it.x) / 2, (jack.y + it.y) / 2, Math.max(jz, iz) + 0.1);
+      const under = groundRibbon(jack, it, jack.r || 0.015, it.r || 0.037, 0.05, '#000000', 0.5, 0.014, 4);
+      const line = groundRibbon(jack, it, jack.r || 0.015, it.r || 0.037, 0.032, it.color, 1, 0.017, 5);
+      if (under) measure.add(under);
+      if (line) measure.add(line);
+      const spr = labelSprite(it.label, '#fff', it.dark);
+      const r = it.r || 0.037, off = r + 0.04, mid = off + 0.11; // mid: roughly where the label's middle ends up
+      const a0 = Math.atan2(it.y - jack.y, it.x - jack.x);
+      const clear = (a) => { // distance from the label's middle to the nearest thing it could cover
+        const cx = it.x + Math.cos(a) * mid, cy = it.y + Math.sin(a) * mid;
+        let m = Math.hypot(cx - jack.x, cy - jack.y) - 0.1;
+        for (const q of others) if (q.x !== it.x || q.y !== it.y) m = Math.min(m, Math.hypot(cx - q.x, cy - q.y));
+        for (const q of taken) m = Math.min(m, Math.hypot(cx - q.x, cy - q.y) - 0.1);
+        return m;
+      };
+      let best = a0, bestM = clear(a0);
+      for (const da of [0.6, -0.6, 1.2, -1.2, 1.8, -1.8, Math.PI]) {
+        if (bestM >= 0.17) break;
+        const m = clear(a0 + da) - Math.abs(da) * 0.01;
+        if (m > bestM) { bestM = m; best = a0 + da; }
+      }
+      const ux = Math.cos(best), uy = Math.sin(best);
+      taken.push({ x: it.x + ux * mid, y: it.y + uy * mid });
+      spr.center.set(0.5 - 0.5 * Math.max(-1, Math.min(1, ux * 1.6)), 0.5 - 0.5 * Math.max(-1, Math.min(1, uy * 1.6)));
+      spr.position.set(it.x + ux * off, it.y + uy * off, Math.max(jz, terrain.sample(it.x, it.y).h) + 0.06);
       measure.add(spr);
     }
   }
@@ -582,9 +955,9 @@ export function createRenderer(canvas, terrain) {
     f.mesh.visible = true;
   }
 
-  // Roll guide: dashes laid flat on the ground (dark under-layer, bright orange on top) plus a ring where the
-  // roll ends. Orange so it is never mistaken for the cream arc.
-  const DASHES = 160, DASH_LEN = 0.4, DASH_GAP = 0.3, DASH_W = 0.11;
+  // Roll guide (D21): a soft translucent orange band on the ground that widens toward the rest point, a dashed centre
+  // line (dark under-layer, bright orange on top) and a faint rest ellipse. Orange so it is never mistaken for the blue cone.
+  const DASHES = 160, DASH_LEN = 0.3, DASH_GAP = 0.25, DASH_W = 0.05;
   const dashMat = (color, opacity) => new THREE.MeshBasicMaterial({
     color, transparent: true, opacity, side: THREE.DoubleSide, fog: false, depthWrite: false,
     polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
@@ -592,17 +965,57 @@ export function createRenderer(canvas, terrain) {
   const dashGeo = new THREE.PlaneGeometry(1, 1);
   const dashBack = new THREE.InstancedMesh(dashGeo, dashMat('#241608', 0.75), DASHES);
   const dashTop = new THREE.InstancedMesh(dashGeo, dashMat('#ffae2b', 1), DASHES);
-  const restRing = new THREE.Mesh(new THREE.RingGeometry(0.15, 0.22, 32), dashMat('#ffae2b', 1));
-  const restRingBack = new THREE.Mesh(new THREE.RingGeometry(0.12, 0.25, 32), dashMat('#241608', 0.75));
-  for (const [o, order] of [[dashBack, 13], [dashTop, 14], [restRingBack, 13], [restRing, 14]]) {
+  // rest ellipse: a unit ring and fill in a group that is laid on the ground, rotated and scaled per band
+  const restGroup = new THREE.Group(), restInner = new THREE.Group();
+  for (const [geo, color, op, order] of [[new THREE.CircleGeometry(1, 40), '#ffae2b', 0.16, 11], [new THREE.RingGeometry(0.9, 1, 40), '#241608', 0.35, 12], [new THREE.RingGeometry(0.93, 0.985, 40), '#ffae2b', 0.7, 13]]) {
+    const m = new THREE.Mesh(geo, dashMat(color, op)); m.renderOrder = order; m.frustumCulled = false; restInner.add(m);
+  }
+  restGroup.add(restInner); restGroup.visible = false; scene.add(restGroup);
+  // the band: three nested ground strips (widest faintest) so it fades toward its edges
+  const BAND_N = 40, BAND_LAYERS = [[1, 0.2], [0.66, 0.2], [0.33, 0.2]];
+  const bandStrips = BAND_LAYERS.map(([w, op], li) => {
+    const geo = new THREE.BufferGeometry(), ix = [];
+    for (let i = 0; i < BAND_N - 1; i++) ix.push(2 * i, 2 * i + 1, 2 * i + 3, 2 * i, 2 * i + 3, 2 * i + 2);
+    const pos = new Float32Array(BAND_N * 6);
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setIndex(ix); geo.setDrawRange(0, 0);
+    const mesh = new THREE.Mesh(geo, dashMat('#ffae2b', op));
+    mesh.frustumCulled = false; mesh.renderOrder = 9 + li; mesh.visible = false; scene.add(mesh);
+    return { mesh, pos, w };
+  });
+  for (const [o, order] of [[dashBack, 13], [dashTop, 14]]) {
     o.frustumCulled = false; o.renderOrder = order; o.visible = false; scene.add(o);
   }
   dashBack.count = dashTop.count = 0;
   const dM = new THREE.Matrix4(), dPos = new THREE.Vector3(), dX = new THREE.Vector3(), dY = new THREE.Vector3(), dZ = new THREE.Vector3();
-  function setRoll(pts) {
+  // `band`: { center: [{x,y,z}], halfWidths, restMean, restCov } from predictRollBand (a bare point list also works)
+  function setRoll(band) {
     let n = 0;
-    restRing.visible = restRingBack.visible = false;
+    restGroup.visible = false;
+    for (const st of bandStrips) st.mesh.visible = false;
+    if (Array.isArray(band)) { // plain path: a narrow band with no spread
+      const m = band.length;
+      band = { center: band, halfWidths: band.map((_, i) => 0.04 + 0.06 * i / Math.max(1, m - 1)), restMean: band[m - 1], restCov: { xx: 0.003, xy: 0, yy: 0.003 } };
+    }
+    const pts = band && band.center;
     if (pts && pts.length > 1) {
+      // the band: perpendicular offsets of each centre point, widened to read from the shoulder view
+      const m = Math.min(pts.length, BAND_N);
+      for (const st of bandStrips) {
+        for (let i = 0; i < m; i++) {
+          const a = pts[Math.max(0, i - 1)], b = pts[Math.min(m - 1, i + 1)];
+          let tx = b.x - a.x, ty = b.y - a.y;
+          const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+          const hw = Math.max(0.16, (band.halfWidths[i] || 0.05) * 2.5) * st.w;
+          for (let sd = 0; sd < 2; sd++) {
+            const k = sd ? -1 : 1, x = pts[i].x - ty * hw * k, y = pts[i].y + tx * hw * k;
+            const o = (i * 2 + sd) * 3;
+            st.pos[o] = x; st.pos[o + 1] = y; st.pos[o + 2] = terrain.sample(x, y).h + 0.014;
+          }
+        }
+        st.mesh.geometry.attributes.position.needsUpdate = true;
+        st.mesh.geometry.setDrawRange(0, (m - 1) * 6);
+        st.mesh.visible = true;
+      }
       // walk the path by arc length, laying a dash every DASH_LEN + DASH_GAP
       let pos = 0; // distance along the path to the start of the next dash
       let acc = 0; // path length so far
@@ -630,12 +1043,15 @@ export function createRenderer(canvas, terrain) {
         }
         acc += seg;
       }
-      const e = pts[pts.length - 1], h = terrain.sample(e.x, e.y);
-      for (const r of [restRing, restRingBack]) {
-        r.position.set(e.x, e.y, h.h + 0.018);
-        r.quaternion.setFromUnitVectors(upZ, dZ.set(h.nx || 0, h.ny || 0, h.nz || 1).normalize());
-        r.visible = true;
-      }
+      // rest ellipse at 1.5 sigma along the principal axes of the rest covariance
+      const e = band.restMean || pts[pts.length - 1], h = terrain.sample(e.x, e.y), c = band.restCov;
+      const tr = (c.xx + c.yy) / 2, df = Math.sqrt(((c.xx - c.yy) / 2) ** 2 + c.xy * c.xy);
+      const l1 = Math.max(0.0036, tr + df), l2 = Math.max(0.0036, tr - df);
+      restGroup.position.set(e.x, e.y, h.h + 0.018);
+      restGroup.quaternion.setFromUnitVectors(upZ, dZ.set(h.nx || 0, h.ny || 0, h.nz || 1).normalize());
+      restInner.rotation.z = 0.5 * Math.atan2(2 * c.xy, c.xx - c.yy);
+      restInner.scale.set(Math.max(0.14, 1.5 * Math.sqrt(l1)), Math.max(0.14, 1.5 * Math.sqrt(l2)), 1);
+      restGroup.visible = true;
     }
     dashTop.count = dashBack.count = n;
     dashTop.instanceMatrix.needsUpdate = dashBack.instanceMatrix.needsUpdate = true;
@@ -718,17 +1134,17 @@ export function createRenderer(canvas, terrain) {
   const clampZoom = (z) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
   const orbit = { az: 0, el: 0.6, dist: 3 };
   let heading = new THREE.Vector3(0, 1, 0);
+  let flightFrame = null; // camera.js spring state while the flight camera follows moving bodies
 
   function setCamera(m, o = {}) {
     if (m === 'inspect' && (mode !== 'inspect' || o.reset)) { // o.reset: a scripted cut replaces the user's orbit
-      const t = o.target || { x: 2, y: 8 };
       orbit.dist = o.dist || 2.5;
       orbit.az = o.az !== undefined ? o.az : 0;
       orbit.el = o.el !== undefined ? o.el : 0.6;
-      void t;
     }
     if (m === 'shoulder' && o.zoom !== undefined) zoom = clampZoom(o.zoom);
     mode = m; opts = o;
+    if (m === 'flight') flightFrame = null;
     from.pos.copy(cur.pos); from.tgt.copy(cur.tgt);
     trans = reduce() ? 1 : 0;
     if (trans === 1) computeGoal(0, true);
@@ -741,6 +1157,15 @@ export function createRenderer(canvas, terrain) {
       const yaw = opts.yaw || 0, c = C.circle;
       goal.pos.set(c.x - Math.sin(yaw) * 1.4, c.y - Math.cos(yaw) * 1.4, 1.6);
       goal.tgt.set(c.x + Math.sin(yaw) * 5.5, c.y + Math.cos(yaw) * 5.5, 0);
+    } else if (mode === 'flight' && opts.bodies) { // D09: frame every moving body (camera.js), cochonnet first when it flies
+      const jack = opts.bodies.find((b) => b.kind === 'jack');
+      const f = frameMoving(opts.bodies, jack, { aspect: camera.aspect, fov: camera.fov, dt, reduced: reduce(), thrown: opts.body }, flightFrame);
+      if (f) {
+        flightFrame = f;
+        const cf = cameraFromFrame(f, (x, y) => terrain.sample(x, y).h);
+        goal.pos.set(cf.pos.x, cf.pos.y, cf.pos.z);
+        goal.tgt.set(f.target.x, f.target.y, f.target.z);
+      }
     } else if (mode === 'flight' && opts.body) {
       const b = opts.body;
       const v = tmpV.set(b.vx || 0, b.vy || 0, 0);
@@ -754,8 +1179,9 @@ export function createRenderer(canvas, terrain) {
       for (const p of opts.points || []) {
         x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
       }
-      const margin = 0.3, el = 0.95; // rad of elevation
-      const hx = Math.max(0.45, (x1 - x0) / 2 + margin), hy = Math.max(0.45, (y1 - y0) / 2 + margin);
+      const margin = opts.margin || 0.3, el = 0.95; // rad of elevation
+      const minHalf = opts.minHalf || 0.45;
+      const hx = Math.max(minHalf, (x1 - x0) / 2 + margin), hy = Math.max(minHalf, (y1 - y0) / 2 + margin);
       const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
       const vf = camera.fov * Math.PI / 180, hf = 2 * Math.atan(Math.tan(vf / 2) * camera.aspect);
       const dist = Math.max(opts.dist || 1.4, hx / Math.tan(hf / 2), (hy * Math.sin(el) + 0.1) / Math.tan(vf / 2) + hy * Math.cos(el)) * 1.05;
@@ -791,7 +1217,98 @@ export function createRenderer(canvas, terrain) {
 
   // Toss focus: 0..1, eased while the shoulder camera shows a preview, so the cone is bigger on screen
   let focusK = 0;
+  // ---- Paused (D12): a free orbit camera round a ground point, and the sepia pass ----
+  let paused = false;
+  const PC = { P: new THREE.Vector3(), pos: new THREE.Vector3(), az: 0, el: 0.6, dist: 6 };
+  const PC_DIST = [0.8, 30], PC_EL = [0.06, 1.5];
+  const pcClamp = () => {
+    PC.dist = Math.max(PC_DIST[0], Math.min(PC_DIST[1], PC.dist));
+    PC.el = Math.max(PC_EL[0], Math.min(PC_EL[1], PC.el));
+  };
+  function setPaused(on) {
+    on = !!on;
+    if (on === paused) return;
+    if (on) {
+      // the orbit point: where the centre-screen ray meets the ground (else the point looked at)
+      const dir = cur.tgt.clone().sub(cur.pos).normalize();
+      const g0 = groundZ(cur.tgt);
+      PC.P.copy(cur.tgt);
+      if (dir.z < -0.03) { const k = (g0 - cur.pos.z) / dir.z; if (k > 0 && k < 80) PC.P.copy(cur.pos).addScaledVector(dir, k); }
+      PC.P.x = Math.max(-C.terrainPad, Math.min(C.terrainW + C.terrainPad, PC.P.x)); // the court runs x 0..W, y 0..L
+      PC.P.y = Math.max(-C.terrainPad, Math.min(C.terrainL + C.terrainPad, PC.P.y));
+      PC.P.z = groundZ(PC.P) + 0.03;
+      const off = cur.pos.clone().sub(PC.P);
+      PC.dist = Math.max(0.01, off.length());
+      PC.el = Math.asin(Math.max(-1, Math.min(1, off.z / PC.dist)));
+      PC.az = Math.atan2(off.x, -off.y);
+      pcClamp();
+      pointers.clear(); pinch = 0;
+      paused = true;
+      sepiaTarget = 1;
+      if (reduce()) sepiaK = 1;
+    } else {
+      paused = false;
+      sepiaTarget = 0;
+      if (reduce()) sepiaK = 0;
+      from.pos.copy(PC.pos); from.tgt.copy(PC.P); // ease back to where the camera was before the pause
+      trans = reduce() ? 1 : 0;
+      pointers.clear(); pinch = 0;
+    }
+  }
+  function updatePausedCamera() {
+    pcClamp();
+    const ce = Math.cos(PC.el), se = Math.sin(PC.el);
+    PC.pos.set(PC.P.x + Math.sin(PC.az) * ce * PC.dist, PC.P.y - Math.cos(PC.az) * ce * PC.dist, PC.P.z + se * PC.dist);
+    const floor = groundZ(PC.pos) + 0.25;
+    if (PC.pos.z < floor) PC.pos.z = floor;
+    camera.position.copy(PC.pos);
+    camera.lookAt(PC.P);
+    sun.target.position.copy(PC.P);
+    sun.position.copy(PC.P).add(sunOffset);
+  }
+
+  // Sepia: while paused the scene is drawn to a target and a full-screen triangle redraws it in sepia
+  let sepiaK = 0, sepiaTarget = 0, sepiaRT = null, sepiaT0 = 0;
+  const sepiaScene = new THREE.Scene();
+  const sepiaCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const sepiaMat = new THREE.ShaderMaterial({
+    uniforms: { tDiffuse: { value: null }, k: { value: 0 } },
+    vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: `uniform sampler2D tDiffuse; uniform float k; varying vec2 vUv;
+      void main() {
+        vec4 t = texture2D(tDiffuse, vUv);
+        vec3 c = t.rgb;
+        vec3 s = vec3(dot(c, vec3(0.393, 0.769, 0.189)), dot(c, vec3(0.349, 0.686, 0.168)), dot(c, vec3(0.272, 0.534, 0.131)));
+        gl_FragColor = vec4(mix(c, s * 0.96, k), 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+    depthTest: false, depthWrite: false,
+  });
+  sepiaScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), sepiaMat));
+  sepiaScene.children[0].frustumCulled = false;
+  function renderScene() {
+    const now = performance.now(), sdt = Math.min(0.1, (now - sepiaT0) / 1000);
+    sepiaT0 = now;
+    if (!reduce() && sepiaK !== sepiaTarget) { // a short fade in and out, none under reduced motion
+      const step = sdt / 0.35;
+      sepiaK = sepiaTarget > sepiaK ? Math.min(sepiaTarget, sepiaK + step) : Math.max(sepiaTarget, sepiaK - step);
+    } else if (reduce()) sepiaK = sepiaTarget;
+    if (sepiaK <= 0 && !paused) { renderer.render(scene, camera); return; }
+    const size = renderer.getDrawingBufferSize(tmpSize);
+    if (!sepiaRT) sepiaRT = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
+    else if (sepiaRT.width !== size.x || sepiaRT.height !== size.y) sepiaRT.setSize(size.x, size.y);
+    renderer.setRenderTarget(sepiaRT);
+    renderer.render(scene, camera);
+    renderer.setRenderTarget(null);
+    sepiaMat.uniforms.tDiffuse.value = sepiaRT.texture;
+    sepiaMat.uniforms.k.value = sepiaK;
+    renderer.render(sepiaScene, sepiaCam);
+  }
+  const tmpSize = new THREE.Vector2();
+
   function updateCamera(dt) {
+    if (paused) { updatePausedCamera(); return; }
     const wantFocus = mode === 'shoulder' && preview && preview.donnee ? 1 : 0;
     focusK = reduce() ? wantFocus : focusK + (wantFocus - focusK) * (1 - Math.exp(-dt * 6));
     if (Math.abs(focusK - wantFocus) < 0.002) focusK = wantFocus;
@@ -808,7 +1325,7 @@ export function createRenderer(canvas, terrain) {
       const k = smooth(trans);
       cur.pos.lerpVectors(from.pos, goal.pos, k);
       cur.tgt.lerpVectors(from.tgt, goal.tgt, k);
-    } else if (mode === 'flight' && !reduce()) {
+    } else if (mode === 'flight' && !reduce() && !opts.bodies) {
       const k = 1 - Math.exp(-dt * 8);
       cur.pos.lerp(goal.pos, k);
       cur.tgt.lerp(goal.tgt, k);
@@ -826,6 +1343,12 @@ export function createRenderer(canvas, terrain) {
   const pointers = new Map();
   let pinch = 0;
   const onDown = (e) => {
+    if (paused) {
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* synthetic */ } }
+      if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch = Math.hypot(a.x - b.x, a.y - b.y); }
+      return;
+    }
     if (mode !== 'inspect' && mode !== 'shoulder') return;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     // shoulder mode only watches for a pinch; the toss input owns single-pointer gestures
@@ -834,6 +1357,18 @@ export function createRenderer(canvas, terrain) {
   };
   const onMove = (e) => {
     const p = pointers.get(e.pointerId);
+    if (p && paused) {
+      const dx = e.clientX - p.x, dy = e.clientY - p.y;
+      p.x = e.clientX; p.y = e.clientY;
+      if (pointers.size === 1) { PC.az -= dx * 0.008; PC.el += dy * 0.008; }
+      else if (pointers.size === 2) {
+        const [a, b] = [...pointers.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (pinch > 0 && d > 0) PC.dist *= pinch / d;
+        pinch = d;
+      }
+      pcClamp();
+      return;
+    }
     if (!p || (mode !== 'inspect' && mode !== 'shoulder')) return;
     if (mode === 'shoulder') {
       p.x = e.clientX; p.y = e.clientY;
@@ -857,6 +1392,7 @@ export function createRenderer(canvas, terrain) {
   };
   const onUp = (e) => { pointers.delete(e.pointerId); pinch = 0; };
   const onWheel = (e) => {
+    if (paused) { e.preventDefault(); PC.dist *= Math.exp(e.deltaY * 0.001); pcClamp(); return; }
     if (mode === 'shoulder') {
       e.preventDefault();
       zoom = clampZoom(zoom * Math.exp(e.deltaY * 0.001));
@@ -895,11 +1431,17 @@ export function createRenderer(canvas, terrain) {
         tmpQ.setFromAxisAngle(tmpV, wl * dt);
         e.mesh.quaternion.premultiply(tmpQ);
       }
-      if (e.ring) e.ring.visible = mode === 'head';
+      if (e.ring) e.ring.visible = mode === 'head' && !e.body.dead;
     }
+    if (dt > 0 && !reduce()) {
+      swayT += dt;
+      trees.children.forEach((t, i) => t.rotation.set(Math.sin(swayT * 0.55 + i * 1.9) * 0.011, Math.sin(swayT * 0.41 + i * 2.7) * 0.011, 0));
+    }
+    updateFades(dt);
     updateCamera(dt);
     updatePreview();
-    renderer.render(scene, camera);
+    updateJackMark(dt);
+    renderScene();
   }
 
   const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
@@ -927,5 +1469,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { sync, setCamera, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, clearMeasure, showJackZone, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  return { sync, syncStones, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, clearMeasure, showJackZone, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
 }

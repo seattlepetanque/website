@@ -13,6 +13,9 @@
 //     targets: () => bodies.map((b) => ({ id: b.id, x: b.x, y: b.y, r: b.r })),
 //   });
 //   toss.setPhase('aim');   // start of the human's turn; 'off' otherwise; destroy() on teardown
+// Phase 'place' (the other team's invalid jack): hover or drag moves a marker over the ground, a click or release
+// on a valid spot places the jack, arrows move the marker and Enter places. Extra options: placeValid(point) ->
+// boolean, onPlacePreview({ point, valid } | null), onPlace(point), onPlaceInvalid(point).
 // The pure state machine (createTossMachine) and helpers are exported for tests.
 import { LOFT_MIN, LOFT_MAX, styleForLoft } from './donnee.js';
 
@@ -29,6 +32,8 @@ export const TOSS = Object.freeze({
   keyLoft: 1 * DEG,
   keyStartLoft: 30 * DEG,
   defaultDistance: 7,       // m, Enter places the donnée this far ahead
+  placeStart: { x: 2, y: 9 }, // keyboard marker start while placing the jack
+  placeStep: 0.25, placeStepFine: 0.05, // m per arrow / Shift+arrow while placing the jack
 });
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -70,6 +75,7 @@ export function createTossMachine(opts) {
   let ptr = null;      // active pointer id
   let x0 = 0, y0 = 0, t0 = 0, lastX = 0, pickPt = null;
   let cur = null;      // { donnee, loft, snappedTo, cancel }
+  let placePt = null;  // marker position while placing the jack
 
   function snapped(p) { return snapDonnee(p, o.targets ? o.targets() : [], TOSS.snapRadius); }
 
@@ -103,6 +109,23 @@ export function createTossMachine(opts) {
     if (cancel !== cur.cancel || loft !== cur.loft) { cur.cancel = cancel; cur.loft = loft; emit({ px: x, py: y }); }
     else if (o.onReadout) o.onReadout({ ...cur, px: x, py: y });
   }
+  function placeAt(p) {
+    if (!p) { placePt = null; o.onPlacePreview && o.onPlacePreview(null); return; }
+    placePt = { x: p.x, y: p.y };
+    o.onPlacePreview && o.onPlacePreview({ point: placePt, valid: !!(o.placeValid && o.placeValid(placePt)) });
+  }
+  function tryPlace(p) {
+    if (!p) return false;
+    if (o.placeValid && o.placeValid(p)) {
+      phase = 'off'; st = 'idle'; ptr = null; placePt = null;
+      o.onPlacePreview && o.onPlacePreview(null);
+      o.onPlace && o.onPlace({ x: p.x, y: p.y });
+      return true;
+    }
+    placeAt(p);
+    o.onPlaceInvalid && o.onPlaceInvalid({ x: p.x, y: p.y });
+    return false;
+  }
   function turn(x) {
     const dx = x - lastX; lastX = x;
     if (dx) o.onTurn && o.onTurn(dx * TOSS.turnSpan / o.size().w);
@@ -112,12 +135,24 @@ export function createTossMachine(opts) {
     get phase() { return phase; },
     get state() { return st; },
     get current() { return cur; },
+    // pointer hovering with no button down (mouse): move the placement marker
+    hover(x, y) {
+      if (phase !== 'place' || ptr !== null) return;
+      placeAt(o.pick(x, y));
+    },
     setPhase(p) {
+      if (phase === 'place' && p !== 'place') placeAt(null);
       if (st === 'pulling' || st === 'keys') { cur = null; st = 'idle'; o.onReadout && o.onReadout(null); }
       st = 'idle'; ptr = null; phase = p;
     },
     down(id, x, y, t) {
       if (phase === 'off') return false;
+      if (phase === 'place') {
+        if (ptr !== null) return false;
+        ptr = id; st = 'placing';
+        placeAt(o.pick(x, y));
+        return true;
+      }
       if (ptr !== null) { // second pointer: pinch zoom, abandon the gesture
         if (st === 'pulling') end('cancel');
         st = 'idle'; ptr = null;
@@ -134,6 +169,7 @@ export function createTossMachine(opts) {
     },
     move(id, x, y, t) {
       if (id !== ptr) return;
+      if (st === 'placing') { placeAt(o.pick(x, y)); return; }
       if (st === 'pending') {
         const k = classifyDrag(x - x0, y - y0, t - t0);
         if (k === 'turn') { st = 'turning'; turn(x); }
@@ -147,16 +183,27 @@ export function createTossMachine(opts) {
     },
     up(id, x, y) {
       if (id !== ptr) return;
+      if (st === 'placing') { st = 'idle'; ptr = null; tryPlace(o.pick(x, y)); return; }
       if (st === 'pulling') { updatePull(x, y); end(cur.cancel ? 'cancel' : 'throw'); }
       else { st = 'idle'; ptr = null; pickPt = null; }
     },
     pointerCancel(id) {
       if (id !== ptr) return;
+      if (st === 'placing') { st = 'idle'; ptr = null; return; }
       if (st === 'pulling') end('cancel'); else { st = 'idle'; ptr = null; pickPt = null; }
     },
     // returns true if the key was handled
     key(k, shift = false) {
       if (phase === 'off') return false;
+      if (phase === 'place') {
+        if (k === 'Enter') return tryPlace(placePt || o.placeStart || TOSS.placeStart) || true;
+        const dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[k];
+        if (!dir) return false;
+        const step = shift ? TOSS.placeStepFine : TOSS.placeStep;
+        const base = placePt || o.placeStart || TOSS.placeStart;
+        placeAt({ x: base.x + dir[0] * step, y: base.y + dir[1] * step });
+        return true;
+      }
       if (k === 'Escape') {
         if (st === 'pulling' || st === 'keys') { end('cancel'); return true; }
         return false;
@@ -229,8 +276,15 @@ export function createTossInput(canvas, options) {
     readout.textContent = s.cancel
       ? 'Release to cancel'
       : `${STYLE_NAMES[styleForLoft(s.loft, !!s.snappedTo)]} ${Math.round(s.loft / DEG)}°${s.snappedTo ? ' · lands just short' : ''}`;
-    if (s.px !== undefined) { readout.style.left = `${s.px + 18}px`; readout.style.top = `${s.py - 36}px`; }
-    else { const r = canvas.getBoundingClientRect(); readout.style.left = `${r.left + r.width / 2}px`; readout.style.top = `${r.top + r.height * 0.2}px`; }
+    let x, y;
+    if (s.px !== undefined) { x = s.px + 18; y = s.py - 36; }
+    else { const r = canvas.getBoundingClientRect(); x = r.left + r.width / 2; y = r.top + r.height * 0.2; }
+    // keep the readout inside the viewport (full-window play, small phones)
+    const m = 6, w = readout.offsetWidth, h = readout.offsetHeight;
+    const vw = document.documentElement.clientWidth || window.innerWidth, vh = window.innerHeight;
+    x = Math.max(m, Math.min(x, vw - w - m));
+    y = Math.max(m, Math.min(y, vh - h - m));
+    readout.style.left = `${x}px`; readout.style.top = `${y}px`;
   }
   const mach = createTossMachine({ ...opts, size, onReadout });
 
@@ -246,7 +300,10 @@ export function createTossInput(canvas, options) {
       timer = setTimeout(() => mach.tick(performance.now()), TOSS.dwellMs + 10);
     } else if (wasActive) clearTimer();
   };
-  const onMove = (e) => mach.move(e.pointerId, e.clientX, e.clientY, e.timeStamp);
+  const onMove = (e) => {
+    if (mach.state === 'idle' && mach.phase === 'place' && e.pointerType === 'mouse') mach.hover(e.clientX, e.clientY);
+    else mach.move(e.pointerId, e.clientX, e.clientY, e.timeStamp);
+  };
   const onUp = (e) => { clearTimer(); mach.up(e.pointerId, e.clientX, e.clientY, e.timeStamp); };
   const onCancelPtr = (e) => { clearTimer(); mach.pointerCancel(e.pointerId); };
   const onKey = (e) => {
@@ -267,6 +324,7 @@ export function createTossInput(canvas, options) {
 
   return {
     setPhase(p) { clearTimer(); mach.setPhase(p); },
+    getPhase() { return mach.phase; },
     destroy() {
       clearTimer();
       canvas.removeEventListener('pointerdown', onDown);

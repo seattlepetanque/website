@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createMatch, apply, nextTeam, meneResult, jackValid, playersWithBoules,
+  createMatch, apply, nextTeam, meneResult, holdingTeam, jackValid, jackFault, jackPlaceValid, jackPlaceFault, playersWithBoules,
 } from '../../assets/js/petanque/rules.js';
 
 const jackAt = { x: 2, y: 8 };
@@ -38,14 +38,33 @@ test('jack validity', () => {
   assert.ok(!jackValid({ x: 2, y: 8, dead: true }));
 });
 
-test('invalid jack hands over to the other team, valid starts play', () => {
+test('invalid jack goes to the other team to place; the thrower still plays first', () => {
   let m = apply(createMatch({}), { type: 'jackThrown', team: 0, jack: { x: 2, y: 3 } });
-  assert.equal(m.phase, 'jack');
-  assert.equal(m.jackTeam, 1);
-  m = apply(m, { type: 'jackThrown', team: 1, jack: jackAt });
+  assert.equal(m.phase, 'jackPlace');
+  assert.equal(m.placingTeam, 1);
+  assert.equal(m.jackTeam, 0);
+  assert.equal(m.jack, null);
+  // wrong team, invalid spot and a dead jack are ignored
+  assert.equal(apply(m, { type: 'jackPlaced', team: 0, jack: jackAt }), m);
+  assert.equal(apply(m, { type: 'jackPlaced', team: 1, jack: { x: 2, y: 4 } }), m);
+  assert.equal(apply(m, { type: 'jackPlaced', team: 1, jack: { x: -0.5, y: 8 } }), m);
+  assert.equal(apply(m, { type: 'jackThrown', team: 1, jack: jackAt }), m); // not a throw phase any more
+  m = apply(m, { type: 'jackPlaced', team: 1, jack: jackAt });
   assert.equal(m.phase, 'play');
-  assert.equal(m.jackTeam, 1);
-  assert.equal(nextTeam(m), 1); // jack thrower plays first boule
+  assert.equal(m.jackTeam, 0);
+  assert.equal(m.placingTeam, null);
+  assert.deepEqual(m.jack, { x: 2, y: 8, dead: false });
+  assert.equal(nextTeam(m), 0); // the team that threw plays the first boule
+  assert.equal(apply(m, { type: 'jackPlaced', team: 1, jack: jackAt }), m); // only in jackPlace
+});
+
+test('jackFault explains invalid jacks', () => {
+  assert.equal(jackFault({ x: 2, y: 8 }), null);
+  assert.equal(jackFault({ x: 2, y: 5 }).reason, 'short');
+  assert.equal(jackFault({ x: 2, y: 12 }).reason, 'far');
+  assert.equal(jackFault({ x: 0.5, y: 8 }).reason, 'line');
+  assert.equal(jackFault({ x: 2, y: 8, dead: true }).reason, 'out');
+  assert.ok(Math.abs(jackFault({ x: 2, y: 5 }).dist - 4) < 1e-9);
 });
 
 test('reducer does not mutate input', () => {
@@ -172,4 +191,43 @@ test('7-point game ends at 7', () => {
   assert.equal(m.phase, 'gameOver');
   assert.equal(m.winner, 1);
   assert.deepEqual(m.scores, [5, 8]);
+});
+
+test('dead boules relocated beyond the far line are not counted or measured', () => {
+  const jack = { x: 2, y: 8, dead: false };
+  // a dead boule sitting at its relocated spot, right beside the jack's mirror, must not score or hold
+  const boules = [b(1, 0, 2, 8.5), b(2, 1, 0.3, 15.25, true), b(3, 1, 1.2, 15.25, true)];
+  assert.equal(holdingTeam(jack, boules), 0);
+  assert.equal(meneResult(jack, boules).team, 0);
+  assert.equal(meneResult(jack, boules).points, 1);
+});
+
+test('jackPlaceValid: 6-10 m, whole jack inside the strings, no 1 m margin', () => {
+  const side = (x, y) => jackPlaceValid({ x, y });
+  // 8.6 m out near the left string: y = 1 + sqrt(8.6^2 - (2-x)^2)
+  const yAt = (x, d) => 1 + Math.sqrt(d * d - (2 - x) ** 2);
+  assert.ok(side(0.02, yAt(0.02, 8.6))); // 2 cm in from the left string
+  assert.ok(!side(0.005, yAt(0.005, 8.6))); // jack would overlap the string
+  assert.ok(!side(-0.01, yAt(-0.01, 8.6)));
+  assert.ok(side(3.98, yAt(3.98, 8.6)));
+  assert.ok(!side(3.995, yAt(3.995, 8.6)));
+  assert.ok(!side(4.01, yAt(4.01, 8.6)));
+  // the thrown-jack rule keeps its margin
+  assert.ok(!jackValid({ x: 0.5, y: yAt(0.5, 8.6) }) && side(0.5, yAt(0.5, 8.6)));
+  // distance still enforced out at the strings
+  assert.ok(!side(0.02, yAt(0.02, 5.9)) && !side(0.02, yAt(0.02, 10.1)));
+  assert.ok(side(0.02, yAt(0.02, 6.001)) && side(0.02, yAt(0.02, 9.999)));
+  assert.ok(!jackPlaceValid({ x: 2, y: 7, dead: true }));
+  assert.equal(jackPlaceFault({ x: 2, y: 8 }), null);
+  assert.equal(jackPlaceFault({ x: 0, y: yAt(0, 8) }).reason, 'line');
+  assert.equal(jackPlaceFault({ x: 2, y: 5 }).reason, 'short');
+});
+
+test('jackPlaced accepts a spot beside the string and rejects one outside', () => {
+  let m = apply(createMatch(), { type: 'jackThrown', team: 0, jack: { x: 2, y: 3 } });
+  assert.equal(m.phase, 'jackPlace');
+  const bad = apply(m, { type: 'jackPlaced', team: 1, jack: { x: -0.1, y: 8.5 } });
+  assert.equal(bad.phase, 'jackPlace');
+  const ok = apply(m, { type: 'jackPlaced', team: 1, jack: { x: 0.03, y: 1 + Math.sqrt(75 - 1.9 ** 2) } });
+  assert.equal(ok.phase, 'play');
 });

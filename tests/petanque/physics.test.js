@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { C } from '../../assets/js/petanque/constants.js';
 import { mulberry32 } from '../../assets/js/petanque/rng.js';
 import { createTerrain } from '../../assets/js/petanque/terrain.js';
-import { createBody, launch, createWorld, simulate } from '../../assets/js/petanque/physics.js';
+import { createBody, launch, createWorld, simulate, LUMBER, deadRowSlot, deadJackSpot, placeDeadBall } from '../../assets/js/petanque/physics.js';
 import { spread, tir, reverse, plombee } from './measure-physics.js';
 
 // Flat terrain stub; optional slope (h = -slope * y) and stones
@@ -240,4 +240,270 @@ test('100 random throws never produce NaN', () => {
     simulate(w, 20);
     assert.ok(w.bodies.every(finite), `throw ${i}`);
   }
+});
+
+// --- D06/D10: out of bounds on every side; dead balls ghost on ---
+const rolling = (b, vx, vy) => {
+  b.state = 'rolling'; b.vx = vx; b.vy = vy; b.wx = -vy / b.r; b.wy = vx / b.r;
+  return b;
+};
+
+test('out on each side only once the whole ball is across the line', () => {
+  const W = C.terrainW, L = C.terrainL, r = C.boule.r;
+  const cases = [
+    ['left', 0.3, 5, -1, 0], ['right', W - 0.3, 5, 1, 0],
+    ['far', 2, L - 0.3, 0, 1], ['back', 2, 0.3, 0, -1],
+  ];
+  for (const [name, x, y, dx, dy] of cases) {
+    const w = createWorld(stub(), rand());
+    const b = rolling(w.add(boule(x, y)), dx * 2, dy * 2);
+    let deadAt = null;
+    for (let i = 0; i < 4000 && !b.dead; i++) {
+      w.step();
+      if (b.dead) deadAt = w.events.find((e) => e.type === 'dead');
+    }
+    assert.ok(b.dead, `${name} side goes dead`);
+    // position at the moment it went out: just past the line by r (not earlier)
+    const d = name === 'left' ? -deadAt.x : name === 'right' ? deadAt.x - W : name === 'far' ? deadAt.y - L : -deadAt.y;
+    assert.ok(d > r && d < r + 0.02, `${name}: out at ${d.toFixed(4)} m past the line`);
+    assert.ok(finite(b));
+  }
+  // straddling the line is still in play
+  const w = createWorld(stub(), rand());
+  const s = w.add(boule(-r + 0.001, 5));
+  w.step();
+  assert.equal(s.dead, false);
+});
+
+test('a ball rolling back past the line behind the circle goes dead', () => {
+  const w = createWorld(stub(), rand());
+  const b = w.add(boule(2, 0.4));
+  b.state = 'rolling'; b.vy = -1.5; b.wx = 1.5 / b.r;
+  simulate(w, 5);
+  assert.ok(b.dead, `y=${b.y}`);
+});
+
+test('a ball rolling diagonally out a corner goes dead', () => {
+  for (const [x, y, vx, vy] of [[0.2, 0.2, -2, -2], [3.8, 14.8, 2, 2], [0.2, 14.8, -2, 2], [3.8, 0.2, 2, -2]]) {
+    const w = createWorld(stub(), rand());
+    const b = rolling(w.add(boule(x, y)), vx, vy);
+    simulate(w, 5);
+    assert.ok(b.dead && finite(b), `corner ${x},${y}`);
+  }
+});
+
+test('nothing on the real terrain stops a ball crossing a line and going well beyond', () => {
+  const t = createTerrain(7);
+  const W = C.terrainW, L = C.terrainL;
+  const dirs = [[-1, 0, 0.2, 7], [1, 0, W - 0.2, 7], [0, 1, 2, L - 0.2], [0, -1, 2, 0.2]];
+  for (const [dx, dy, x, y] of dirs) {
+    for (const seed of [1, 2, 3]) {
+      const w = createWorld(t, mulberry32(seed));
+      w.isClone = true;
+      const b = rolling(w.add(boule(x, y)), dx * 3, dy * 3);
+      // without the dead check, the ball must keep rolling out to 0.45 m past the line
+      let crossed = 0;
+      for (let i = 0; i < 2000 && !b.dead; i++) {
+        w.step();
+        if (!b.dead) crossed = Math.max(crossed, dx < 0 ? -b.x : dx > 0 ? b.x - W : dy > 0 ? b.y - L : -b.y);
+      }
+      assert.ok(b.dead, `dir ${dx},${dy} seed ${seed}`);
+      assert.ok(crossed > 0, 'crossed the line before being marked');
+    }
+  }
+  // sampling just beyond the padded grid is finite and stays continuous with the edge
+  for (const [x, y] of [[-0.45, 5], [W + 0.45, 5], [2, L + 0.45], [2, -0.45], [-1, -1], [W + 1, L + 1]]) {
+    const s = t.sample(x, y);
+    assert.ok(Number.isFinite(s.h) && Number.isFinite(s.nx) && Math.abs(s.h) < 0.06 && s.nz > 0.99, `${x},${y}`);
+  }
+});
+
+test('dead-row slots line up beyond the far line without overlapping the lumber', () => {
+  const pts = [];
+  for (let i = 0; i < 8; i++) pts.push(deadRowSlot(i));
+  for (let i = 1; i < pts.length; i++) assert.ok(Math.abs(pts[i].x - pts[i - 1].x - C.deadSpacing) < 1e-9);
+  for (const p of pts) assert.ok(p.y > C.terrainL + C.boule.r && p.y + C.boule.r < C.terrainL + C.lumberGap && p.x >= 0 && p.x <= C.terrainW);
+  const j = deadJackSpot();
+  assert.ok(j.x === C.terrainW / 2 && j.y > C.terrainL && j.y < C.terrainL + C.lumberGap);
+  const w = createWorld(stub(), rand());
+  const b = w.add(boule(1, 1));
+  placeDeadBall(w, b, pts[2].x, pts[2].y);
+  assert.ok(b.dead && b.ghost && b.state === 'resting' && b.x === pts[2].x && b.z === b.r && w.settled());
+});
+
+// --- D10: lumber and ghosts ---
+const timber = (name) => LUMBER.find((q) => q.name === name);
+
+test('timbers are 6x6 with a gap from the string lines, and the terrain reaches well past them', () => {
+  const l = timber('left'), f = timber('far');
+  assert.ok(Math.abs(l.x1 - l.x0 - 0.14) < 1e-9 && l.z1 === 0.14);
+  assert.ok(-l.x1 >= 0.3 && -l.x1 <= 0.5 && f.y0 - C.terrainL >= 0.3 && f.y0 - C.terrainL <= 0.5);
+  assert.ok(C.terrainPad >= 2 && C.terrainPad > C.lumberGap + C.lumberSize + 1);
+});
+
+test('going out makes a ghost that keeps moving; dead balls never count', () => {
+  const w = createWorld(stub(), rand());
+  const b = w.add(boule(2, 14.9));
+  rolling(b, 0, 4);
+  let ev = null;
+  for (let i = 0; i < 600 && !b.dead; i++) { w.step(); ev = w.events.find((e) => e.type === 'dead'); }
+  assert.ok(b.dead && b.ghost && ev && ev.a === b.id);
+  assert.ok(b.outY > C.terrainL && Number.isFinite(b.outX));
+  assert.ok(b.state !== 'resting' && b.vy > 1, 'keeps moving');
+  assert.ok(!w.settled());
+  simulate(w, 10);
+  assert.ok(w.settled() && b.state === 'resting'); // it may have bounced back off the timber
+  assert.equal(w.events.filter((e) => e.type === 'dead').length, 1);
+});
+
+test('a ghost passes through a live boule and live boules do not hit ghosts', () => {
+  const w = createWorld(stub(), rand());
+  const live = w.add(boule(2, 6));
+  const ghost = w.add(boule(2, 5));
+  placeDeadBall(w, ghost, 2, 5);
+  rolling(ghost, 0, 3);
+  for (let i = 0; i < 600; i++) w.step();
+  assert.ok(ghost.y > 6.2, `ghost passed to ${ghost.y}`);
+  assert.equal(live.y, 6);
+  assert.ok(!w.events.some((e) => e.type === 'hit'));
+  // a live ball rolling into a resting ghost
+  const w2 = createWorld(stub(), rand());
+  const g2 = placeDeadBall(w2, w2.add(boule(2, 6)), 2, 6);
+  const s2 = rolling(w2.add(boule(2, 5)), 0, 3);
+  for (let i = 0; i < 480; i++) w2.step();
+  assert.equal(g2.y, 6);
+  assert.ok(s2.y > 6.3);
+  assert.ok(!w2.events.some((e) => e.type === 'hit'));
+});
+
+test('a ghost bounces off each timber', () => {
+  const W = C.terrainW, L = C.terrainL, g = C.lumberGap;
+  const cases = [
+    ['left', -g + 0.3, 7, -1, 0], ['right', W + g - 0.3, 7, 1, 0],
+    ['far', 2, L + g - 0.3, 0, 1], ['near', 2, -g + 0.3, 0, -1],
+  ];
+  for (const [name, x, y, dx, dy] of cases) {
+    const w = createWorld(stub(), rand());
+    const b = placeDeadBall(w, w.add(boule(x, y)), x, y);
+    rolling(b, dx * 3, dy * 3);
+    const bx = timber(name);
+    let maxPast = 0, bounced = false;
+    for (let i = 0; i < 480; i++) {
+      w.step();
+      assert.ok(finite(b));
+      const d = dx < 0 ? bx.x1 - b.x : dx > 0 ? b.x - bx.x0 : dy > 0 ? b.y - bx.y0 : bx.y1 - b.y;
+      maxPast = Math.max(maxPast, d);
+      if (w.events.some((e) => e.type === 'lumber')) bounced = true;
+    }
+    assert.ok(bounced, `${name}: lumber event`);
+    assert.ok(maxPast <= b.r + 0.002, `${name}: pushed ${maxPast} into the wood`);
+    const back = dx < 0 ? b.x - x : dx > 0 ? x - b.x : dy > 0 ? y - b.y : b.y - y;
+    assert.ok(back > -0.05, `${name}: came back`);
+  }
+});
+
+test('a ball thrown over a timber lands outside and stops within about 2 m', () => {
+  for (const terrain of [stub(), createTerrain(4)]) {
+    for (const seed of [1, 2, 3]) {
+      const { w, b } = throwBall(terrain, { yaw: 0, speed: 16, loft: 0.9, backspin: 0, sidespin: 0 }, seed);
+      b.y = 14; b.z = 1.0; // already near the far end, high enough to clear the 14 cm timber
+      b.vy = 3 + 0.5 * seed; b.vz = 1; b.vx = 0;
+      b.state = 'airborne';
+      simulate(w, 20);
+      const out = C.terrainL + C.lumberGap + C.lumberSize;
+      assert.ok(b.dead && b.ghost && finite(b));
+      assert.ok(b.y > out, `landed beyond the timber (y=${b.y})`);
+      assert.ok(b.y < out + 2, `stopped within 2 m (y=${b.y})`);
+      assert.ok(w.settled());
+    }
+  }
+});
+
+test('a rolling ball that does not clear the timber stays out of the wood', () => {
+  const w = createWorld(stub(), rand());
+  const b = rolling(w.add(boule(2, 14)), 0, 8);
+  simulate(w, 10);
+  assert.ok(b.dead && b.y < timber('far').y0 && finite(b));
+});
+
+test('settled() stops a lingering ghost after ghostMaxTime', () => {
+  const w = createWorld(stub({ friction: 0 }), rand());
+  const b = w.add(boule(2, 3));
+  placeDeadBall(w, b, 2, 3);
+  rolling(b, 0.5, 0.5); // frictionless: would roll for a long time inside the lumber
+  b.state = 'rolling';
+  let t = 0;
+  while (!w.settled() && t < 10) { w.step(); t += C.dt; }
+  assert.ok(Math.abs(t - C.ghostMaxTime) < 0.05, `settled after ${t}`);
+  assert.equal(b.vx, 0);
+  // a live ball is never cut off by the ghost timer
+  const w2 = createWorld(stub({ friction: 0 }), rand());
+  const l = rolling(w2.add(boule(2, 3)), 0.05, 0.05);
+  for (let i = 0; i < 240 * 4; i++) w2.step();
+  assert.ok(!w2.settled() && l.state === 'rolling');
+});
+
+test('clone keeps ghosts and lumber behaviour', () => {
+  const w = createWorld(stub(), rand());
+  const b = w.add(boule(2, 14.9));
+  rolling(b, 0, 4);
+  for (let i = 0; i < 120 && !b.dead; i++) w.step();
+  assert.ok(b.ghost);
+  const c = w.clone();
+  const cb = c.bodies.find((q) => q.id === b.id);
+  assert.ok(cb.ghost && cb.dead && cb.outY === b.outY);
+  const live = c.add(boule(cb.x, cb.y + 0.1));
+  simulate(c, 10);
+  assert.ok(cb.y < timber('far').y0 + 0.5 && !c.events.some((e) => e.type === 'hit'));
+  assert.ok(b.state !== 'resting', 'the original is untouched');
+  assert.ok(live.dead === false || live.y > C.terrainL);
+});
+
+test('random throws with ghosts never produce NaN and always settle', () => {
+  const t = createTerrain(9);
+  const rnd = mulberry32(77);
+  for (let i = 0; i < 60; i++) {
+    const w = createWorld(t, mulberry32(i));
+    w.isClone = true;
+    for (let k = 0; k < 3; k++) {
+      const b = launch(createBody('boule', { team: k % 2 }), { yaw: (rnd() - 0.5) * 1.2, speed: 6 + rnd() * 8, loft: 0.1 + rnd() * 1.1, backspin: rnd() * 30, sidespin: (rnd() - 0.5) * 20 });
+      w.add(b);
+      b.state = 'airborne';
+    }
+    simulate(w, 25);
+    assert.ok(w.bodies.every(finite), `throw ${i}`);
+    assert.ok(w.settled(), `throw ${i} settled`);
+  }
+});
+
+test('a jack placed 1 cm inside a string on steep terrain stays put and live', () => {
+  for (const seed of [1, 2, 3]) {
+    for (const x of [0.025, 3.975]) {
+      const t = createTerrain(seed, { crown: 0.05 });
+      const y = 1 + Math.sqrt(75 - (2 - x) ** 2);
+      t.settleSpot(x, y);
+      assert.equal(t.stonesNear(x, y, 0.15).length, 0, 'stones cleared');
+      const w = createWorld(t, mulberry32(seed));
+      const j = createBody('jack', { team: -1, x, y, state: 'resting' });
+      w.add(j);
+      for (let i = 0; i < 300; i++) simulate(w);
+      assert.equal(j.x, x); assert.equal(j.y, y);
+      assert.ok(!j.dead && j.state === 'resting');
+      t.resetDivots();
+      assert.ok(t.stonesNear(x, y, 0.15).length >= 0);
+    }
+  }
+});
+
+test('settleSpot flattens locally and resets with the divots', () => {
+  const t = createTerrain(4, { crown: 0.05 });
+  const before = t.stonesNear(2, 8, 0.6).length;
+  const far = t.sample(2.5, 8.5).h;
+  t.settleSpot(2, 8, 0.6);
+  assert.equal(t.stonesNear(2, 8, 0.6).length, 0);
+  const s = t.sample(2, 8), s2 = t.perceived().sample(2.05, 8);
+  assert.ok(Math.hypot(s.nx, s.ny) < 0.05 && Math.abs(s2.h - t.perceived().sample(2, 8).h) < 0.003);
+  assert.equal(t.sample(2.5, 8.5).h, far);
+  t.resetDivots();
+  assert.equal(t.stonesNear(2, 8, 0.6).length, before);
 });

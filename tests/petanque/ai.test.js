@@ -1,10 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { mulberry32, gauss } from '../../assets/js/petanque/rng.js';
 import { createBody, launch, createWorld, simulate } from '../../assets/js/petanque/physics.js';
-import { createMatch, jackValid } from '../../assets/js/petanque/rules.js';
-import { LOFT_MIN, LOFT_MAX, styleForLoft } from '../../assets/js/petanque/donnee.js';
-import { chooseThrow, chooseThrowAsync, chooseJackThrow } from '../../assets/js/petanque/ai.js';
+import { createMatch, jackValid, jackPlaceValid } from '../../assets/js/petanque/rules.js';
+import { LOFT_MIN, LOFT_MAX, styleForLoft, SKILL, energyFor } from '../../assets/js/petanque/donnee.js';
+import { AI, chooseThrow, chooseThrowAsync, chooseJackThrow, chooseJackPlacement } from '../../assets/js/petanque/ai.js';
+
+import { difficultyScale } from '../../assets/js/petanque/donnee.js';
+// decisions and accuracy are asserted at the original D02 scaling; the shipped values (donnee.js difficultyScale) are balanced against
+// the scripted pointer in measure-tactics.js
+Object.assign(difficultyScale, { easy: 2.3, medium: 1.35, hard: 0.65 });
+AI.timeGuard = false; // the wall-clock guard would make the determinism checks load-dependent (it is exercised in tactics.test.js)
 
 // Flat packed terrain, no stones
 function flat() {
@@ -80,7 +87,7 @@ test('chooseThrow does not modify the world', () => {
 test('a medium decision takes under 100 ms', () => {
   const s = setup({ boules: [{ x: 2.2, y: 8.6, team: 0 }, { x: 1.7, y: 8.4, team: 1 }] });
   const args = { world: s.world, match: s.match, player: odette(s.match), difficulty: 'medium', rand: mulberry32(9) };
-  chooseThrow(args); // builds the roll-out tables
+  for (let i = 0; i < 6; i++) chooseThrow({ ...args, difficulty: i % 2 ? 'hard' : 'medium', rand: mulberry32(100 + i) }); // builds the roll-out tables (one per style and release height)
   const t0 = performance.now();
   chooseThrow({ ...args, rand: mulberry32(10) });
   const ms = performance.now() - t0;
@@ -181,4 +188,52 @@ test('Marcel does not always throw plombées', () => {
     styles.add(r.style);
   }
   assert.ok(styles.size >= 2, [...styles].join());
+});
+
+test('the AI never plans a throw beyond its energy budget', () => {
+  const from = { x: 2, y: 1, z: 0.9 };
+  for (const [id, jy] of [['marcel', 8.5], ['marcel', 10.5], ['odette', 10.5], ['pierre', 7]]) {
+    for (const difficulty of ['easy', 'hard']) {
+      const s = setup({ jack: { x: 2.2, y: jy }, boules: [{ x: 2.3, y: jy + 0.1, team: 0 }] });
+      const player = s.match.players.find((p) => p.id === id);
+      const r = chooseThrow({ world: s.world, match: s.match, player, difficulty, rand: mulberry32(11), from });
+      const e = energyFor({ from: r.from, landing: r.donnee, loft: r.loft, skill: SKILL[id], terrain: s.world.terrain });
+      assert.ok(e <= 1.005, `${id} ${difficulty} jack ${jy}: ${e}`);
+      assert.ok(r.energyFrac <= 1.000001);
+    }
+  }
+  const s = setup({ jack: { x: 2, y: 8.5 } });
+  for (const id of ['marcel', 'odette']) {
+    const r = chooseJackThrow({ world: s.world, difficulty: 'medium', rand: mulberry32(3), player: s.match.players.find((p) => p.id === id), from });
+    assert.ok(energyFor({ from: r.from, landing: r.donnee, loft: r.loft, skill: SKILL[id], terrain: s.world.terrain }) <= 1.005);
+  }
+});
+
+test('chooseJackPlacement always returns a valid spot and varies with personality', () => {
+  const s = setup();
+  const byId = (id) => s.match.players.find((p) => p.id === id);
+  const dists = {};
+  for (const id of ['marcel', 'odette', 'pierre']) {
+    for (const difficulty of ['easy', 'medium', 'hard']) {
+      for (let i = 0; i < 12; i++) {
+        const terrain = createTerrain(i + 1);
+        const r = chooseJackPlacement({ match: s.match, player: byId(id), difficulty, rand: mulberry32(i), terrain });
+        assert.ok(jackPlaceValid({ x: r.x, y: r.y }), `${id} ${difficulty} ${i}: ${r.x},${r.y}`);
+        assert.ok(/places the cochonnet at \d+\.\d m/.test(r.label));
+        (dists[id] ||= []).push(r.distance);
+      }
+    }
+  }
+  const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+  assert.ok(mean(dists.odette) > mean(dists.marcel) + 0.8, `${mean(dists.odette)} vs ${mean(dists.marcel)}`);
+  // deterministic for the same rand, different for different rand on easy
+  const a = chooseJackPlacement({ match: s.match, player: byId('marcel'), difficulty: 'easy', rand: mulberry32(5), terrain: flat() });
+  const b = chooseJackPlacement({ match: s.match, player: byId('marcel'), difficulty: 'easy', rand: mulberry32(5), terrain: flat() });
+  assert.deepEqual(a, b);
+  const spots = new Set();
+  for (let i = 0; i < 10; i++) {
+    const r = chooseJackPlacement({ match: s.match, player: byId('marcel'), difficulty: 'easy', rand: mulberry32(i), terrain: flat() });
+    spots.add(`${r.x},${r.y}`);
+  }
+  assert.ok(spots.size >= 2);
 });

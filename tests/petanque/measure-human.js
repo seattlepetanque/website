@@ -7,7 +7,7 @@ import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { createBody, launch, createWorld, simulate } from '../../assets/js/petanque/physics.js';
 import { createMatch } from '../../assets/js/petanque/rules.js';
 import { chooseThrow, donneeDistFor } from '../../assets/js/petanque/ai.js';
-import { SKILL, coneFor, executeThrow, releaseFrom } from '../../assets/js/petanque/donnee.js';
+import { SKILL, coneFor, executeThrow, releaseFrom, fitToBudget } from '../../assets/js/petanque/donnee.js';
 import { releaseOffset } from '../../assets/js/petanque/character.js';
 import { specFor } from '../../assets/js/petanque/personalities.js';
 
@@ -38,22 +38,26 @@ const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
 const out = [];
 // human policies: style loft, judgment error (m, along the line)
 for (const [name, loftDeg, err] of [
-  ['human plombee', 55, 0], ['human plombee +0.3m error', 55, 0.3],
+  ['human plombee', 55, 0], ['human plombee +0.3m error', 55, 0.3], ['human high lob 65deg', 65, 0],
   ['human demi', 32, 0], ['human demi +0.3m error', 32, 0.3],
   ['human roulette', 14, 0], ['human roulette +0.3m error', 14, 0.3],
 ]) {
   const ds = [], r = mulberry32(77);
+  let clamps = 0;
   for (let i = 0; i < n; i++) {
     const s = scenario(i), loft = loftDeg * DEG, from = releaseFrom(BASE, loft);
     const dist = Math.hypot(s.jack.x - from.x, s.jack.y - from.y);
     const dd = donneeDistFor('boule', loft, from, dist) ?? dist;
     const dn = Math.min(dd, dist) + gauss(r) * err, k = dn / dist;
-    const landing = { x: from.x + (s.jack.x - from.x) * k, y: from.y + (s.jack.y - from.y) * k };
-    const cone = coneFor({ skill: SKILL.human, from, landing, loft });
+    const want = { x: from.x + (s.jack.x - from.x) * k, y: from.y + (s.jack.y - from.y) * k };
+    const fit = fitToBudget({ from, landing: want, loft, skill: SKILL.human, terrain: s.terrain }); // D02: the arm's limit
+    const landing = fit.landing;
+    if (fit.clamped) clamps++;
+    const cone = coneFor({ skill: SKILL.human, from, landing, loft, energyFrac: fit.energyFrac });
     const tp = executeThrow({ from, landing, loft, cone, terrain: s.terrain, rand: r }).throwParams;
     ds.push(settle(s, tp, from));
   }
-  out.push(`${name.padEnd(28)} mean ${mean(ds).toFixed(2)}  <0.5m ${(ds.filter((d) => d < 0.5).length / n * 100).toFixed(0)}%`);
+  out.push(`${name.padEnd(28)} mean ${mean(ds).toFixed(2)}  <0.5m ${(ds.filter((d) => d < 0.5).length / n * 100).toFixed(0)}%  clamped ${clamps}/${n}`);
 }
 for (const id of ['marcel', 'pierre']) {
   for (const difficulty of ['easy', 'medium', 'hard']) {

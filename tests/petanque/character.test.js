@@ -4,6 +4,7 @@ import * as THREE from '../../assets/js/vendor/three.module.js';
 import fs from 'node:fs';
 import {
   RIG, meshScale, createCharacter, stancePose, walkPose, solveSkeleton, boneLengths, BONES, releaseOffset,
+  bendPose, bendDepth, bendReach, BEND_ACT, BEND_TIME,
 } from '../../assets/js/petanque/character.js';
 
 const STANCES = ['idle', 'aim', 'crouch', 'stand', 'watch', 'celebrate', 'dismay'];
@@ -255,5 +256,78 @@ test('mesh mode: the crouch is clearly lower than standing', async () => {
     return h.getWorldPosition(new THREE.Vector3()).z;
   };
   assert.ok(headTop('crouch') < headTop('idle') - 0.3);
+  ch.dispose();
+});
+
+// ---- D11: bending, carrying, handing over, stepping over a timber ----
+test('bend, carry, give and step-over poses keep every bone length', () => {
+  for (const H of [1.5, 1.75, 1.95]) {
+    for (let u = 0; u <= 1.001; u += 0.125) {
+      checkBones(solveSkeleton(bendPose(u), H).joints, H, 'bend');
+      checkBones(solveSkeleton(bendPose(u, { carry: true }), H).joints, H, 'bend carry');
+    }
+    for (let ph = 0; ph < 7; ph += 0.4) {
+      checkBones(solveSkeleton(walkPose(ph, { lift: 2.6 }), H).joints, H, 'step over');
+      checkBones(solveSkeleton(walkPose(ph, { carry: true }), H).joints, H, 'walk carry');
+    }
+    for (let t = 0; t < 3; t += 0.5) checkBones(solveSkeleton(stancePose('give', t), H).joints, H, 'give');
+  }
+});
+
+test('bending puts the hand down near the ground ahead of the feet, standing keeps it high', () => {
+  for (const H of [1.5, 1.75, 1.95]) {
+    const low = solveSkeleton(bendPose(1), H).joints, high = solveSkeleton(bendPose(0), H).joints;
+    assert.ok(low.handR[2] < 0.06 * H && low.handR[2] > -0.02 * H, `hand height ${low.handR[2]}`);
+    assert.ok(high.handR[2] > 0.4 * H, 'hand high when standing');
+    assert.ok(low.handR[1] > low.ankleR[1], 'hand ahead of the ankle');
+    assert.ok(low.head[2] < high.head[2] - 0.4 * H, 'the head comes down');
+    const r = bendReach(H);
+    assert.ok(Math.abs(r[2] - low.handR[2]) < 1e-9);
+  }
+  assert.equal(bendDepth(0), 0);
+  assert.equal(bendDepth(BEND_ACT), 1);
+  assert.equal(bendDepth(BEND_TIME), 0);
+});
+
+test('a put-down releases once, at the bottom of the bend, and a pick-up takes once; both end standing', async () => {
+  for (const kind of ['putdown', 'pickup']) {
+    const ch = createCharacter(THREE, SPECS.pierre);
+    ch.setPlacement(1, 2, 0.5);
+    let acts = 0, handZ = null;
+    const done = ch.playBend({ kind, onAct: (pos) => { acts++; handZ = pos.z; } });
+    assert.ok(ch.busy);
+    assert.equal(ch.carrying, false);
+    assert.ok(await run(ch, done, null, 5));
+    assert.equal(acts, 1, kind + ' acts once');
+    assert.ok(handZ < 0.12, `${kind}: the hand is low at the act (${handZ})`);
+    assert.ok(!ch.busy);
+    assert.equal(ch.carrying, kind === 'pickup', 'carrying after a pick-up only');
+    assert.ok(ch.handWorldPosition().z > 0.5, 'hand back up afterwards');
+    ch.dispose();
+  }
+});
+
+test('a walk with via points reaches the target through each waypoint, with lifted legs, and finishes at the yaw', async () => {
+  const ch = createCharacter(THREE, SPECS.odette);
+  ch.setPlacement(0, 0, 0);
+  const seen = [];
+  const done = ch.walkTo({ x: 2, y: 3, yaw: 1, speed: 1.3, via: [{ x: 2, y: 0 }, { x: 2, y: 1.5, lift: 2.6 }] });
+  assert.ok(await run(ch, done, () => seen.push([ch.root.position.x, ch.root.position.y]), 20));
+  assert.ok(seen.some(([x, y]) => Math.abs(x - 2) < 0.02 && Math.abs(y) < 0.05), 'passes the first waypoint');
+  assert.ok(Math.hypot(ch.root.position.x - 2, ch.root.position.y - 3) < 1e-6);
+  assert.ok(Math.abs(ch.yaw - 1) < 1e-6);
+  ch.dispose();
+});
+
+test('a carried ball stays in the hand: the hand position follows the walk', async () => {
+  const ch = createCharacter(THREE, SPECS.marcel);
+  ch.setPlacement(0, 0, 0);
+  ch.setCarrying(true);
+  const done = ch.walkTo({ x: 0, y: 3, speed: 1.3 });
+  const zs = [];
+  await run(ch, done, () => zs.push(ch.handWorldPosition().z), 10);
+  assert.ok(Math.min(...zs) > 0.5 && Math.max(...zs) < 1.3, 'hand carries at the waist');
+  const p = ch.handWorldPosition();
+  assert.ok(Math.abs(p.y - 3) < 0.8);
   ch.dispose();
 });

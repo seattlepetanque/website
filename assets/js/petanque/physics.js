@@ -12,7 +12,7 @@ export function createBody(kind, props = {}) {
   return {
     id: nextId++, kind, team: -1, owner: null,
     x: 0, y: 0, z: r, vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0,
-    r, m: spec.m, state: 'resting', dead: false, restT: 0,
+    r, m: spec.m, state: 'resting', dead: false, ghost: false, ghostT: 0, restT: 0,
     hx: 0, hy: 0, rev: 0, // travel heading for the reverse-roll cap, reverse distance so far
     ...props,
   };
@@ -26,12 +26,78 @@ export function launch(body, p, from = p.from || C.throwFrom) {
   body.x = from.x; body.y = from.y; body.z = from.z;
   body.vx = p.speed * cl * dx; body.vy = p.speed * cl * dy; body.vz = p.speed * sl;
   body.wx = bs * dy; body.wy = -bs * dx; body.wz = p.sidespin || 0;
-  body.state = 'airborne'; body.dead = false; body.restT = 0;
+  body.state = 'airborne'; body.dead = false; body.ghost = false; body.ghostT = 0; body.restT = 0;
   body.hx = dx; body.hy = dy; body.rev = 0;
   return body;
 }
 
 function sqr(a) { return a * a; }
+const clampv = (v, a, b) => (v < a ? a : v > b ? b : v);
+
+// Lumber: four static axis-aligned boxes round the court. Left and right run the full length, near and far
+// butt between them. x0..x1, y0..y1, z0..z1 in metres.
+export const LUMBER = (() => {
+  const g = C.lumberGap, s = C.lumberSize, W = C.terrainW, L = C.terrainL, z0 = -0.1, z1 = s;
+  return Object.freeze([
+    Object.freeze({ name: 'left', x0: -g - s, x1: -g, y0: -g - s, y1: L + g + s, z0, z1 }),
+    Object.freeze({ name: 'right', x0: W + g, x1: W + g + s, y0: -g - s, y1: L + g + s, z0, z1 }),
+    Object.freeze({ name: 'near', x0: -g, x1: W + g, y0: -g - s, y1: -g, z0, z1 }),
+    Object.freeze({ name: 'far', x0: -g, x1: W + g, y0: L + g, y1: L + g + s, z0, z1 }),
+  ]);
+})();
+
+// Beyond the outer face of the timbers (the heavy ground)
+function outside(x, y) {
+  const o = C.lumberGap + C.lumberSize;
+  return x < -o || x > C.terrainW + o || y < -o || y > C.terrainL + o;
+}
+
+// Sphere against a static box: push out, bounce with wood restitution, Coulomb friction with spin
+function boxContact(w, b, bx) {
+  const px = clampv(b.x, bx.x0, bx.x1), py = clampv(b.y, bx.y0, bx.y1), pz = clampv(b.z, bx.z0, bx.z1);
+  let dx = b.x - px, dy = b.y - py, dz = b.z - pz;
+  const d2 = dx * dx + dy * dy + dz * dz;
+  if (d2 >= b.r * b.r) return;
+  let pen;
+  if (d2 > 1e-12) {
+    const d = Math.sqrt(d2);
+    dx /= d; dy /= d; dz /= d; pen = b.r - d;
+  } else { // centre inside the box: leave by the nearest face
+    const c = [[b.x - bx.x0, -1, 0, 0], [bx.x1 - b.x, 1, 0, 0], [b.y - bx.y0, 0, -1, 0], [bx.y1 - b.y, 0, 1, 0], [bx.z1 - b.z, 0, 0, 1]];
+    let m = c[0];
+    for (const q of c) if (q[0] < m[0]) m = q;
+    dx = m[1]; dy = m[2]; dz = m[3]; pen = m[0] + b.r;
+  }
+  b.x += dx * pen; b.y += dy * pen; b.z += dz * pen;
+  const vn = b.vx * dx + b.vy * dy + b.vz * dz;
+  if (vn < 0) {
+    const e = vn < -0.3 ? C.lumberRestitution : 0;
+    const jn = -(1 + e) * vn;
+    b.vx += jn * dx; b.vy += jn * dy; b.vz += jn * dz;
+    const r = b.r;
+    const cx = b.vx + r * (dy * b.wz - dz * b.wy), cy = b.vy + r * (dz * b.wx - dx * b.wz), cz = b.vz + r * (dx * b.wy - dy * b.wx);
+    const cn = cx * dx + cy * dy + cz * dz;
+    const tx = cx - cn * dx, ty = cy - cn * dy, tz = cz - cn * dz;
+    const ts = Math.sqrt(tx * tx + ty * ty + tz * tz);
+    if (ts > 1e-9) {
+      const jt = Math.min(C.lumberFriction * jn, ts / 3.5);
+      const fx = -tx / ts * jt, fy = -ty / ts * jt, fz = -tz / ts * jt;
+      b.vx += fx; b.vy += fy; b.vz += fz;
+      const k = 1 / (0.4 * r * r);
+      b.wx += -r * (dy * fz - dz * fy) * k;
+      b.wy += -r * (dz * fx - dx * fz) * k;
+      b.wz += -r * (dx * fy - dy * fx) * k;
+    }
+    if (-vn > C.stoneEventSpeed) w.events.push({ type: 'lumber', t: w.t, a: b.id, x: b.x, y: b.y, speed: -vn });
+    bv(b);
+    if (b.state !== 'airborne' && b.vz > C.hopSpeed) b.state = 'airborne';
+  }
+  if (dz > 0.7 && b.state === 'airborne') { // perched on the narrow top: slide off along the short axis
+    const ax = bx.x1 - bx.x0 < bx.y1 - bx.y0;
+    const sgn = ax ? (b.x < (bx.x0 + bx.x1) / 2 ? -1 : 1) : (b.y < (bx.y0 + bx.y1) / 2 ? -1 : 1);
+    if (ax) b.vx += sgn * 4 * C.dt; else b.vy += sgn * 4 * C.dt;
+  }
+}
 
 // Stones are fixed spheres; resolve overlap and bounce. Returns true if touched.
 function stoneContacts(w, b) {
@@ -81,7 +147,9 @@ function land(w, b, s) {
   const impact = -vn;
   const hs = Math.hypot(b.vx, b.vy);
   if (hs > 0.3 && b.hx === 0 && b.hy === 0) { b.hx = b.vx / hs; b.hy = b.vy / hs; }
-  let e = C.restitutionNormalMax - (C.restitutionNormalMax - C.restitutionNormalMin) * s.loose;
+  const out = outside(b.x, b.y);
+  const lo = out ? 1 : s.loose; // heavy, soft ground beyond the timbers
+  let e = C.restitutionNormalMax - (C.restitutionNormalMax - C.restitutionNormalMin) * lo;
   e *= 1 + C.restitutionJitter * (w.rand() * 2 - 1);
   e /= 1 + C.landBounceDamp * impact;
   const rolling = e * impact < C.bounceMin;
@@ -108,13 +176,14 @@ function land(w, b, s) {
   }
   // loose ground soaks up forward energy, and a hard landing digs in and kills spin
   const hard = Math.max(0, Math.min(1, (impact - 4) / 5));
-  const gl = 0.4 + 0.6 * s.loose;
-  const drag = Math.max(0, 1 - C.landLooseDrag * s.loose * Math.min(1, impact / 5) - C.landDig * gl * hard);
+  const gl = 0.4 + 0.6 * lo;
+  let drag = Math.max(0, 1 - C.landLooseDrag * lo * Math.min(1, impact / 5) - C.landDig * gl * hard);
+  if (out) drag *= 1 - C.outsideLandDrag;
   const vn2 = b.vx * nx + b.vy * ny + b.vz * nz;
   b.vx = (b.vx - vn2 * nx) * drag + vn2 * nx;
   b.vy = (b.vy - vn2 * ny) * drag + vn2 * ny;
   b.vz = (b.vz - vn2 * nz) * drag + vn2 * nz;
-  const sd = 1 - C.landSpinDamp * gl * hard;
+  const sd = (1 - C.landSpinDamp * gl * hard) * (out ? 1 - C.outsideLandSpin : 1);
   b.wx *= sd; b.wy *= sd; b.wz *= sd;
   capReverse(b, 0);
   w.events.push({ type: 'land', t: w.t, a: b.id, x: b.x, y: b.y, speed: impact });
@@ -178,7 +247,8 @@ function stepRolling(w, b, dt) {
   }
   // rolling resistance (static below the threshold, so slopes can hold a ball)
   const sp = Math.sqrt(b.vx * b.vx + b.vy * b.vy + b.vz * b.vz);
-  const d = s.friction * C.rollFriction * g * nz * dt;
+  const mur = outside(b.x, b.y) ? Math.max(s.friction, C.outsideRollResist) : s.friction;
+  const d = mur * C.rollFriction * g * nz * dt;
   if (sp <= d) { b.vx = 0; b.vy = 0; b.vz = 0; } else {
     const f = (sp - d) / sp;
     b.vx *= f; b.vy *= f; b.vz *= f;
@@ -269,12 +339,42 @@ function collide(w, a, b) {
   if (b.state === 'resting') { b.state = 'rolling'; b.restT = 0; }
 }
 
+// Out-of-play row beyond the far string line, where D11's fetchers set dead boules down: they line up along x
+// in slot order; the jack sits apart, centred, a little further out.
+export function deadRowSlot(index) {
+  const perRow = Math.floor((C.terrainW - 0.4) / C.deadSpacing) + 1;
+  return { x: 0.2 + (index % perRow) * C.deadSpacing, y: C.terrainL + 0.15 + Math.floor(index / perRow) * 0.1 };
+}
+export function deadJackSpot() { return { x: C.terrainW / 2, y: C.terrainL + 0.3 }; }
+
+// Put a dead ball at rest on the ground at (x, y), out of play
+export function placeDeadBall(world, body, x, y) {
+  body.dead = true; body.ghost = true; body.ghostT = 0;
+  if (body.outX === undefined) { body.outX = x; body.outY = y; }
+  body.x = x; body.y = y;
+  body.z = world.terrain.sample(x, y).h + body.r;
+  body.vx = body.vy = body.vz = 0; body.wx = body.wy = body.wz = 0;
+  body.state = 'resting'; body.restT = 0;
+  return body;
+}
+
+// Fully across a string line: the ball is dead at once, turns ghost (keeps moving, touches only ground, stones
+// and lumber) and records where it went out
+function inLumber(b) {
+  for (const bx of LUMBER) if (b.x > bx.x0 - b.r && b.x < bx.x1 + b.r && b.y > bx.y0 - b.r && b.y < bx.y1 + b.r && b.z - b.r < bx.z1) return true;
+  return false;
+}
+
 function checkDead(w, b) {
   const m = b.r + C.deadMargin;
   if (b.x < -m || b.x > C.terrainW + m || b.y > C.terrainL + m || b.y < -m) {
-    b.dead = true;
-    b.vx = b.vy = b.vz = 0; b.wx = b.wy = b.wz = 0;
-    w.events.push({ type: 'dead', t: w.t, a: b.id, x: b.x, y: b.y, speed: 0 });
+    b.dead = true; b.ghost = true; b.ghostT = 0;
+    b.outX = b.x; b.outY = b.y; // where it crossed the line (AI sims aim by this)
+    w.events.push({ type: 'dead', t: w.t, a: b.id, x: b.x, y: b.y, speed: Math.hypot(b.vx, b.vy, b.vz) });
+    if (w.isClone) { // AI sims only need to know it went out: a new ghost is stopped on the spot (saves sim time)
+      b.state = 'resting'; b.restT = 0;
+      b.vx = b.vy = b.vz = 0; b.wx = b.wy = b.wz = 0;
+    }
   }
 }
 
@@ -296,8 +396,17 @@ export function createWorld(terrain, rand = Math.random) {
       const dt = C.dt, bs = w.bodies, n = bs.length;
       for (let i = 0; i < n; i++) {
         const b = bs[i];
-        if (b.dead || b.state === 'resting') continue;
+        if (b.state === 'resting') continue;
         if (b.state === 'airborne') stepAirborne(w, b, dt); else stepRolling(w, b, dt);
+        for (let k = 0; k < LUMBER.length; k++) boxContact(w, b, LUMBER[k]);
+        if (b.ghost) { // a ghost still moving after ghostMaxTime is stopped where it is
+          b.ghostT += dt;
+          if (b.ghostT > C.ghostMaxTime) {
+            b.state = 'resting'; b.restT = 0;
+            b.vx = b.vy = b.vz = 0; b.wx = b.wy = b.wz = 0;
+            if (b.z - b.r > w.terrain.sample(b.x, b.y).h + 0.001 && !inLumber(b)) b.z = w.terrain.sample(b.x, b.y).h + b.r;
+          }
+        }
         const sp2 = b.vx * b.vx + b.vy * b.vy + b.vz * b.vz;
         if (!(sp2 < C.maxSpeed * C.maxSpeed)) { // also catches NaN
           const f = sp2 === sp2 ? C.maxSpeed / Math.sqrt(sp2) : 0;
@@ -306,20 +415,20 @@ export function createWorld(terrain, rand = Math.random) {
       }
       for (let i = 0; i < n; i++) {
         const a = bs[i];
-        if (a.dead) continue;
+        if (a.ghost) continue; // ghosts pass through everything but ground, stones and lumber
         for (let j = i + 1; j < n; j++) {
           const b = bs[j];
-          if (b.dead || (a.state === 'resting' && b.state === 'resting')) continue;
+          if (b.ghost || (a.state === 'resting' && b.state === 'resting')) continue;
           collide(w, a, b);
         }
       }
-      for (let i = 0; i < n; i++) if (!bs[i].dead) checkDead(w, bs[i]);
+      for (let i = 0; i < n; i++) if (!bs[i].ghost && !bs[i].dead) checkDead(w, bs[i]);
       w.t += dt;
     },
     settled() {
       for (let i = 0; i < w.bodies.length; i++) {
         const b = w.bodies[i];
-        if (!b.dead && b.state !== 'resting') return false;
+        if (b.state !== 'resting') return false;
       }
       return true;
     },

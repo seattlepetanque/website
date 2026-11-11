@@ -186,6 +186,10 @@ export function stancePose(stance, t, ctx = {}) {
       if (look) { p.headYaw = clamp(look.yaw, -1.3, 1.3); p.neck = clamp(look.pitch, -0.8, 0.6); }
       break;
     }
+    case 'give': // right hand held out at chest height towards a partner (handing a ball over)
+      p.pitch = 0.02; p.armR = { p: 1.15, ab: 0.12, p2: 1.3, ab2: 0.12 }; p.armL = arm(0.1, 0.12, 0.35);
+      if (look) { p.headYaw = clamp(look.yaw, -1.3, 1.3); p.neck = clamp(look.pitch, -0.8, 0.6); }
+      break;
     case 'celebrate': {
       const react = ctx.react;
       if (react === 'proud' || react === 'clap') { reactionPose(p, 'celebrate', react, t); break; }
@@ -304,18 +308,51 @@ function reactionPose(p, kind, style, t) {
   }
 }
 
-// Walking gait at the given phase (radians, one full cycle = two steps)
-export function walkPose(phase) {
-  const p = basePose(), A = 0.18, s = sin(phase), c = cos(phase);
+// Right arm holding a ball at the waist (carrying), elbow bent
+export const CARRY_ARM = { p: 0.55, ab: 0.2, p2: 1.45, ab2: 0.15 };
+
+// Walking gait at the given phase (radians, one full cycle = two steps). opts.lift scales the foot lift (stepping over
+// a timber raises it to a high step), opts.carry holds the right arm steady with a ball at the waist.
+export function walkPose(phase, opts = {}) {
+  const p = basePose(), A = 0.18, s = sin(phase), c = cos(phase), lift = opts.lift || 1;
   p.footL.y = A * s; p.footR.y = -A * s;
-  p.footL.z = 0.035 * max(0, c); p.footR.z = 0.035 * max(0, -c);
+  p.footL.z = 0.035 * lift * max(0, c); p.footR.z = 0.035 * lift * max(0, -c);
   p.pz = 0.505 - 0.012 * abs(c); p.px = 0.012 * s; p.twist = 0.1 * s; p.spine = -0.1 * s * 0.6 + 0.04;
   p.armL = arm(-0.45 * s + 0.1, 0.08, 0.3); p.armR = arm(0.45 * s + 0.1, 0.08, 0.3);
+  if (opts.carry) { p.armR = { ...CARRY_ARM }; p.twist = 0.1 * s * 0.5; }
   p.pitch = 0.05; p.neck = -0.04; p.headYaw = 0;
   p.ry = 0.0425; // the gait's footprint is centred here at every phase
   return p;
 }
 
+// Bending to the ground (pick up or set down): u = 0 standing, 1 knees bent, back leaning forward, right hand at ground
+// level a little ahead of the feet. opts.carry keeps the right arm at the waist when standing (a ball in hand).
+export function bendPose(u, opts = {}) {
+  const k = clamp(u, 0, 1), p = basePose();
+  p.pz = 0.505 - 0.235 * k; p.py = -0.06 * k;
+  p.pitch = 0.05 + 0.85 * k; p.spine = 0.05 + 0.3 * k; p.neck = -0.55 * k;
+  p.footL = { x: -0.09, y: 0.05 * k, z: 0, yaw: -0.15 }; p.footR = { x: 0.09, y: -0.05 * k, z: 0, yaw: 0.15 };
+  const A = p.pitch + p.spine;
+  const hang = arm(0.1, 0.1, 0.35), reach = arm(A + 0.04, 0.1, 0.05);
+  const r0 = opts.carry ? CARRY_ARM : hang;
+  p.armR = { p: lerp(r0.p, reach.p, k), ab: lerp(r0.ab, reach.ab, k), p2: lerp(r0.p2, reach.p2, k), ab2: lerp(r0.ab2, reach.ab2, k) };
+  p.armL = arm(0.1 + (A * 0.7 - 0.1) * k, 0.2, 0.2);
+  p.ry = footprintShift(p);
+  return p;
+}
+// Depth over a pick-up or put-down: down, a beat at the bottom (the ball changes hands at BEND_ACT), back up
+export const BEND_DOWN = 0.6, BEND_BEAT = 0.2, BEND_UP = 0.55;
+export const BEND_ACT = BEND_DOWN + BEND_BEAT / 2;
+export const BEND_TIME = BEND_DOWN + BEND_BEAT + BEND_UP;
+// Where the right hand is at the bottom of a bend, in root space (x right, y ahead, z up): a fetcher stands so this
+// lands on the ball
+export function bendReach(H = 1.75) { return solveSkeleton(bendPose(1), H).joints.handR; }
+export function bendDepth(t) {
+  if (t <= 0) return 0;
+  if (t < BEND_DOWN) return ease(t / BEND_DOWN);
+  if (t < BEND_DOWN + BEND_BEAT) return 1;
+  return 1 - ease((t - BEND_DOWN - BEND_BEAT) / BEND_UP);
+}
 // Arm angle (shoulder swing) at the moment of release for a given loft (radians)
 export function releaseArmAngle(loft) {
   const lo = 8 * PI / 180, hi = 75 * PI / 180;
@@ -558,7 +595,7 @@ export function createCharacter(THREE, spec = {}) {
   const st = {
     t: 0, yaw: 0, stance: 'idle', mode: 'stance', blend: 1, snap: null, out: null,
     look: null, lookSm: { yaw: 0, pitch: 0 }, holding: false,
-    walk: null, throwing: null, solved: null, frame: null, forceQuirk: null,
+    walk: null, throwing: null, bending: null, carry: false, solved: null, frame: null, forceQuirk: null,
   };
   let vis = null; // skinned-mesh visual: { scene, s, name, bones, hatG, mHat }
   const V = THREE;
@@ -567,12 +604,18 @@ export function createCharacter(THREE, spec = {}) {
   headG.matrixAutoUpdate = false;
 
   function currentTarget() {
-    if (st.mode === 'walk') return walkPose(st.walk.phase);
+    if (st.mode === 'walk') return walkPose(st.walk.phase, { lift: st.walk.lift, carry: st.carry });
+    if (st.mode === 'bend') {
+      const b = st.bending;
+      return bendPose(bendDepth(b.t), { carry: b.kind === 'pickup' ? b.acted : !b.acted });
+    }
     if (st.mode === 'throw') {
       return throwPose(st.throwing.t, stancePose(stanceKind, st.t, {}), stanceKind);
     }
     const react = st.stance === 'celebrate' ? quirks.celebrate : st.stance === 'dismay' ? quirks.dismay : undefined;
-    return stancePose(st.stance, st.t, { look: st.lookSm, quirks, react, forceQuirk: st.forceQuirk, offset: quirkOffset });
+    const sp = stancePose(st.stance, st.t, { look: st.lookSm, quirks, react, forceQuirk: st.forceQuirk, offset: quirkOffset });
+    if (st.carry && (st.stance === 'watch' || st.stance === 'idle')) sp.armR = { ...CARRY_ARM };
+    return sp;
   }
   function evalPose() {
     const target = currentTarget();
@@ -606,6 +649,22 @@ export function createCharacter(THREE, spec = {}) {
     st.lookSm.pitch += (tp - st.lookSm.pitch) * k;
   }
 
+  function endBend() {
+    const b = st.bending; st.bending = null;
+    st.carry = b.kind === 'pickup';
+    switchMode('stance');
+    b.done();
+  }
+  // Start the walk's next leg (via points, then the final target) from where the character stands
+  function nextLeg(w) {
+    const p = w.via.shift();
+    const dx = p.x - root.position.x, dy = p.y - root.position.y;
+    w.leg = { x: p.x, y: p.y }; w.dist = sqrt(dx * dx + dy * dy); w.moved = 0;
+    if (w.dist > 0.01) w.heading = atan2(dx, dy);
+    w.lift = p.lift || 1;
+    w.stage = w.dist > 0.01 ? 'go' : (w.via.length ? 'go' : 'turn2');
+    if (w.dist <= 0.01 && w.via.length) nextLeg(w);
+  }
   function finishThrow() {
     const th = st.throwing; st.throwing = null;
     st.stance = 'watch'; switchMode('stance');
@@ -625,15 +684,19 @@ export function createCharacter(THREE, spec = {}) {
         const step = TURN_RATE * dt;
         if (abs(dy) <= step) {
           setYaw(goal);
-          if (w.stage === 'turn1') { w.stage = w.dist > 0.02 ? 'go' : 'turn2'; } else w.stage = 'done';
+          if (w.stage === 'turn1') { if (w.dist > 0.02) w.stage = 'go'; else if (w.via.length) nextLeg(w); else w.stage = 'turn2'; } else w.stage = 'done';
         } else setYaw(st.yaw + Math.sign(dy) * step);
       } else if (w.stage === 'go') {
         const step = min(w.speed * dt, w.dist - w.moved);
         w.moved += step;
-        root.position.x += sin(st.yaw) * step; root.position.y += cos(st.yaw) * step;
+        // turn towards the leg's heading while walking (a corner of a multi-leg path), then move along it
+        const dh = atan2(sin(w.heading - st.yaw), cos(w.heading - st.yaw));
+        if (abs(dh) > 1e-6) setYaw(abs(dh) <= TURN_RATE * dt ? w.heading : st.yaw + Math.sign(dh) * TURN_RATE * dt);
+        root.position.x += sin(w.heading) * step; root.position.y += cos(w.heading) * step;
         w.phase += w.speed * dt / (4 * 0.18 * H) * 2 * PI;
         if (w.dist - w.moved < 1e-6) {
-          root.position.x = w.target.x; root.position.y = w.target.y; w.stage = 'turn2';
+          root.position.x = w.leg.x; root.position.y = w.leg.y;
+          if (w.via.length) nextLeg(w); else w.stage = 'turn2';
         }
       }
       if (w.stage === 'done') {
@@ -641,6 +704,14 @@ export function createCharacter(THREE, spec = {}) {
         switchMode('stance');
         w.resolve();
       }
+    } else if (st.mode === 'bend') {
+      const b = st.bending;
+      b.t += dt;
+      if (!b.acted && b.t >= BEND_ACT) {
+        b.acted = true;
+        if (b.onAct) { const f = b.onAct; b.onAct = null; evalPose(); applyMeshes(); f(handWorldPosition()); }
+      }
+      if (b.t >= BEND_TIME) endBend();
     } else if (st.mode === 'throw') {
       const th = st.throwing;
       th.t += dt;
@@ -760,9 +831,10 @@ export function createCharacter(THREE, spec = {}) {
 
   // ----- public API -----
   function setStance(name) {
-    const valid = ['idle', 'aim', 'crouch', 'stand', 'watch', 'celebrate', 'dismay'];
+    const valid = ['idle', 'aim', 'crouch', 'stand', 'watch', 'celebrate', 'dismay', 'give'];
     if (!valid.includes(name)) throw new Error('unknown stance ' + name);
     if (st.mode === 'throw') cancelThrow();
+    if (st.mode === 'bend') endBend();
     st.stance = name;
     if (st.mode === 'stance') switchMode('stance');
   }
@@ -773,20 +845,40 @@ export function createCharacter(THREE, spec = {}) {
   }
   function walkTo(target) {
     if (st.mode === 'throw') cancelThrow();
+    if (st.mode === 'bend') endBend();
     if (st.walk) st.walk.resolve();
     return new Promise((resolve) => {
-      const dx = target.x - root.position.x, dy = target.y - root.position.y;
+      // target.via: waypoints [{x, y, lift}] walked first without stopping (lift > 1: stepping over something)
+      const via = (target.via || []).map((v) => ({ ...v }));
+      const first = via.length ? via.shift() : target;
+      const dx = first.x - root.position.x, dy = first.y - root.position.y;
       const dist = sqrt(dx * dx + dy * dy);
       const heading = dist > 0.02 ? atan2(dx, dy) : st.yaw;
-      const ty = target.yaw === undefined ? heading : target.yaw;
+      const fx = target.x - (via.length ? via[via.length - 1].x : first.x), fy = target.y - (via.length ? via[via.length - 1].y : first.y);
+      const ty = target.yaw === undefined ? (via.length || first !== target ? atan2(fx, fy) : heading) : target.yaw;
+      if (first !== target) via.push({ x: target.x, y: target.y, lift: target.lift });
       st.walk = {
-        target: { x: target.x, y: target.y, yaw: ty }, dist, moved: 0, heading, phase: 0, stage: 'turn1', resolve, speed: target.speed || WALK_SPEED,
+        target: { x: target.x, y: target.y, yaw: ty }, leg: { x: first.x, y: first.y }, via, dist, moved: 0, heading, phase: 0, stage: 'turn1',
+        resolve, speed: target.speed || WALK_SPEED, lift: first.lift || target.lift || 1,
       };
       switchMode('walk');
     });
   }
+  // Bend to the ground and straighten again. kind 'pickup': the ball is taken at BEND_ACT and carried afterwards;
+  // 'putdown': it is let go at BEND_ACT (onAct runs once, with the hand's world position), the hand is empty afterwards.
+  function playBend({ kind = 'pickup', onAct } = {}) {
+    if (st.mode === 'throw') cancelThrow();
+    if (st.mode === 'bend') endBend();
+    if (st.walk) { const w = st.walk; st.walk = null; w.resolve(); }
+    return new Promise((resolve) => {
+      st.bending = { t: 0, kind, acted: false, onAct, done: resolve };
+      switchMode('bend');
+    });
+  }
+  function setCarrying(on) { st.carry = !!on; }
   function playThrow({ loft = 0.5, onRelease } = {}) {
     if (st.mode === 'throw') cancelThrow();
+    if (st.mode === 'bend') endBend();
     if (st.walk) { const w = st.walk; st.walk = null; w.resolve(); }
     return new Promise((resolve) => {
       st.throwing = { t: 0, tRel: releaseTime(loft), released: false, onRelease, done: resolve, loft };
@@ -801,6 +893,7 @@ export function createCharacter(THREE, spec = {}) {
   function setPlacement(x, y, yaw = st.yaw) {
     // a teleport ends any walk in progress, else the walk would carry on and snap the figure to its old goal
     if (st.mode === 'throw') cancelThrow();
+    if (st.mode === 'bend') endBend();
     if (st.walk) { const w = st.walk; st.walk = null; switchMode('stance'); w.resolve(); }
     root.position.set(x, y, root.position.z); setYaw(yaw);
   }
@@ -836,6 +929,7 @@ export function createCharacter(THREE, spec = {}) {
   function dispose() {
     if (st.walk) { const w = st.walk; st.walk = null; w.resolve(); }
     if (st.throwing) cancelThrow();
+    if (st.mode === 'bend') endBend();
     if (vis) {
       vis.model.traverse((o) => {
         if (!o.isMesh) return;
@@ -852,13 +946,14 @@ export function createCharacter(THREE, spec = {}) {
   evalPose();
   applyMeshes();
   return {
-    root, update, setStance, walkTo, playThrow, handWorldPosition, dispose,
+    root, update, setStance, walkTo, playThrow, playBend, setCarrying, handWorldPosition, dispose,
     lookAt, setHolding, setPlacement, attachModel, forceQuirk,
     get isMesh() { return !!vis; },
     get yaw() { return st.yaw; },
     set yaw(v) { setYaw(v); },
     get stance() { return st.stance; },
     get busy() { return st.mode !== 'stance'; },
+    get carrying() { return st.carry; },
     skeleton: () => (st.solved || evalPose()).joints, // root-space joints (for tests and debugging)
     height: H,
   };

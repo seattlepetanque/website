@@ -4,6 +4,7 @@ import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { createBody, launch, createWorld, simulate } from '../../assets/js/petanque/physics.js';
 import { createMatch, jackValid } from '../../assets/js/petanque/rules.js';
 import { chooseThrow, chooseJackThrow } from '../../assets/js/petanque/ai.js';
+import { scenarios, build as buildScenario } from './tactics-scenarios.js';
 
 const n = +process.argv[2] || 24;
 const pl = (m, id) => m.players.find((p) => p.id === id);
@@ -77,5 +78,19 @@ for (const difficulty of ['easy', 'medium', 'hard']) {
   const reps = 10;
   for (let i = 0; i < reps; i++) chooseThrow({ ...args, rand: mulberry32(2 + i) });
   console.log(`decision ${difficulty}: ${((performance.now() - t1) / reps).toFixed(0)} ms`);
+}
+// D13: decision time over the 13 scenario courts (4 seeds each), mean and 95th percentile per difficulty
+for (const difficulty of ['easy', 'medium', 'hard']) {
+  const ts = [];
+  for (const sc of scenarios) {
+    for (let i = 0; i < 4; i++) {
+      const s = buildScenario(sc, { seed: i });
+      const t1 = performance.now();
+      chooseThrow({ world: s.world, match: s.match, player: s.player, difficulty, rand: mulberry32(i) });
+      ts.push(performance.now() - t1);
+    }
+  }
+  ts.sort((a, b) => a - b);
+  console.log(`scenarios ${difficulty}: mean ${(ts.reduce((a, v) => a + v, 0) / ts.length).toFixed(0)} ms, p95 ${ts[Math.floor(ts.length * 0.95)].toFixed(0)} ms, max ${ts[ts.length - 1].toFixed(0)} ms`);
 }
 console.log('ms', Math.round(performance.now() - t0));
