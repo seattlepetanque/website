@@ -9,6 +9,7 @@ import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
 import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, scoringTargetBox } from './camera.js';
 import { makeButterflies } from './butterflies.js'; // F67
+import { makeCloudShadows } from './cloudshadows.js'; // F68
 import { makeDog } from './dog.js'; // F70
 import { makeDucks } from './ducks.js'; // F69
 import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeTreeShadows, makeSkyPanorama, makeLake, makeSailboats, skyColor, SKY_HAZE, isPhone } from './scenery.js';
@@ -247,10 +248,13 @@ export function createRenderer(canvas, terrain) {
   terrainMesh.receiveShadow = true;
   const grass = grassTexture();
   blendGrassIntoTerrain(terrainMesh.material, grass);
+  const clouds = makeCloudShadows(1); // F68
+  clouds.patch(terrainMesh.material); // F68
   scene.add(terrainMesh);
 
   // Grass beyond the terrain mesh, out to the horizon (the mesh blends into it past the timbers)
   const ground = makeGrassPlane(grass, C.terrainW / 2, C.terrainL / 2, 600, edgeZ);
+  clouds.patch(ground.material); // F68
   scene.add(ground);
   const lake = makeLake(C.terrainW / 2, edgeZ); // F19: distant lake (shimmer frozen when paused or under reduced motion)
   scene.add(lake.mesh);
@@ -260,7 +264,7 @@ export function createRenderer(canvas, terrain) {
   const butterflies = makeButterflies(edgeZ); scene.add(butterflies.group); // F67
   const floatplane = createFloatplane({ cx: C.terrainW / 2, z: edgeZ + 0.05 });
   scene.add(floatplane.group);
-  scene.add(makeTufts(terrain, isPhone()));
+  const tufts = makeTufts(terrain, isPhone()); clouds.patch(tufts.material); scene.add(tufts); // F68
   const trees = makeTrees(terrain);
   scene.add(trees);
   scene.add(makeTreeShadows(terrain, sunOffset)); // F73: blob shadows for the trees outside the shadow map's job
@@ -1658,6 +1662,7 @@ export function createRenderer(canvas, terrain) {
     ducks.update(dt, reduce(), floatplane, edgeZ); // F69
     dog.update(dt, reduce()); // F70
     butterflies.update(dt, reduce()); // F67
+    clouds.update(dt, reduce()); // F68
     updatePreview();
     updateJackMark(dt);
     renderScene();
