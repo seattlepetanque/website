@@ -32,8 +32,9 @@ test('jack validity', () => {
   assert.ok(!jackValid({ x: 2, y: 12 })); // 11 m
   assert.ok(jackValid({ x: 2, y: 7 })); // exactly 6 m
   assert.ok(jackValid({ x: 2, y: 11 })); // exactly 10 m
-  assert.ok(!jackValid({ x: 0.5, y: 8 })); // too near side
-  assert.ok(!jackValid({ x: 3.5, y: 8 }));
+  assert.ok(jackValid({ x: 0.5, y: 8 })); // E20: no side margin
+  assert.ok(jackValid({ x: 3.5, y: 8 }));
+  assert.ok(!jackValid({ x: -0.5, y: 8 }));
   assert.ok(jackValid({ x: 1, y: 8 }));
   assert.ok(!jackValid({ x: 2, y: 8, dead: true }));
 });
@@ -45,24 +46,24 @@ test('invalid jack goes to the other team to place; the thrower still plays firs
   assert.equal(m.jackTeam, 0);
   assert.equal(m.jack, null);
   // wrong team, invalid spot and a dead jack are ignored
-  assert.equal(apply(m, { type: 'jackPlaced', team: 0, jack: jackAt }), m);
-  assert.equal(apply(m, { type: 'jackPlaced', team: 1, jack: { x: 2, y: 4 } }), m);
-  assert.equal(apply(m, { type: 'jackPlaced', team: 1, jack: { x: -0.5, y: 8 } }), m);
+  assert.equal(apply(m, { type: 'jackPlaceSettled', team: 0, jack: jackAt }), m);
+  assert.equal(apply(m, { type: 'jackPlaceSettled', team: 1, jack: { x: 2, y: 4 } }).phase, 'jackPlace');
+  assert.equal(apply(m, { type: 'jackPlaceSettled', team: 1, jack: { x: -0.5, y: 8 } }).phase, 'jackPlace');
   assert.equal(apply(m, { type: 'jackThrown', team: 1, jack: jackAt }), m); // not a throw phase any more
-  m = apply(m, { type: 'jackPlaced', team: 1, jack: jackAt });
+  m = apply(m, { type: 'jackPlaceSettled', team: 1, jack: jackAt });
   assert.equal(m.phase, 'play');
   assert.equal(m.jackTeam, 0);
   assert.equal(m.placingTeam, null);
   assert.deepEqual(m.jack, { x: 2, y: 8, dead: false });
   assert.equal(nextTeam(m), 0); // the team that threw plays the first boule
-  assert.equal(apply(m, { type: 'jackPlaced', team: 1, jack: jackAt }), m); // only in jackPlace
+  assert.equal(apply(m, { type: 'jackPlaceSettled', team: 1, jack: jackAt }), m); // only in jackPlace
 });
 
 test('jackFault explains invalid jacks', () => {
   assert.equal(jackFault({ x: 2, y: 8 }), null);
   assert.equal(jackFault({ x: 2, y: 5 }).reason, 'short');
   assert.equal(jackFault({ x: 2, y: 12 }).reason, 'far');
-  assert.equal(jackFault({ x: 0.5, y: 8 }).reason, 'line');
+  assert.equal(jackFault({ x: -0.5, y: 8 }).reason, 'line');
   assert.equal(jackFault({ x: 2, y: 8, dead: true }).reason, 'out');
   assert.ok(Math.abs(jackFault({ x: 2, y: 5 }).dist - 4) < 1e-9);
 });
@@ -202,32 +203,115 @@ test('dead boules relocated beyond the far line are not counted or measured', ()
   assert.equal(meneResult(jack, boules).points, 1);
 });
 
-test('jackPlaceValid: 6-10 m, whole jack inside the strings, no 1 m margin', () => {
+test('E20: a jack is in while any part is inside a side string, out only when wholly past it', () => {
   const side = (x, y) => jackPlaceValid({ x, y });
   // 8.6 m out near the left string: y = 1 + sqrt(8.6^2 - (2-x)^2)
   const yAt = (x, d) => 1 + Math.sqrt(d * d - (2 - x) ** 2);
-  assert.ok(side(0.02, yAt(0.02, 8.6))); // 2 cm in from the left string
-  assert.ok(!side(0.005, yAt(0.005, 8.6))); // jack would overlap the string
-  assert.ok(!side(-0.01, yAt(-0.01, 8.6)));
-  assert.ok(side(3.98, yAt(3.98, 8.6)));
-  assert.ok(!side(3.995, yAt(3.995, 8.6)));
-  assert.ok(!side(4.01, yAt(4.01, 8.6)));
-  // the thrown-jack rule keeps its margin
-  assert.ok(!jackValid({ x: 0.5, y: yAt(0.5, 8.6) }) && side(0.5, yAt(0.5, 8.6)));
+  assert.ok(side(0.02, yAt(0.02, 8.6)));
+  assert.ok(side(-0.01, yAt(-0.01, 8.6)), 'centre 1 cm outside, still overlapping the string: in');
+  assert.ok(side(-0.014, yAt(-0.014, 8.6)));
+  assert.ok(!side(-0.02, yAt(-0.02, 8.6)), 'whole jack past the left string');
+  assert.ok(side(4.01, yAt(4.01, 8.6)));
+  assert.ok(!side(4.02, yAt(4.02, 8.6)), 'whole jack past the right string');
+  assert.ok(jackValid({ x: -0.01, y: yAt(-0.01, 8.6) }) && !jackValid({ x: -0.02, y: yAt(-0.02, 8.6) }), 'thrown = placed');
   // distance still enforced out at the strings
   assert.ok(!side(0.02, yAt(0.02, 5.9)) && !side(0.02, yAt(0.02, 10.1)));
   assert.ok(side(0.02, yAt(0.02, 6.001)) && side(0.02, yAt(0.02, 9.999)));
+});
+
+test('E20: the jack centre must be more than 0.5 m before the end string', () => {
+  const g = { length: 11.2 }; // a short court so the end string is reachable inside 6-10 m of the circle
+  assert.ok(jackValid({ x: 2, y: 10.69 }, g), '0.51 m from the end string');
+  assert.ok(!jackValid({ x: 2, y: 10.71 }, g), '0.49 m from the end string');
+  assert.ok(!jackValid({ x: 2, y: 10.7 }, g), 'exactly 0.5 m is not more than 0.5 m');
+  const f = jackFault({ x: 2, y: 10.9 }, g);
+  assert.equal(f.reason, 'end');
+  assert.ok(Math.abs(f.gap - 0.3) < 1e-9 && f.margin === 0.5);
+  // flipped direction: the end string is at y = 0
+  const flip = { circle: { x: 2, y: 12 }, dir: -1 };
+  assert.ok(jackValid({ x: 2, y: 4.0 }, flip) && jackFault({ x: 2, y: 4.0 }, flip) === null);
+  assert.ok(!jackValid({ x: 2, y: 0.4 }, { ...flip, jackMax: 12 }));
+  assert.ok(jackValid({ x: 2, y: 0.6 }, { ...flip, jackMax: 12 }));
+});
+
+test('E20: placed-jack faults', () => {
   assert.ok(!jackPlaceValid({ x: 2, y: 7, dead: true }));
   assert.equal(jackPlaceFault({ x: 2, y: 8 }), null);
-  assert.equal(jackPlaceFault({ x: 0, y: yAt(0, 8) }).reason, 'line');
+  assert.equal(jackPlaceFault({ x: -0.5, y: 8 }).reason, 'line');
   assert.equal(jackPlaceFault({ x: 2, y: 5 }).reason, 'short');
 });
 
-test('jackPlaced accepts a spot beside the string and rejects one outside', () => {
+test('jackPlaceSettled accepts a rest beside the string and yellow-cards one outside', () => {
   let m = apply(createMatch(), { type: 'jackThrown', team: 0, jack: { x: 2, y: 3 } });
   assert.equal(m.phase, 'jackPlace');
-  const bad = apply(m, { type: 'jackPlaced', team: 1, jack: { x: -0.1, y: 8.5 } });
+  const bad = apply(m, { type: 'jackPlaceSettled', team: 1, jack: { x: -0.1, y: 8.5 } });
   assert.equal(bad.phase, 'jackPlace');
-  const ok = apply(m, { type: 'jackPlaced', team: 1, jack: { x: 0.03, y: 1 + Math.sqrt(75 - 1.9 ** 2) } });
+  assert.equal(bad.placingTeam, 1);
+  assert.equal(bad.yellowCards, 1);
+  const bad2 = apply(bad, { type: 'jackPlaceSettled', team: 1, jack: { x: 2, y: 8, dead: true } }); // rolled out of play
+  assert.equal(bad2.phase, 'jackPlace');
+  assert.equal(bad2.yellowCards, 2);
+  const ok = apply(m, { type: 'jackPlaceSettled', team: 1, jack: { x: 0.03, y: 1 + Math.sqrt(75 - 1.9 ** 2) } });
   assert.equal(ok.phase, 'play');
+});
+
+// E15: game ends at the target on the ground once the opponent is out of boules
+function e15Setup(scores, team1Left) {
+  let m = started({});
+  m = { ...m, scores, players: m.players.map((p) => (p.team === 1 ? { ...p, boulesLeft: team1Left } : p)) };
+  return m;
+}
+
+test('E15: 12 + 1 on the ground with the opponent out of boules wins at once', () => {
+  const m = e15Setup([12, 0], 0);
+  const r = throwBoule(m, 'you', jackAt, [b('a', 0, 2, 8.1), b('o', 1, 2, 9)]);
+  assert.equal(r.phase, 'gameOver');
+  assert.equal(r.winner, 0);
+  assert.deepEqual(r.scores, [13, 0]);
+  assert.ok(playersWithBoules(r, 0).length > 0); // leftover boules were not played
+});
+
+test('E15: below the target on the ground the mène continues', () => {
+  const m = e15Setup([10, 0], 0);
+  const r = throwBoule(m, 'you', jackAt, [b('a', 0, 2, 8.1), b('o', 1, 2, 9)]);
+  assert.equal(r.phase, 'play'); // 10 + 1 = 11
+  assert.equal(nextTeam(r), 0);
+});
+
+test('E15: opponent with boules left means no early end', () => {
+  const m = e15Setup([12, 0], 1);
+  const r = throwBoule(m, 'you', jackAt, [b('a', 0, 2, 8.1)]);
+  assert.equal(r.phase, 'play');
+});
+
+test('E15: the team that is out of boules does not end it by holding the point', () => {
+  let m = e15Setup([12, 0], 3);
+  m = { ...m, players: m.players.map((p) => (p.team === 0 ? { ...p, boulesLeft: p.id === 'you' ? 1 : 0 } : p)) };
+  m = { ...m, players: m.players.map((p) => (p.team === 1 ? { ...p, boulesLeft: 1 } : p)) };
+  // team 0 throws its last boule and holds the point; team 1 still has one: continues
+  const r = throwBoule(m, 'you', jackAt, [b('a', 0, 2, 8.1)]);
+  assert.equal(r.phase, 'play');
+});
+
+// --- E08: why a jack was judged invalid is reported precisely (reason, measured distance, which line) ---
+test('E08/E20: the old x = 3.17 case (0.83 m from the right string) is now valid; faults name the line', () => {
+  assert.equal(jackValid({ x: 3.17, y: 10.13 }), true);
+  assert.equal(jackFault({ x: 3.17, y: 10.13 }), null);
+  const right = jackFault({ x: 4.5, y: 8 });
+  assert.equal(right.reason, 'line');
+  assert.equal(right.side, 'right');
+  assert.ok(Math.abs(right.gap - 0.485) < 1e-9);
+  assert.equal(jackFault({ x: -0.96, y: 9.21 }).side, 'left');
+  assert.equal(jackFault({ x: 2, y: 7 }), null);
+  assert.equal(jackFault({ x: 0.96, y: 9.21 }), null);
+});
+
+test('E08: far and short faults carry the measured distance; a dead jack that rolled back is flagged', () => {
+  assert.equal(jackFault({ x: 2, y: 11.4 }).reason, 'far');
+  assert.ok(Math.abs(jackFault({ x: 2, y: 11.4 }).dist - 10.4) < 1e-9);
+  assert.equal(jackFault({ x: 2, y: 6.2 }).reason, 'short');
+  const back = jackFault({ x: 1.13, y: 10.9, dead: true });
+  assert.equal(back.reason, 'out');
+  assert.equal(back.back, true);
+  assert.equal(jackFault({ x: 2, y: 15.3, dead: true }).back, undefined);
 });

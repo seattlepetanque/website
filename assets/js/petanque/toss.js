@@ -18,6 +18,7 @@
 // boolean, onPlacePreview({ point, valid } | null), onPlace(point), onPlaceInvalid(point).
 // The pure state machine (createTossMachine) and helpers are exported for tests.
 import { LOFT_MIN, LOFT_MAX, styleForLoft } from './donnee.js';
+import { court } from './court.js';
 
 const DEG = Math.PI / 180;
 export const TOSS = Object.freeze({
@@ -218,7 +219,7 @@ export function createTossMachine(opts) {
           return true;
         }
         if (k === 'Enter') {
-          const org = o.getOrigin ? o.getOrigin() : { x: 2, y: 1 };
+          const org = o.getOrigin ? o.getOrigin() : court.circle;
           const d = o.defaultDistance ?? TOSS.defaultDistance;
           const s = snapped({ x: org.x + Math.sin(yaw) * d, y: org.y + Math.cos(yaw) * d });
           st = 'keys';

@@ -63,12 +63,16 @@
 }
 .pt-card-title { margin: 0 0 .5rem; font-size: 1.4rem; }
 .pt-blurb { margin: 0 0 .9rem; }
+.pt-yellow-card { border-color: #b8860b; border-top: 10px solid #f5c400; }
 .pt-cast { margin: 0 0 .9rem; padding: 0; list-style: none; text-align: left; font-size: .9rem; line-height: 1.35; }
 .pt-cast-item { margin: 0 0 .3rem; padding-left: .6rem; border-left: 4px solid var(--navy, #14284b); }
 .pt-cast-item.pt-cast1 { border-left-color: #a8742f; }
 .pt-fieldset { margin: 0 0 .9rem; padding: 0; border: 0; display: flex; flex-wrap: wrap; gap: .4rem 1rem; justify-content: center; }
 .pt-fieldset legend { width: 100%; padding: 0; margin-bottom: .3rem; font-weight: 700; text-align: center; }
 .pt-choice { display: inline-flex; align-items: center; gap: .4rem; min-height: 2.5rem; cursor: pointer; }
+.pt-modes { display: flex; flex-direction: column; align-items: flex-start; }
+.pt-mode-choice { align-items: flex-start; padding: .2rem 0; }
+.pt-mode-desc { font-weight: 400; opacity: .8; }
 .pt-choice input { width: 1.2rem; height: 1.2rem; accent-color: var(--red, #8a1c2b); }
 .pt-btn {
   min-height: 2.75rem; padding: .4rem 1.4rem; font: inherit; font-weight: 700; cursor: pointer;
@@ -130,7 +134,14 @@
 .pc-debug { border: 1px dashed var(--line, #d9ccb0); padding: .4rem .6rem; }
 .pc-debug > summary { cursor: pointer; font-weight: 700; min-height: 1.75rem; }
 .pc-debug > summary:focus-visible { outline: 3px solid var(--navy, #14284b); outline-offset: 2px; }
-.pc-bar .pc-exit { display: none; }
+.pc-corner { display: none; }
+.pc-corner button {
+  display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem; padding: 0; cursor: pointer;
+  color: var(--red, #8a1c2b); background: var(--paper, #fffaf0); border: 1px solid var(--red, #8a1c2b); border-radius: 4px;
+}
+.pc-corner button svg { width: 1.25rem; height: 1.25rem; display: block; }
+.pc-corner button[hidden] { display: none; }
+.pc-corner button:focus-visible { outline: 3px solid var(--navy, #14284b); outline-offset: 2px; }
 
 /* ---- Full-window view: a fixed layer over the page while playing ---- */
 html.petanque-playing, html.petanque-playing body { overflow: hidden; height: 100%; overscroll-behavior: none; }
@@ -181,8 +192,14 @@ html.petanque-playing main { overflow: visible; }
   background: var(--pt-glass); border-width: 1px;
 }
 .petanque.is-playing .pc-bar button.is-on { background: var(--red, #8a1c2b); }
-.petanque.is-playing .pc-bar .pc-exit { display: inline-block; }
-.petanque.is-playing .pc-bar .pc-exit[hidden] { display: none; }
+/* E30/E33: bottom-right icons (fullscreen toggle and pause) are an overlay on the court row, anchored to its bottom
+   edge so they sit just above the dock. Absolutely positioned, they take no grid column, so the scoreboard and dock
+   keep the full width; above the cards (z 4 over the overlays' z 2) */
+.petanque.is-playing .pc-corner {
+  display: flex; gap: .3rem; grid-row: 2 / 3; position: absolute; right: 0; bottom: 0; z-index: 4;
+}
+.petanque.is-playing .pc-corner button { background: var(--pt-glass); }
+.petanque.is-playing .pc-corner button:focus-visible { box-shadow: 0 0 0 5px var(--paper, #fffaf0); }
 
 /* bottom strip: hint toast, turn banner, status line */
 .petanque.is-playing .pt-dock {
@@ -295,3 +312,8 @@ html.petanque-playing main { overflow: visible; }
 @media (prefers-reduced-motion: reduce) {
   .petanque .pt-board, .petanque .pt-dock, .petanque .petanque-controls, .petanque .pt-overlay, .petanque .toss-readout { transition: none; }
 }
+
+/* E12: Adjust view toggle */
+.pc-bar button.pc-reaim { display: inline-flex; align-items: center; gap: .35em; }
+.pc-bar button.pc-reaim .pc-eye { flex: none; }
+.pc-bar button.pc-reaim.is-on { box-shadow: inset 0 0 0 2px var(--paper, #fffaf0); }

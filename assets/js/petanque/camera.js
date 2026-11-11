@@ -1,6 +1,7 @@
 // Pure framing logic for the flight camera (D09): keep every moving body in view, favour a fast jack,
 // and move through critically damped springs with capped speeds. No three.js; the renderer turns the
-// result into a camera position (yaw 0 looks along +y, the camera sits behind and above the target).
+// result into a camera position (yaw 0 looks along +y, the camera sits behind and above the target). E10: opts.dir = -1
+// plays toward y = 0: the camera then looks along -y (yaw pi) and the yaw limits are measured around that.
 import { C } from './constants.js';
 
 export const CAM = Object.freeze({
@@ -82,10 +83,12 @@ function bbox(pts) {
   return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: (z0 + z1) / 2, single: x1 - x0 < 0.3 && y1 - y0 < 0.3 };
 }
 
-// opts: { aspect, fov (vertical, degrees), dt, reduced, thrown }. prev: the last result (or null to snap).
+// opts: { aspect, fov (vertical, degrees), dt, reduced, thrown, dir (+1 | -1, the playing direction along y) }. prev: the last result (or null to snap).
 // Returns { target:{x,y,z}, distance, yaw, pitch, primary, active, v } (feed it back as `prev`).
 export function frameMoving(bodies, jack, opts, prev) {
   const dt = clamp(opts.dt || 0, 0, 0.1);
+  const base = (opts.dir || 1) < 0 ? Math.PI : 0; // yaw of straight down the court
+  const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
   const vTan = Math.tan((opts.fov || 50) * Math.PI / 360);
   const hTan = vTan * (opts.aspect || 1.5);
   const moving = gatherMoving(bodies, opts.thrown);
@@ -105,8 +108,8 @@ export function frameMoving(bodies, jack, opts, prev) {
     subjects = [ahead, { ...ahead, x: jack.x, y: jack.y, z: jack.z }, ...moving.filter((m) => m.body !== jack)];
   }
   hv = Math.hypot(ref.vx || 0, ref.vy || 0);
-  heading = hv > 1 ? Math.atan2(ref.vx, ref.vy) : (prev ? prev.yaw : 0);
-  const yaw = clamp(heading, -CAM.maxYaw, CAM.maxYaw);
+  heading = hv > 1 ? Math.atan2(ref.vx, ref.vy) : (prev ? prev.yaw : base);
+  const yaw = base + clamp(wrap(heading - base), -CAM.maxYaw, CAM.maxYaw);
   const pitch0 = CAM.pitch;
 
   // add subjects while they fit; the lead (and the jack's current spot) always stay
@@ -144,7 +147,7 @@ export function frameMoving(bodies, jack, opts, prev) {
   const [yw, vyw] = damp(prev.yaw, goal.yaw, v.yaw, Y.time * k, Y.max * s, dt);
   const [pt, vpt] = damp(prev.pitch, goal.pitch, v.p, P.time * k, P.max * s, dt);
   return {
-    target: { x, y, z }, distance: Math.max(d, CAM.minDist * 0.9), yaw: clamp(yw, -CAM.maxYaw, CAM.maxYaw), pitch: clamp(pt, CAM.minPitch, CAM.maxPitch),
+    target: { x, y, z }, distance: Math.max(d, CAM.minDist * 0.9), yaw: clamp(yw, base - CAM.maxYaw, base + CAM.maxYaw), pitch: clamp(pt, CAM.minPitch, CAM.maxPitch),
     primary: primary ? jack.id : null, ids, active: true, v: { x: vx, y: vy, z: vz, d: vd, yaw: vyw, p: vpt },
   };
 }
@@ -155,4 +158,180 @@ export function cameraFromFrame(f, groundAt) {
   const pos = { x: f.target.x - Math.sin(f.yaw) * cp * f.distance, y: f.target.y - Math.cos(f.yaw) * cp * f.distance, z: f.target.z + sp * f.distance };
   if (groundAt) pos.z = Math.max(pos.z, groundAt(pos.x, pos.y) + CAM.minCamZ);
   return { pos, tgt: f.target };
+}
+
+// ---- E11: the casual-observer camera (slow mode) ----
+// A spectator standing beside the court (OBS.side metres outside the timbers, eye height OBS.eye) who watches the play
+// with slow, eased pans, a slowly drifting zoom, and an occasional walking-pace dolly along the side when the action
+// moves far. No cuts: every move is a spring with a speed cap. Pure: the renderer passes the subject and a groundAt().
+export const OBS = Object.freeze({
+  side: 3.5, // m outside the side timber
+  eye: 1.7, // m above the ground
+  deadband: 4.5, // m of along-court offset before the spectator walks to keep up (and stops within `settle` of it)
+  settle: 1.2,
+  dolly: { time: 2.4, max: 1.3 }, // walking pace, m/s
+  pan: { time: 1.0, max: 0.3, boost: 0.8 }, // rad/s; boost only when the subject nears the edge of the picture
+  zoom: { time: 2.5, max: 0.12 }, // fov multiplier per s
+  fill: 0.5, // the subject's angular size as a fraction of the view
+  minFovK: 0.75, maxFovK: 1.3,
+  edge: 0.6, // fraction of the half-field beyond which the boosted pan cap applies
+  reducedTime: 2.5, reducedPan: 0.12, // reduced motion: slower pans, no dolly, no zoom
+});
+
+// The camera style, read in one place (E27 hooks a TV camera in here): 'observer' | 'tv' | 'game'.
+// `game` is the shoulder/head/flight set of cameras. The human's own turn always uses the shoulder view and quick
+// mode keeps the game cameras. `override` is a debug or settings value.
+export const CAMERA_STYLES = Object.freeze(['observer', 'tv', 'game']);
+// E27: `tv` is the chosen TV variant ('a' | 'b' | 'c', from ?debug&tvcam or settings.tvcam). Quick mode uses the TV camera
+// when a variant is chosen; slow mode keeps the observer unless `override` says 'tv'.
+export function cameraStyle({ slow, human = false, override = null, tv = null } = {}) {
+  if (human) return 'game';
+  if (!slow) return tvVariant(tv) ? 'tv' : 'game';
+  return CAMERA_STYLES.includes(override) ? override : 'observer';
+}
+
+const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+
+// subject: [{x, y, z?}] points to keep in view. opts: { dt, reduced, aspect, fov (vertical degrees), groundAt(x, y),
+// width, length (court size) }. prev: the last result (null to snap). Returns { pos, tgt, yaw, pitch, fovK, side, dollyGoal,
+// v } where pos/tgt feed the camera and the rest is state to hand back as `prev`.
+export function frameObserver(subject, opts, prev) {
+  const W = opts.width || C.terrainW, L = opts.length || C.terrainL;
+  const groundAt = opts.groundAt || (() => 0);
+  const dt = clamp(opts.dt || 0, 0, 0.1);
+  const pts = subject && subject.length ? subject : [{ x: W / 2, y: L / 2 }];
+  const bb = bbox(pts.map((p) => ({ x: p.x, y: p.y, z: p.z || 0 })));
+  const r = Math.max(...pts.map((p) => Math.hypot(p.x - bb.x, p.y - bb.y))) + 1.4; // a margin: people and boules around the head
+  const c = { x: bb.x, y: bb.y, z: groundAt(bb.x, bb.y) + 0.6 };
+  const reduced = !!opts.reduced;
+  const k = reduced ? OBS.reducedTime / 1 : 1;
+  const side = prev ? prev.side : (c.x < W / 2 ? -1 : 1);
+  const px = side < 0 ? -OBS.side : W + OBS.side;
+  const midY = clamp(c.y, 1, L - 1);
+  const snap = !prev;
+
+  // dolly: walk along the side only when the subject strays beyond the deadband, and stop once close again
+  let y = prev ? prev.pos.y : midY, dollyGoal = prev ? prev.dollyGoal : null;
+  if (!reduced && !snap) {
+    const off = Math.abs(c.y - y);
+    if (dollyGoal === null && off > OBS.deadband) dollyGoal = midY;
+    if (dollyGoal !== null && Math.abs(dollyGoal - y) < OBS.settle) dollyGoal = null;
+  }
+  const v = prev ? prev.v : { y: 0, yaw: 0, p: 0, z: 0 };
+  let vy = v.y;
+  if (!snap && dt > 0 && dollyGoal !== null) [y, vy] = damp(y, dollyGoal, v.y, OBS.dolly.time, OBS.dolly.max, dt);
+  else vy = 0;
+  const pos = { x: px, y, z: groundAt(px, y) + OBS.eye };
+
+  const dx = c.x - pos.x, dy = c.y - pos.y, dh = Math.max(0.5, Math.hypot(dx, dy));
+  const dist = Math.hypot(dh, c.z - pos.z);
+  const goalYaw = Math.atan2(dx, dy), goalPitch = Math.atan2(c.z - pos.z, dh);
+  // zoom so the subject fills about OBS.fill of the view
+  const baseFov = (opts.fov || 50) * Math.PI / 180;
+  const wantFovK = reduced ? 1 : clamp(2 * Math.atan(r / dist) / (baseFov * OBS.fill), OBS.minFovK, OBS.maxFovK);
+
+  let yaw, pitch, fovK, vyaw = v.yaw, vp = v.p, vz = v.z;
+  if (snap) { yaw = goalYaw; pitch = goalPitch; fovK = 1; vyaw = vp = vz = 0; }
+  else if (dt <= 0) return { ...prev, active: true };
+  else {
+    // pan cap: slow, unless the subject is near the edge of the picture
+    const vt = Math.tan(baseFov * prev.fovK / 2), ht = vt * (opts.aspect || 1.5);
+    const err = Math.abs(wrapAngle(goalYaw - prev.yaw)), halfH = Math.atan(ht);
+    const base = reduced ? OBS.reducedPan : OBS.pan.max;
+    const cap = !reduced && err > OBS.edge * halfH ? OBS.pan.boost : base;
+    [yaw, vyaw] = damp(prev.yaw, prev.yaw + wrapAngle(goalYaw - prev.yaw), v.yaw, OBS.pan.time * k, cap, dt);
+    [pitch, vp] = damp(prev.pitch, goalPitch, v.p, OBS.pan.time * k, cap, dt);
+    [fovK, vz] = damp(prev.fovK, wantFovK, v.z, OBS.zoom.time, OBS.zoom.max, dt);
+  }
+  const cp = Math.cos(pitch), look = Math.max(dist, 3);
+  const tgt = { x: pos.x + Math.sin(yaw) * cp * look, y: pos.y + Math.cos(yaw) * cp * look, z: pos.z + Math.sin(pitch) * look };
+  return { pos, tgt, yaw, pitch, fovK, side, dollyGoal, center: c, v: { y: vy, yaw: vyaw, p: vp, z: vz }, active: true };
+}
+
+// ---- E27: TV-presentation cameras for AI turns ----
+// (a) a low side shot that tracks the boule in flight (main then cuts to the head view);
+// (b) a reverse angle from just behind and beside the jack, watching the boule arrive;
+// (c) a slow crane that rises over the head as the boule settles.
+// Cuts are fine (the renderer cuts in and out), moves inside a shot are damped. Reduced motion: no tracking spring speed,
+// no crane (a fixed medium elevation). `hold` is how long after the boule rests the renderer keeps the shot before the
+// next camera request is honoured.
+export const TV_VARIANTS = Object.freeze(['a', 'b', 'c']);
+export const TV = Object.freeze({
+  minZ: 0.35, // m above the ground
+  sideOff: 1.3, // (a) m outside the side timber
+  lowZ: 0.5, // (a) camera height above the ground
+  behind: 2.4, beside: 1.0, eyeZ: 0.7, // (b) behind the jack (away from the throw), beside it, eye height
+  azimuth: 0.55, // (c) rad round from straight sideways toward the thrower
+  craneTime: 5, craneFrom: 0.12, craneTo: 1.0, // (c) elevation rad, and the seconds to rise
+  craneReduced: 0.5,
+  hold: { a: 0, b: 1.4, c: 2.2 },
+  pos: { time: 0.5, fast: 0.25, max: 14 }, tgt: { time: 0.35, fast: 0.12, max: 20 }, // damping; `fast` while tracking in (a)
+  reducedTime: 1.6, reducedSpeed: 0.4,
+});
+export const tvVariant = (v) => { const k = String(v == null ? '' : v).toLowerCase(); return TV_VARIANTS.includes(k) ? k : null; };
+
+// Goal camera for a shot. s: { body (thrown), jack, dir, groundAt, aspect, fov, width, reduced }. st: { variant, side, anchor, t, restT }.
+// Returns { pos, tgt }. Pure and un-damped (tested directly).
+export function tvGoal(st, s) {
+  const W = s.width || C.terrainW, dir = (s.dir || 1) < 0 ? -1 : 1, g = s.groundAt || (() => 0);
+  const body = s.body, jack = s.jack && s.jack !== body ? s.jack : null;
+  const bp = { x: body.x, y: body.y, z: Math.max(0, (body.z || 0) - (body.r || 0)) };
+  const hp = jack ? { x: jack.x, y: jack.y, z: 0.05 } : bp;
+  let variant = st.variant;
+  if (!jack) variant = 'a'; // a jack throw has no head to watch yet
+  let pos, tgt;
+  if (variant === 'a') {
+    const sx = st.side > 0 ? W + TV.sideOff : -TV.sideOff;
+    pos = { x: sx, y: bp.y + dir * 0.6, z: g(sx, bp.y) + TV.lowZ };
+    tgt = { x: bp.x, y: bp.y + dir * 1.0, z: Math.max(0.1, bp.z * 0.6) };
+  } else if (variant === 'b') {
+    const a = st.anchor || hp, inside = a.x < W / 2 ? 1 : -1;
+    const px = a.x + inside * TV.beside, py = a.y + dir * TV.behind;
+    pos = { x: px, y: py, z: g(px, py) + TV.eyeZ };
+    tgt = { x: (bp.x + hp.x) / 2, y: (bp.y + hp.y) / 2, z: Math.max(0.1, bp.z * 0.3) };
+  } else { // 'c'
+    const vTan = Math.tan((s.fov || 50) * Math.PI / 360), hTan = vTan * (s.aspect || 1.5);
+    const pts = [bp, hp];
+    const c = bbox(pts);
+    const k = s.reduced ? 0 : clamp(st.t / TV.craneTime, 0, 1), e = k * k * (3 - 2 * k);
+    const el = s.reduced ? TV.craneReduced : TV.craneFrom + (TV.craneTo - TV.craneFrom) * e;
+    const ux = st.side * Math.cos(TV.azimuth), uy = -dir * Math.sin(TV.azimuth); // horizontal, from the target to the camera
+    const yaw = Math.atan2(-ux, -uy);
+    tgt = { x: c.x, y: c.y, z: 0.15 };
+    const dist = clamp(fitDistance(pts, tgt, yaw, el, hTan, vTan), CAM.minDist, CAM.maxDist);
+    pos = { x: tgt.x + ux * Math.cos(el) * dist, y: tgt.y + uy * Math.cos(el) * dist, z: g(tgt.x, tgt.y) + tgt.z + Math.sin(el) * dist };
+    pos.z = Math.max(pos.z, g(pos.x, pos.y) + TV.minZ);
+    return { pos, tgt };
+  }
+  pos.z = Math.max(pos.z, g(pos.x, pos.y) + TV.minZ);
+  return { pos, tgt };
+}
+
+// One frame of a TV shot. prev: the last result (null starts a new shot: a cut). dt 0 holds the frame (pause).
+// Returns { pos, tgt, variant, side, anchor, t, restT, v } to hand back as `prev`.
+export function frameTV(variant, s, prev) {
+  const dt = clamp(s.dt || 0, 0, 0.1);
+  const W = s.width || C.terrainW;
+  const body = s.body;
+  if (!body) return prev || null;
+  const jack = s.jack && s.jack !== body ? s.jack : null;
+  const v0 = tvVariant(variant) || 'a';
+  if (prev && dt <= 0) return prev;
+  const st = prev ? { ...prev } : {
+    variant: v0, side: body.x < W / 2 ? 1 : -1, anchor: jack ? { x: jack.x, y: jack.y } : null, t: 0, restT: 0,
+  };
+  st.t += dt;
+  if (body.state === 'resting') st.restT += dt;
+  const goal = tvGoal(st, s);
+  if (!prev) return { ...st, pos: goal.pos, tgt: goal.tgt, v: { p: [0, 0, 0], t: [0, 0, 0] } };
+  const tracking = st.variant === 'a' || !jack;
+  const k = s.reduced ? TV.reducedTime : 1, sp = s.reduced ? TV.reducedSpeed : 1;
+  const pt = (tracking ? TV.pos.fast : TV.pos.time) * k, tt = (tracking ? TV.tgt.fast : TV.tgt.time) * k;
+  const ax = ['x', 'y', 'z'], pos = {}, tgt = {}, vp = [], vt = [];
+  ax.forEach((a, i) => {
+    [pos[a], vp[i]] = damp(prev.pos[a], goal.pos[a], prev.v.p[i], pt, TV.pos.max * sp, dt);
+    [tgt[a], vt[i]] = damp(prev.tgt[a], goal.tgt[a], prev.v.t[i], tt, TV.tgt.max * sp, dt);
+  });
+  if (s.groundAt) pos.z = Math.max(pos.z, s.groundAt(pos.x, pos.y) + TV.minZ);
+  return { ...st, pos, tgt, v: { p: vp, t: vt } };
 }

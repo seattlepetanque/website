@@ -4,6 +4,7 @@
 // much risk to take (riskLambda), who should throw (whoThrows) and why (explain).
 // Units: metres, mène points. "us" is the team of the player about to throw, "them" the other team.
 import { C } from './constants.js';
+import { court, ahead, farGap, alongOf } from './court.js';
 import { SKILL, scaledSkill, coneFor } from './donnee.js';
 import { meneResult, holdingTeam, boulesInHand } from './rules.js';
 
@@ -69,8 +70,8 @@ function erf(x) {
   return s * y;
 }
 const pAbsBelow = (a, sigma) => (sigma <= 0 ? 1 : erf(a / (sigma * Math.SQRT2))); // P(|N(0, sigma)| < a)
-const CIRCLE = C.circle;
-const along = (dist) => ({ x: CIRCLE.x, y: CIRCLE.y + dist });
+const CIRCLE = court.circle; // E10: live: moves with each new mène
+const along = (dist) => ahead(dist);
 
 // Spread of a pointed boule around its aim (m): the cone of a demi-portée plus the terrain
 export function pointSigma(skill, dist, loft = 32 * DEG) {
@@ -85,10 +86,10 @@ export function analyticHit(skill, dist, { loft = 22 * DEG, rLat = 0.075 } = {})
 
 // Jack exposure: 0 beyond 1.3 m of a string or end line, 1 on the line
 export function jackExposure(x, y) {
-  const edge = Math.min(x, C.terrainW - x, C.terrainL - y);
+  const edge = Math.min(x, C.terrainW - x, farGap(y));
   return clamp((1.3 - edge) / 1.0, 0, 1);
 }
-const jackEdge = (x, y) => Math.min(x, C.terrainW - x, C.terrainL - y);
+const jackEdge = (x, y) => Math.min(x, C.terrainW - x, farGap(y));
 
 // ---------- The situation model (12.1) ----------
 const gapText = (g) => (g < 1 ? `${Math.max(1, Math.round(g * 100))} cm` : `${g.toFixed(1)} m`);
@@ -312,8 +313,10 @@ export function plan(sit, cfg = DEFAULT_CFG, { loose = false } = {}) {
   const stylePref = cfg.stylePref || {};
   const taste = (style) => (prof.taste[style] || 0) + ((stylePref[sit.player.id] || {})[style] || 0);
 
+  // pointing targets stay a little inside the strings and the far line (clamped, not dropped); going out is priced by the simulations
+  const inside = (t) => ({ x: clamp(t.x, 0.08, C.terrainW - 0.08), y: court.dir > 0 ? Math.min(t.y, C.terrainL - 0.55) : Math.max(t.y, 0.55) });
   const mk = (family, style, intent, target, extra = {}) => ({
-    family, style, loft: L[style], intent, target, tag: intent === 'point' ? style : 'boule', parts: {}, credit: {}, prior: 0, a: 0, ...extra,
+    family, style, loft: L[style], intent, target: intent === 'point' ? inside(target) : target, tag: intent === 'point' ? style : 'boule', parts: {}, credit: {}, prior: 0, a: 0, ...extra,
   });
   const pointInfo = (c) => {
     const off = dist2(c.target, J);
@@ -378,7 +381,7 @@ export function plan(sit, cfg = DEFAULT_CFG, { loose = false } = {}) {
   const gate = Math.max(0.2, prof.gate * (1 + 0.6 * Math.max(0, -BA)) - 0.2 * upW * aw);
   for (const t of themBoules) {
     if (t.dist > 1.4) continue;
-    if (t.y > C.terrainL - 1 || t.y < 2) continue;
+    if (farGap(t.y) < 1 || alongOf(t) < 1) continue;
     const { G: G0 } = removalGain(sit, t.id);
     const dT = dist2(t, CIRCLE);
     const pHit = analyticHit(sit.skill, dT);
@@ -432,7 +435,7 @@ export function plan(sit, cfg = DEFAULT_CFG, { loose = false } = {}) {
     const gain = payoff - sit.Vpoints;
     const trick = sit.handAfter.us > 0 && sit.handAfter.them === 0 && payoff > 0;
     const ok = gain >= sit.diff.jackGain || (exposure >= 0.6 && trick);
-    if ((ok || loose) && J.y < C.terrainL - 1 && J.y > 2) {
+    if ((ok || loose) && farGap(J.y) > 1 && alongOf(J) > 1) {
       const pHit = analyticHit(sit.skill, dj, { rLat: 0.0525 });
       const pOut = 0.45 + 0.3 * exposure;
       const A = pHit * pOut * gain - (1 - pHit * pOut) * 0.3;
@@ -460,7 +463,7 @@ export function plan(sit, cfg = DEFAULT_CFG, { loose = false } = {}) {
   }
 
   // keep within the field
-  const inField = cands.filter((k) => k.target.y < C.terrainL - 0.5 && k.target.y > 2 && k.target.x > 0.3 && k.target.x < C.terrainW - 0.3);
+  const inField = cands.filter((k) => alongOf(k.target) > 1);
   out.all = inField.slice();
   // prune: more than 1.5 below the best, near-duplicates, and the cap
   inField.sort((x, y) => y.a - x.a);

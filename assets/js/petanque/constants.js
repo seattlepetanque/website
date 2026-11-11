@@ -39,6 +39,10 @@ export const C = Object.freeze({
   restSpeed: 0.02, // m/s: below this (and on the ground) a body rests
   restSpin: 0.5, // rad/s
   restTime: 0.15, // seconds below thresholds before state = resting
+  restWindow: 0.5, // s: a rolling body that moved less than restWindowDist over this window (slower than restWindowSpeed) rests, spin or not (E21)
+  restWindowDist: 0.003, // m
+  restWindowSpeed: 0.1, // m/s
+  hardCapSeconds: 12, // s of game time after a throw: anything still moving is forced to rest where it is (E21)
   maxSpeed: 40,
   rollFriction: 1, // scale on terrain mu_r
   spinDecay: 5, // 1/s: exponential decay of spin about the surface normal

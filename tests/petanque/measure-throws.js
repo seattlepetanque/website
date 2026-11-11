@@ -47,7 +47,7 @@ export function playMatch(seed, difficulty, onThrow, { target = 13, noiseless = 
     } else if (match.phase === 'jackPlace') {
       const placer = match.players.find((p) => p.team === match.placingTeam);
       const spot = chooseJackPlacement({ match, player: placer, difficulty, rand, terrain });
-      match = apply(match, { type: 'jackPlaced', team: match.placingTeam, jack: spot });
+      match = apply(match, { type: 'jackPlaceSettled', team: match.placingTeam, jack: spot });
       world.bodies.length = 0;
       world.add(createBody('jack', { x: spot.x, y: spot.y }));
     } else if (match.phase === 'play') {

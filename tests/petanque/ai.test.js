@@ -4,7 +4,7 @@ import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { mulberry32, gauss } from '../../assets/js/petanque/rng.js';
 import { createBody, launch, createWorld, simulate } from '../../assets/js/petanque/physics.js';
 import { createMatch, jackValid, jackPlaceValid } from '../../assets/js/petanque/rules.js';
-import { LOFT_MIN, LOFT_MAX, styleForLoft, SKILL, energyFor } from '../../assets/js/petanque/donnee.js';
+import { LOFT_MIN, LOFT_MAX, styleForLoft, SKILL, energyFor, solveLaunch } from '../../assets/js/petanque/donnee.js';
 import { AI, chooseThrow, chooseThrowAsync, chooseJackThrow, chooseJackPlacement } from '../../assets/js/petanque/ai.js';
 
 import { difficultyScale } from '../../assets/js/petanque/donnee.js';
@@ -209,6 +209,17 @@ test('the AI never plans a throw beyond its energy budget', () => {
   }
 });
 
+test('chooseJackPlacement after a yellow card keeps a margin from the strings and off slopes (E04)', () => {
+  const s = setup();
+  const player = s.match.players.find((p) => p.id === 'pierre');
+  for (let i = 0; i < 12; i++) {
+    const r = chooseJackPlacement({ match: s.match, player, difficulty: 'easy', rand: mulberry32(i), terrain: createTerrain(i + 1), attempt: 1 });
+    assert.ok(jackPlaceValid({ x: r.x - 0.4, y: r.y }) && jackPlaceValid({ x: r.x + 0.4, y: r.y }), `margin ${i}: ${r.x},${r.y}`);
+    const sl = createTerrain(i + 1).perceived().sample(r.x, r.y);
+    assert.ok(Math.hypot(sl.nx, sl.ny) < 0.1);
+  }
+});
+
 test('chooseJackPlacement always returns a valid spot and varies with personality', () => {
   const s = setup();
   const byId = (id) => s.match.players.find((p) => p.id === id);
@@ -236,4 +247,40 @@ test('chooseJackPlacement always returns a valid spot and varies with personalit
     spots.add(`${r.x},${r.y}`);
   }
   assert.ok(spots.size >= 2);
+});
+
+// E19: targets near a string or the far line are clamped inside, not dropped
+test('pointing plans aim at a jack 2 cm inside a string or near the far line, and rest near it', () => {
+  const from = { x: 2, y: 1, z: 0.9 };
+  const cases = [{ x: 0.02, y: 8.5 }, { x: 3.98, y: 8.5 }, { x: 2, y: 13.5 }, { x: 0.05, y: 14 }];
+  for (const jack of cases) for (const difficulty of ['medium', 'hard']) {
+    const s = setup({ jack });
+    const r = chooseThrow({ world: s.world, match: s.match, player: marcel(s.match), difficulty, rand: mulberry32(3), from });
+    assert.equal(r.intent, 'point', `${difficulty} ${JSON.stringify(jack)}`);
+    const t = r.info.target;
+    assert.ok(t.x >= 0 && t.x <= 4 && t.y <= 15, `target inside court ${JSON.stringify(t)}`);
+    assert.ok(Math.hypot(t.x - jack.x, t.y - jack.y) < 0.5, `aims at the jack (or a spot beside/behind it) ${JSON.stringify(t)}`);
+    assert.ok(r.donnee.x >= 0 && r.donnee.x <= 4 && r.donnee.y <= 15, `donnee inside ${JSON.stringify(r.donnee)}`);
+    // noiseless predicted rest: median over a few settle sims of the exact donnee the plan returned
+    const tp = solveLaunch({ from: r.from, landing: r.donnee, loft: r.loft, terrain: s.world.terrain });
+    const xs = [], ys = [];
+    for (let i = 0; i < 7; i++) {
+      const w = s.world.clone(s.world.terrain, mulberry32(100 + i));
+      const b = launch(createBody('boule', { team: 1 }), tp, r.from);
+      w.add(b);
+      simulate(w);
+      xs.push(b.dead ? b.outX : b.x); ys.push(b.dead ? b.outY : b.y);
+    }
+    const med = (a) => a.sort((p, q) => p - q)[3];
+    const e = { x: med(xs), y: med(ys) };
+    assert.ok(Math.hypot(e.x - t.x, e.y - t.y) < (jack.y > 12 ? 1.6 : 0.7) && // long roulettes scatter more
+       (r.family !== 'pointJack' || Math.hypot(e.x - jack.x, e.y - jack.y) < (jack.y > 12 ? 1.6 : 0.5)), `rest ${e.x.toFixed(2)},${e.y.toFixed(2)} fam ${r.family} tgt ${JSON.stringify(t)} for jack ${JSON.stringify(jack)} ${difficulty}`);
+  }
+});
+
+test('a tir at an opponent boule near a string is still a candidate', () => {
+  const s = setup({ jack: { x: 0.3, y: 8.5 }, boules: [{ x: 0.04, y: 8.55, team: 0 }, { x: 0.5, y: 8.4, team: 0 }] });
+  const r = chooseThrow({ world: s.world, match: s.match, player: odette(s.match), difficulty: 'hard', rand: mulberry32(2) });
+  assert.ok(r.donnee.x >= 0 && r.donnee.x <= 4 && r.donnee.y <= 15);
+  assert.ok(r.intent === 'shoot' || r.intent === 'point');
 });

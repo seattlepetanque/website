@@ -2,6 +2,7 @@
 // Pure (no DOM, no three.js), shared by the human's toss and the AI.
 // Axes: x across, y along, z up. yaw 0 = +y, positive yaw toward +x (same as physics launch).
 import { C } from './constants.js';
+import { court } from './court.js';
 import { gauss } from './rng.js';
 import { createBody, launch } from './physics.js';
 
@@ -148,7 +149,7 @@ function solveSpeed(from, yaw, dist, loft, terrain) {
 // Solve yaw and speed so the first ground contact is the landing point, matching the physics' own discrete
 // flight. At low loft the world's step-end landing test leaves unreachable gaps of a few cm; if the miss
 // is over 1 cm the loft is nudged by a few hundredths of a degree (invisible) to move the gap.
-export function solveLaunch({ from = C.throwFrom, landing, loft, terrain }) {
+export function solveLaunch({ from = court.throwFrom, landing, loft, terrain }) {
   const dx = landing.x - from.x, dy = landing.y - from.y;
   const yaw = Math.atan2(dx, dy);
   const dist = Math.hypot(dx, dy);
@@ -194,7 +195,7 @@ export function scaledSkill(skill, difficulty = 'medium') {
 
 // Sigmas in metres, metres, radians; grow with distance, with loft, and with the fraction of the throw budget used.
 // `skill` is a { lat, long, loft } object or a SKILL name; energyFrac defaults to no penalty.
-export function coneFor({ skill, from = C.throwFrom, landing, loft, energyFrac = 0 }) {
+export function coneFor({ skill, from = court.throwFrom, landing, loft, energyFrac = 0 }) {
   const s = typeof skill === 'string' ? SKILL[skill] : skill;
   const dist = Math.hypot(landing.x - from.x, landing.y - from.y);
   const t = Math.max(0, Math.min(1, (loft - LOFT_MIN) / (LOFT_MAX - LOFT_MIN)));
@@ -222,14 +223,14 @@ export function effortFor(speed, loft) {
 export const maxEffortOf = (skill) => (typeof skill === 'string' ? SKILL[skill] : skill).maxSpeed || SKILL.human.maxSpeed;
 
 // Fraction of the budget the throw needs (may exceed 1)
-export function energyFor({ from = C.throwFrom, landing, loft, skill, terrain }) {
+export function energyFor({ from = court.throwFrom, landing, loft, skill, terrain }) {
   const sl = solveLaunch({ from, landing, loft, terrain });
   return effortFor(sl.speed, sl.loft) / maxEffortOf(skill);
 }
 
 // Pull the donnée toward the thrower along the aim line until the throw fits the budget.
 // Returns { landing, clamped, energyFrac } where energyFrac is for the final throw (<= 1 when it fits).
-export function fitToBudget({ from = C.throwFrom, landing, loft, skill, terrain }) {
+export function fitToBudget({ from = court.throwFrom, landing, loft, skill, terrain }) {
   const e0 = energyFor({ from, landing, loft, skill, terrain });
   if (e0 <= 1) return { landing, clamped: false, energyFrac: e0 };
   const dx = landing.x - from.x, dy = landing.y - from.y;
@@ -257,7 +258,7 @@ const SIDESPIN_PER_SIGMA = 10; // rad/s per sigma of lateral error (about 20 at 
 const SIDESPIN_MAX = 40;
 
 // Sample the cone, solve for the sampled donnée and loft, and curl the ball further off-axis.
-export function executeThrow({ from = C.throwFrom, landing, loft, cone, terrain, rand }) {
+export function executeThrow({ from = court.throwFrom, landing, loft, cone, terrain, rand }) {
   const a = axes(from, landing);
   const gLat = gauss(rand), gLong = gauss(rand), gLoft = gauss(rand);
   const lateralError = gLat * cone.sigmaLat;
@@ -280,7 +281,7 @@ export function executeThrow({ from = C.throwFrom, landing, loft, cone, terrain,
 export function arcPath(from, throwParams, n = 40, terrain = null) {
   const t = terrain || { sample: () => ({ h: 0 }) };
   const rec = [];
-  flight(from || C.throwFrom, throwParams.yaw, throwParams.speed, throwParams.loft, t, rec);
+  flight(from || court.throwFrom, throwParams.yaw, throwParams.speed, throwParams.loft, t, rec);
   const out = [];
   for (let i = 0; i <= n; i++) {
     const p = rec[Math.round(i * (rec.length - 1) / n)];
@@ -301,7 +302,7 @@ function ellipse(center, a, sLat, sLong, terrain, n = 48) {
 }
 
 // Centre arc, four edge arcs (+-1 sigma lateral, +-1 sigma longitudinal) and 1/2 sigma ground ellipses
-export function coneEnvelope({ from = C.throwFrom, landing, loft, cone, terrain }) {
+export function coneEnvelope({ from = court.throwFrom, landing, loft, cone, terrain }) {
   const a = axes(from, landing);
   const arc = (l) => arcPath(from, solveLaunch({ from, landing: l, loft, terrain }), 40, terrain);
   const off = (lat, lon) => ({
@@ -339,7 +340,7 @@ export function feltTerrain(view, loft, rough = true, k = ROUGH_K, factor) {
 
 // Noiseless sim on the perceived terrain (with the low-loft roughness allowance, D19); returns the thrown body's
 // path (every ~1/30 s) until it settles
-export function predictRoll({ world, terrain, throwParams, from = C.throwFrom, kind = 'boule', rand, maxSeconds = 12, seed: seed0 = 12345, factor }) {
+export function predictRoll({ world, terrain, throwParams, from = court.throwFrom, kind = 'boule', rand, maxSeconds = 12, seed: seed0 = 12345, factor }) {
   let seed = seed0; // fixed local rng so the guide never flickers
   const r = rand || (() => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; });
   const view = terrain.perceived();
@@ -394,7 +395,7 @@ function resampleByLength(pts, K) {
 const catmull = (p0, p1, p2, p3, t) => 0.5 * (2 * p1 + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (3 * p1 - p0 - 3 * p2 + p3) * t * t * t);
 
 // { world, terrain, from, landing, loft, cone, kind, seed } -> { center: [{x,y,z}], halfWidths, restMean, restCov: {xx,xy,yy}, control }
-export function predictRollBand({ world, terrain, from = C.throwFrom, landing, loft, cone, kind = 'boule', seed = 12345 }) {
+export function predictRollBand({ world, terrain, from = court.throwFrom, landing, loft, cone, kind = 'boule', seed = 12345 }) {
   const view = terrain.perceived();
   let bandCache = bandCaches.get(terrain);
   if (!bandCache) bandCaches.set(terrain, bandCache = new Map());

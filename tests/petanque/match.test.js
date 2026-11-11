@@ -39,7 +39,7 @@ function playMatch(seed, target = 13) {
       const placer = match.players.find((p) => p.team === match.placingTeam);
       const spot = chooseJackPlacement({ match, player: placer, difficulty: 'medium', rand, terrain });
       const before = match.jackTeam;
-      match = apply(match, { type: 'jackPlaced', team: match.placingTeam, jack: spot });
+      match = apply(match, { type: 'jackPlaceSettled', team: match.placingTeam, jack: spot });
       assert.equal(match.phase, 'play', 'AI placement is accepted');
       assert.equal(match.jackTeam, before);
       world.bodies.length = 0;

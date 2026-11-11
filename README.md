@@ -48,9 +48,12 @@ Four player models are in `static/models/`: Marcel, Odette, Pierre and You, from
 
 How it plays:
 
-- Controls: drag sideways to turn; press on the court where the boule should land (the pale cone shows where it may land, the orange band how far it rolls), pull down to throw higher, release to throw; drag back up to cancel. Press near a boule to shoot it. The bar has Re-aim, Roll guide (on by default on Easy), View (shoulder, head, inspect), Mute, New game and Exit. Esc or Exit leaves the full-window view and pauses the game; Resume or New game is on the page.
-- Pause: leaving the full-window view freezes everything (game clock, physics, walking, audio), draws the scene in sepia and lets you drag to orbit and wheel or pinch to zoom round the court. Resume eases back.
-- When both you and Pierre have boules a card in the middle of the court asks who throws, with Pierre's suggestion. A jack that fails is fetched and the other team places it; players walk to fetch dead boules and the cochonnet; between throws the closest boule of each team is measured from the jack, and at the end of a mène a numbered circle shows the scoring boules.
+- Controls: drag sideways to turn; press on the court where the boule should land (the pale cone shows where it may land, the orange band how far it rolls), pull down to throw higher, release to throw; drag back up to cancel. Press near a boule to shoot it. The bar has Adjust view (a toggle: drag to orbit the thrower, wheel or pinch to zoom, Esc to leave it), Roll guide (on by default on Easy), Mode (Slow or Quick), View (shoulder, head, inspect) and Mute. A fullscreen icon and a pause icon sit at the bottom right; the game never goes fullscreen by itself. The pause icon, or Esc, leaves the full-window view and pauses the game; Resume or New game is on the page.
+- Modes: the Pace option on the setup card (and the Mode button in play) picks Slow or Quick, remembered in the browser. Slow: people walk to the circle, fetch dead and out-of-bounds balls round the outside of the timbers, the placer fetches a failed cochonnet, the last thrower carries the ring to its new place, players hold their boules in the hand and pick them up, and AI turns are shown by a casual-observer camera outside the side timber. Quick: everything moves into position at once; the thrower changes over with a short fade and a beat with the circle empty, and the ring just appears. Reduced motion always plays Quick.
+- Court and moving circle: the throwing circle is a ring on the ground. Each new mène starts from a ring placed around the last cochonnet and is played the other way (toward y = 0 on every second mène). If less than 10 m of court is left in front of the ring it is moved back until about 11 m remain. `court.js` holds the one current circle and direction that the rules, AI, camera, zones and drawing all read. The cochonnet must land 6 to 10 m from the circle, inside the side strings (out only when wholly past one) and more than 0.5 m before the end string; otherwise the other team places it (a placed jack that rests invalid gets a yellow card and is placed again).
+- Settings and cameras: AI turns use the observer camera in Slow mode and the game cameras (flight, head) in Quick mode; a hidden TV-style variant for Quick mode (`?debug&tvcam=a|b|c` or `localStorage petanque-tvcam`) tracks the boule from the side (a), from behind the jack (b) or with a crane (c). Your own turn always uses the shoulder view. The mène end looks nearly straight down on the scoring circle, which passes through the best rival boule, labels every scoring boule in cm (mm and "Close call!" when the gaps differ by under 2 cm) and keeps each number badge beside its boule.
+- Pause: leaving the full-window view freezes everything (game clock, physics, walking, fades, audio), draws the scene in sepia and lets you drag to orbit and wheel or pinch to zoom round the court. Resume eases back.
+- When both you and Pierre have boules a card in the middle of the court asks who throws, with Pierre's suggestion. Between throws the closest boule of each team is measured from the jack. The game also ends when the points on the ground already reach the target and the rest of the mène cannot change who holds them (13 on the ground); leftover boules are not played.
 - Reduced motion: no walking (balls fade out and in), no sepia fade, no tree sway, no chevron bob, and a steadier camera.
 
 The modules in `assets/js/petanque/`:
@@ -67,9 +70,12 @@ The modules in `assets/js/petanque/`:
 - `toss.js`: toss input: turn, place the donnée, pull for loft
 - `character.js`: stick-figure players with procedural animation (walking, bending, carrying)
 - `personalities.js`: looks, stances, quirks and commentary lines for each player
+- `court.js`: the live throwing circle and playing direction, the next mène's circle, and geometry helpers
+- `settings.js`: the play mode (remembered in localStorage) and the hidden TV camera choice
+- `waiting.js`: where the players wait, beside the court and outside the timbers
 - `fetch.js`: pure route planning for the players who fetch dead balls and place the cochonnet
 - `clock.js`: the pause clock; every game delay (`sleep`, `later`) goes through it so a pause freezes them
-- `camera.js`: pure framing for the flight camera that follows every moving ball
+- `camera.js`: pure framing: the flight camera that follows every moving ball, the casual observer, and the TV variants
 - `render.js`: three.js scene, cameras, throw preview, measuring overlays, paused sepia pass
 - `scenery.js`: grass, trees and the painted skyline (Mount Rainier, the Space Needle)
 - `hud.js`: DOM HUD (setup, score, who-throws card, mène and game-over panels)
@@ -101,6 +107,7 @@ Debug URLs (add the query to `/game.html`; a debug mode that starts a match ente
 - `?debug&humanturn`: stops at your first boule. Use `?debug&humanturn=chooser` to stop at the who-throws card, or `?debug&humanturn=jack` to throw the jack yourself (`&thrower=pierre` and the like pick who throws first).
 - `?debug&humanturn&demo`: a scripted toss preview with the roll band, for screenshots (`&loft=`, `&dist=`, `&dx=`, `&tir`, `&autothrow`).
 - `?debug&play`: enters the full-window view without a click (combine with the others); logs scroll metrics to the console.
+- `?debug&mene2`: the second mène, played toward y = 0 (`&ringcarry&slow` shows the ring carried back, `&ringheld` a still of it, `&jackplace` the placement view toward y = 0). `?debug&slow` keeps Slow mode under reduced motion; `&cam=game|tv` picks the AI-turn camera; `&tvcam=a|b|c` and `&tvshot` show the TV variants; `&hold` shows the held boules (`&backswing=`); `&closecall` forces a close call at mène end (with `&autotest&meneend`); `&jackplace&yellow` shows the yellow card; `&viewyaw=&viewpitch=&adjust` the Adjust view.
 - `?debug&paused` (with `&humanturn`): leaves the full-window view at the human's turn, so the paused sepia view shows.
 - `?debug&aispot`: holds the view on the AI's spot, with the arc and cone the players never see, for screenshots.
 - `?debug&jackplace` (Marcel's jack fails and you place it) or `?debug&jackplace=ai` (the AI places it); `&jx=&jy=` where the failed jack lay, `&px=&py=` shows your marker, `&jphold` keeps the AI's marker up.

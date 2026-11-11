@@ -4,6 +4,7 @@ import { C } from '../../assets/js/petanque/constants.js';
 import { mulberry32 } from '../../assets/js/petanque/rng.js';
 import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { createBody, launch, createWorld, simulate, LUMBER, deadRowSlot, deadJackSpot, placeDeadBall } from '../../assets/js/petanque/physics.js';
+import { jackPlaceValid } from '../../assets/js/petanque/rules.js';
 import { spread, tir, reverse, plombee } from './measure-physics.js';
 
 // Flat terrain stub; optional slope (h = -slope * y) and stones
@@ -476,34 +477,29 @@ test('random throws with ghosts never produce NaN and always settle', () => {
   }
 });
 
-test('a jack placed 1 cm inside a string on steep terrain stays put and live', () => {
-  for (const seed of [1, 2, 3]) {
-    for (const x of [0.025, 3.975]) {
-      const t = createTerrain(seed, { crown: 0.05 });
-      const y = 1 + Math.sqrt(75 - (2 - x) ** 2);
-      t.settleSpot(x, y);
-      assert.equal(t.stonesNear(x, y, 0.15).length, 0, 'stones cleared');
-      const w = createWorld(t, mulberry32(seed));
-      const j = createBody('jack', { team: -1, x, y, state: 'resting' });
-      w.add(j);
-      for (let i = 0; i < 300; i++) simulate(w);
-      assert.equal(j.x, x); assert.equal(j.y, y);
-      assert.ok(!j.dead && j.state === 'resting');
-      t.resetDivots();
-      assert.ok(t.stonesNear(x, y, 0.15).length >= 0);
-    }
-  }
+// E04: a hand-placed jack is dropped for real on the natural ground and may roll a little
+function dropJack(t, x, y, seed = 1) {
+  const w = createWorld(t, mulberry32(seed));
+  const j = createBody('jack', { team: -1, x, y, z: t.sample(x, y).h + C.jack.r + 0.04, state: 'airborne' });
+  w.add(j);
+  simulate(w, 20);
+  return { w, j };
+}
+
+test('a jack dropped on flat ground stays within a few cm and rests live', () => {
+  const { j } = dropJack(stub(), 2, 8);
+  assert.ok(!j.dead && j.state === 'resting');
+  assert.ok(Math.hypot(j.x - 2, j.y - 8) < 0.1);
 });
 
-test('settleSpot flattens locally and resets with the divots', () => {
-  const t = createTerrain(4, { crown: 0.05 });
-  const before = t.stonesNear(2, 8, 0.6).length;
-  const far = t.sample(2.5, 8.5).h;
-  t.settleSpot(2, 8, 0.6);
-  assert.equal(t.stonesNear(2, 8, 0.6).length, 0);
-  const s = t.sample(2, 8), s2 = t.perceived().sample(2.05, 8);
-  assert.ok(Math.hypot(s.nx, s.ny) < 0.05 && Math.abs(s2.h - t.perceived().sample(2, 8).h) < 0.003);
-  assert.equal(t.sample(2.5, 8.5).h, far);
-  t.resetDivots();
-  assert.equal(t.stonesNear(2, 8, 0.6).length, before);
+test('a jack dropped on a slope beside a string rolls out of the valid region', () => {
+  // slope descends toward -x (h = 0.12 x), so a jack set 1 cm inside the x=0 string rolls out
+  const t = {
+    sample: (x, y) => { const inv = 1 / Math.sqrt(0.12 * 0.12 + 1); return { h: 0.12 * x, nx: -0.12 * inv, ny: 0, nz: inv, friction: 0.05, loose: 0 }; },
+    stonesNear: () => [], addDivot() {}, resetDivots() {}, visibleStones: () => [], perceived() { return this; },
+  };
+  const y = 1 + Math.sqrt(75 - 4);
+  assert.ok(jackPlaceValid({ x: 0.03, y }));
+  const { j } = dropJack(t, 0.03, y);
+  assert.ok(j.dead || !jackPlaceValid({ x: j.x, y: j.y }), `rested at ${j.x.toFixed(2)}`);
 });

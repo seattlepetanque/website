@@ -1,13 +1,14 @@
 // Pétanque rules and scoring (doublette). Pure data logic: no DOM, no physics.
 // Jack: { x, y, dead }. Boules: { id, team, owner, x, y, dead }. Metres, 2D distances.
+import { nextCircle } from './court.js';
 
 export const DEFAULT_GEOMETRY = Object.freeze({
   circle: Object.freeze({ x: 2, y: 1 }),
+  dir: 1, // E10: +1 plays toward y = length, -1 toward y = 0; moves with the circle each mène
   width: 4,
   length: 15,
   jackMin: 6,
   jackMax: 10,
-  lineMargin: 1,
 });
 
 const TIE_EPS = 0.001; // equidistant within 1 mm
@@ -46,27 +47,21 @@ export function createMatch({ target = 13, players, geometry, firstJackTeam = 0 
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
-// Jack must land 6-10 m from the circle centre and >= 1 m from side and end lines.
+// E20: the cochonnet is judged like a boule at the side strings (in while any part is inside: out only when the
+// whole jack is past a string) and must be more than 0.5 m before the end string. 6-10 m from the circle centre.
+// The end string is the far one in the playing direction: geometry.dir (+1 toward y = length, the default; -1 toward
+// y = 0), ready for E10's flipping direction. One rule for a thrown and a placed jack.
+export const JACK_R = 0.015;
+export const JACK_END_MARGIN = 0.5;
+const endGap = (jack, g) => ((g.dir ?? 1) < 0 ? jack.y : g.length - jack.y); // distance in front of the end string
 export function jackValid(jack, geometry = DEFAULT_GEOMETRY) {
   const g = { ...DEFAULT_GEOMETRY, ...geometry };
   if (!jack || jack.dead) return false;
   const d = dist(jack, g.circle);
   if (d < g.jackMin - EPS || d > g.jackMax + EPS) return false;
-  const m = g.lineMargin;
-  return jack.x >= m - EPS && jack.x <= g.width - m + EPS &&
-    jack.y >= m - EPS && jack.y <= g.length - m + EPS;
+  return jack.x >= -JACK_R - EPS && jack.x <= g.width + JACK_R + EPS && endGap(jack, g) > JACK_END_MARGIN;
 }
-
-// D14: a hand-placed jack may go right out to the strings (no 1 m margin): 6-10 m from the circle centre and the
-// whole jack (radius JACK_R) inside the side strings and the far string.
-const JACK_R = 0.015;
-export function jackPlaceValid(jack, geometry = DEFAULT_GEOMETRY) {
-  const g = { ...DEFAULT_GEOMETRY, ...geometry };
-  if (!jack || jack.dead) return false;
-  const d = dist(jack, g.circle);
-  if (d < g.jackMin - EPS || d > g.jackMax + EPS) return false;
-  return jack.x >= JACK_R - EPS && jack.x <= g.width - JACK_R + EPS && jack.y <= g.length - JACK_R + EPS;
-}
+export const jackPlaceValid = jackValid;
 
 export function playersWithBoules(match, team) {
   return match.players.filter((p) => p.team === team && p.boulesLeft > 0);
@@ -107,27 +102,25 @@ export function meneResult(jack, boules) {
   return { team: win.team, points, measured: measured.map(({ id, dist }) => ({ id, dist })) };
 }
 
-// Why a jack is not legal: { reason: 'out'|'short'|'far'|'line', dist } or null when it is valid.
+// Why a jack is not legal: { reason: 'out'|'short'|'far'|'line'|'end', dist } or null when it is valid.
+// 'line': whole jack past a side string (side 'left'|'right', gap = how far past the string, m);
+// 'end': centre within 0.5 m of the end string (gap = distance to it, margin = 0.5);
+// 'out': dead (went over a line during the roll); back = it now lies in a legal spot.
 export function jackFault(jack, geometry = DEFAULT_GEOMETRY) {
   const g = { ...DEFAULT_GEOMETRY, ...geometry };
   if (jackValid(jack, g)) return null;
-  if (!jack || jack.dead) return { reason: 'out', dist: jack ? dist(jack, g.circle) : 0 };
+  if (!jack || jack.dead) {
+    const back = !!jack && jackValid({ x: jack.x, y: jack.y }, g);
+    return { reason: 'out', dist: jack ? dist(jack, g.circle) : 0, ...(back ? { back } : {}) };
+  }
   const d = dist(jack, g.circle);
   if (d < g.jackMin - EPS) return { reason: 'short', dist: d };
   if (d > g.jackMax + EPS) return { reason: 'far', dist: d };
-  return { reason: 'line', dist: d };
+  if (jack.x < -JACK_R) return { reason: 'line', dist: d, side: 'left', gap: -jack.x - JACK_R };
+  if (jack.x > g.width + JACK_R) return { reason: 'line', dist: d, side: 'right', gap: jack.x - g.width - JACK_R };
+  return { reason: 'end', dist: d, gap: endGap(jack, g), margin: JACK_END_MARGIN };
 }
-
-// Why a hand-placed jack is not legal (same shape as jackFault; 'line' means outside the strings)
-export function jackPlaceFault(jack, geometry = DEFAULT_GEOMETRY) {
-  const g = { ...DEFAULT_GEOMETRY, ...geometry };
-  if (jackPlaceValid(jack, g)) return null;
-  if (!jack || jack.dead) return { reason: 'out', dist: jack ? dist(jack, g.circle) : 0 };
-  const d = dist(jack, g.circle);
-  if (d < g.jackMin - EPS) return { reason: 'short', dist: d };
-  if (d > g.jackMax + EPS) return { reason: 'far', dist: d };
-  return { reason: 'line', dist: d };
-}
+export const jackPlaceFault = jackFault;
 
 // Which team throws next: 0 | 1, or null when not in play or nobody has boules.
 export function nextTeam(match) {
@@ -166,6 +159,15 @@ function endMene(match, jack, boules) {
     phase: over ? 'gameOver' : 'meneEnd', winner };
 }
 
+// E15: only one team has boules left and the points already on the ground take it to the target.
+function clinchedOnGround(match, jack, boules) {
+  const h = [boulesInHand(match, 0), boulesInHand(match, 1)];
+  if ((h[0] > 0) === (h[1] > 0)) return false;
+  const team = h[0] > 0 ? 0 : 1;
+  const r = meneResult(jack, boules);
+  return !r.void && r.team === team && match.scores[team] + r.points >= match.target;
+}
+
 // Reducer: returns a new match, never mutates the input.
 export function apply(match, event) {
   switch (event.type) {
@@ -178,11 +180,12 @@ export function apply(match, event) {
       }
       return { ...match, phase: 'play', jackTeam: event.team, placingTeam: null, jack, boules: [], lastThrower: null };
     }
-    case 'jackPlaced': {
+    case 'jackPlaceSettled': {
+      // E04: the jack has come to rest. A valid resting place starts play; otherwise a yellow card and the same team places again.
       if (match.phase !== 'jackPlace' || event.team !== match.placingTeam) return match;
-      const jack = { x: event.jack.x, y: event.jack.y, dead: false };
-      if (!jackPlaceValid(jack, match.geometry)) return match;
-      return { ...match, phase: 'play', placingTeam: null, jack, boules: [], lastThrower: null };
+      const jack = { x: event.jack.x, y: event.jack.y, dead: !!event.jack.dead };
+      if (!jackPlaceValid(jack, match.geometry)) return { ...match, yellowCards: (match.yellowCards || 0) + 1 };
+      return { ...match, phase: 'play', placingTeam: null, jack, boules: [], lastThrower: null, yellowCards: 0 };
     }
     case 'bouleThrown': {
       if (match.phase !== 'play') return match;
@@ -201,13 +204,17 @@ export function apply(match, event) {
       const boules = event.boules.map((b) => ({ ...b }));
       const none = boulesInHand(match, 0) + boulesInHand(match, 1) === 0;
       if (jack.dead || none) return endMene(match, jack, boules);
+      if (clinchedOnGround(match, jack, boules)) return endMene(match, jack, boules);
       return { ...match, jack, boules, inFlight: null };
     }
     case 'nextMene': {
       if (match.phase !== 'meneEnd') return match;
       const r = match.result;
+      const g = match.geometry; // E10: the next mène starts from a circle around the last jack, played the other way
+      const nc = nextCircle(match.jack, g.dir ?? 1, { width: g.width, length: g.length });
       return {
         ...match,
+        geometry: { ...g, circle: { x: nc.circle.x, y: nc.circle.y }, dir: nc.dir },
         players: match.players.map((p) => ({ ...p, boulesLeft: BOULES_PER_PLAYER })),
         mene: match.mene + 1,
         jackTeam: r && !r.void ? r.team : match.jackTeam, // winner throws; void keeps the same team
