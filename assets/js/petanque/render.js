@@ -8,7 +8,7 @@ import { JACK_END_MARGIN } from './rules.js';
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
 import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, scoringTargetBox } from './camera.js';
-import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeSkyPanorama, makeLake, makeSailboats, skyColor, SKY_HAZE, isPhone } from './scenery.js';
+import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeTreeShadows, makeSkyPanorama, makeLake, makeSailboats, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 import { createFloatplane } from './floatplane.js'; // F19
 
 const TRANSITION = 0.6; // seconds for camera moves
@@ -257,6 +257,7 @@ export function createRenderer(canvas, terrain) {
   scene.add(makeTufts(terrain, isPhone()));
   const trees = makeTrees(terrain);
   scene.add(trees);
+  scene.add(makeTreeShadows(terrain, sunOffset)); // F73: blob shadows for the trees outside the shadow map's job
   let swayT = 0; // D15: a slow lean of each tree about its foot; frozen when paused (render dt 0), none under reduced motion
 
   // Lumber surround: weathered 6x6 timbers, one mesh per board section (long sides split with butt joints,

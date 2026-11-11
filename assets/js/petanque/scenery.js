@@ -235,7 +235,7 @@ function tree(kind, rand, scale, cast) {
   const tg = new THREE.CylinderGeometry(trunkR * 0.7, trunkR, trunkH + 2, 7);
   tg.rotateX(Math.PI / 2); tg.translate(0, 0, (trunkH + 2) / 2);
   const tm = new THREE.Mesh(tg, new THREE.MeshStandardMaterial({ color: kind === 'cedar' ? '#6b4a34' : '#5a4331', roughness: 1, flatShading: true }));
-  cm.castShadow = tm.castShadow = cast;
+  cm.castShadow = tm.castShadow = false; // F73: trees shade the grass with camera-independent blob decals (makeTreeShadows); the shadow map follows the camera, so tree shadows used to come and go
   cm.receiveShadow = tm.receiveShadow = false;
   grp.add(tm, cm);
   grp.scale.setScalar(scale);
@@ -268,6 +268,48 @@ export function makeTrees(terrain) {
     grp.add(t);
   }
   return grp;
+}
+
+// Approximate tree heights (m at scale 1) and canopy radii, for the cheap blob shadows
+const TREE_SIZE = { fir: [11.2, 2.0], cedar: [9.4, 2.1], maple: [6.5, 2.4] };
+
+// Pure helper: the ground footprint of a tree's shadow as an ellipse. `sunOffset` points from the ground to the sun
+// (the single source of the sun direction), so the shadow runs the opposite way. The length is height / tan(elevation),
+// shortened so it stops `clear` metres outside the timbers (`outside(x, y)` is the distance beyond them).
+export function treeShadowDecal(x, y, height, radius, sunOffset, outside, clear = 0.8) {
+  const hx = -sunOffset.x, hy = -sunOffset.y, hl = Math.hypot(hx, hy) || 1;
+  const dx = hx / hl, dy = hy / hl, tanEl = sunOffset.z / hl;
+  let len = tanEl > 0.05 ? height / tanEl : height * 20;
+  len = Math.min(len, 18);
+  if (outside(x, y) >= clear) { // stop at the first point along the shadow that would touch the court
+    for (let t = 0.25; t <= len; t += 0.25) if (outside(x + dx * t, y + dy * t) < clear) { len = t - 0.25; break; }
+  }
+  return { cx: x + dx * len / 2, cy: y + dy * len / 2, len, width: radius * 1.5, angle: Math.atan2(dy, dx) };
+}
+
+// F73: soft dark ellipses on the grass for every tree, aligned with the sun and independent of the camera (the shadow
+// map re-centres on the look target, so real tree shadows entered and left it as the camera moved). One instanced mesh.
+export function makeTreeShadows(terrain, sunOffset) {
+  const cv = makeCanvas(64, 64), g = cv.getContext('2d');
+  const grad = g.createRadialGradient(32, 32, 2, 32, 32, 31);
+  grad.addColorStop(0, 'rgba(0,0,0,0.9)'); grad.addColorStop(0.6, 'rgba(0,0,0,0.6)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(cv);
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.4, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, color: '#0b1a05' });
+  const list = TREES;
+  const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), mat, list.length);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3(), z = new THREE.Vector3(0, 0, 1);
+  list.forEach(([x, y, kind, s], i) => {
+    const [h, r] = TREE_SIZE[kind];
+    const d = treeShadowDecal(x, y, h * s, r * s, sunOffset, outsideTimbers);
+    const inGrid = x > -C.terrainPad && x < C.terrainW + C.terrainPad && y > -C.terrainPad && y < C.terrainL + C.terrainPad;
+    p.set(d.cx, d.cy, (inGrid ? terrain.sample(x, y).h : -0.03) + 0.012);
+    q.setFromAxisAngle(z, d.angle);
+    sc.set(Math.max(d.len, 0.01), d.width, 1);
+    mesh.setMatrixAt(i, m.compose(p, q, sc));
+  });
+  mesh.renderOrder = 1; mesh.frustumCulled = false;
+  return mesh;
 }
 
 // ---- Sky and panorama -----------------------------------------------------------------------------------
@@ -799,73 +841,102 @@ export function makeLake(cx, z) {
   return { mesh, update(dt) { uniforms.uTime.value += dt; } };
 }
 
-// ---- Sailboats (F64) ------------------------------------------------------------------------------------
-// A few faceted low-poly sailboats on the lake. Wander logic is the pure fleet in sailboats.js; here: one merged,
-// vertex-coloured mesh per boat (hull + mast + one or two sails), bobbed and heeled each frame without allocating.
-// Scale is slightly exaggerated (hull 7 m, mast 9 m) so they read 40-150 m away.
+// ---- Sailboats (F64, F65) -------------------------------------------------------------------------------
+// Two or three simple low-poly racing sloops (hull ~4.6 m, mast ~6.3 m above the deck). The sailing (wind, polar, tacks,
+// jibes, heel, sail trim) is the pure fleet in sailboats.js; here each boat is four small merged vertex-coloured meshes
+// (hull+mast+fin, mainsail+boom, jib) in a few groups that are only rotated each frame: heading, heel, and the mainsail
+// and jib swinging about the mast and forestay. No per-frame allocations.
 const HULLS = ['#f1ece0', '#2f5d8a', '#a8322d', '#d8c9a0', '#2d4a3e'];
-const SAILS = ['#f6f1e4', '#f6f1e4', '#efe6cf', '#f6f1e4', '#d23b30', '#2f6fc0'];
+const SAIL_COL = ['#f6f1e4', '#f6f1e4', '#efe6cf', '#f6f1e4', '#f0c53a', '#d23b30', '#2f6fc0'];
+const STRIPES = ['#d23b30', '#2f6fc0', '#1f8a70', '#f0c53a'];
+const MAST_X = 0.5, JIB_TACK = [1.95, 0, 0.3], JIB_LEN = Math.hypot(1.45, 5.1), JIB_TILT = Math.atan2(1.45, 5.1);
 
-function buildBoat(kind, rand) {
+function geoBuilder() {
   const pos = [], col = [];
   const tri = (a, b, c, hex, shade = 1) => {
     const k = new THREE.Color(hex).multiplyScalar(shade);
     pos.push(...a, ...b, ...c); for (let i = 0; i < 3; i++) col.push(k.r, k.g, k.b);
   };
-  const hull = HULLS[kind % HULLS.length], deck = '#8a6a44';
-  // hull: bow, stern corners, deck-level beam points, a keel line below the water
-  const bow = [3.6, 0, 0.9], sL = [-3.4, 1.15, 0.8], sR = [-3.4, -1.15, 0.8], mL = [0.6, 1.4, 0.8], mR = [0.6, -1.4, 0.8];
-  const kb = [2.4, 0, -0.1], ks = [-3.0, 0, 0.0], km = [0.4, 0, -0.55];
-  tri(bow, mL, mR, deck); tri(mL, sL, sR, deck, 0.95); tri(mL, sR, mR, deck, 0.95);
-  tri(bow, kb, mL, hull, 0.95); tri(bow, mR, kb, hull, 0.8); tri(kb, km, mL, hull, 0.85); tri(kb, mR, km, hull, 0.7);
-  tri(km, sL, mL, hull, 0.9); tri(km, mR, sR, hull, 0.65); tri(km, ks, sL, hull, 0.8); tri(km, sR, ks, hull, 0.6); tri(ks, sR, sL, hull, 0.7);
-  // mast (thin faceted spike) and boom
-  const m0 = [0.3, 0, 0.8], m1 = [0.3, 0.12, 0.8], m2 = [0.3, 0, 9.6];
-  tri(m0, m1, m2, '#d9d4c8');
-  const sail = SAILS[Math.floor(rand() * SAILS.length)], jib = rand() < 0.7;
-  const belly = 0.45;
-  // mainsail: two facets with a bellied middle seam, double-sided via both windings
-  const mt = [0.2, 0, 9.0], mf = [0.2, 0, 1.6], me = [-3.0, 0, 1.6], mm = [-1.0, belly, 4.2];
-  const sailTris = [[mf, me, mm], [mf, mm, mt]];
-  if (jib) {
-    const jt = [0.45, 0, 8.2], jf = [3.4, 0, 1.3], jb = [0.45, 0, 1.3], jm = [1.2, belly * 0.8, 3.6];
-    sailTris.push([jb, jf, jm], [jb, jm, jt]);
-  }
-  sailTris.forEach(([a, b, c], i) => { tri(a, b, c, sail, i % 2 ? 1 : 0.93); });
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  geo.computeVertexNormals();
-  return geo;
+  const build = () => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    geo.computeVertexNormals();
+    return geo;
+  };
+  return { tri, build };
 }
 
-// Returns { group, update(dt, reduced, plane, groundZ) }. cx: court centre x; z: the lake's water height; seed varies each game.
+function buildHull(kind) {
+  const { tri, build } = geoBuilder();
+  const hull = HULLS[kind % HULLS.length], deck = '#a98a5e', trim = '#3a3a3a';
+  const zd = 0.3, zk = -0.3; // deck and keel-line heights (the water surface is at 0)
+  const B = [2.4, 0, zd + 0.05], L1 = [0.7, 0.72, zd], L2 = [-2.2, 0.58, zd], R1 = [0.7, -0.72, zd], R2 = [-2.2, -0.58, zd];
+  const KB = [1.5, 0, zk], KS = [-2.1, 0, zk + 0.1];
+  tri(B, L1, R1, deck); tri(L1, L2, R2, deck, 0.95); tri(L1, R2, R1, deck, 0.95);
+  tri(B, L1, KB, hull, 0.95); tri(L1, KS, KB, hull, 0.85); tri(L1, L2, KS, hull, 0.9); // port side
+  tri(B, KB, R1, hull, 0.8); tri(R1, KB, KS, hull, 0.7); tri(R1, KS, R2, hull, 0.75); // starboard side
+  tri(L2, R2, KS, hull, 0.65); // flat transom
+  tri([-0.2, 0.3, zd + 0.01], [-1.5, 0.3, zd + 0.01], [-0.9, 0.0, zd + 0.01], trim); // small cockpit mark
+  tri([0.3, 0, zk + 0.05], [1.0, 0, zk + 0.05], [0.75, 0, -1.15], '#3b4650'); // fin keel, under the water
+  tri([-2.05, 0, zk + 0.1], [-1.8, 0, zk + 0.1], [-1.95, 0, -0.75], '#3b4650'); // rudder
+  const mt = 6.6; // thin mast: two crossed slivers
+  tri([MAST_X - 0.06, 0, zd], [MAST_X + 0.06, 0, zd], [MAST_X, 0, mt], '#e6e1d4');
+  tri([MAST_X, -0.06, zd], [MAST_X, 0.06, zd], [MAST_X, 0, mt], '#cfcabd');
+  return build();
+}
+
+// Mainsail + boom in a frame centred on the mast (rotate about z to trim; the boom/sail trail along -x).
+function buildMain(sail, stripe) {
+  const { tri, build } = geoBuilder();
+  const tack = [0, 0, 1.25], clew = [-2.2, 0, 1.3], head = [-0.15, 0.12, 6.3], mid = [-1.2, -0.28, 3.8], q = [-0.02, 0, 4.9];
+  tri(tack, clew, mid, sail, 0.95);
+  if (stripe) { tri(tack, mid, q, sail); tri(q, mid, head, stripe); } else tri(tack, mid, head, sail);
+  // boom: a thin flat quad just under the foot
+  tri([0, -0.04, 1.2], [0, 0.04, 1.2], [-2.3, 0.04, 1.2], '#d9d4c8'); tri([0, -0.04, 1.2], [-2.3, 0.04, 1.2], [-2.3, -0.04, 1.2], '#d9d4c8');
+  return build();
+}
+
+// Jib in a frame along the forestay (local +z runs up the luff, -x trails aft; rotate about z to trim).
+function buildJib(sail, stripe) {
+  const { tri, build } = geoBuilder();
+  const tack = [0, 0, 0], head = [0, 0, JIB_LEN], clew = [-1.6, 0, 0.9], mid = [-0.8, -0.2, 3.1], q = [0, 0, JIB_LEN * 0.78];
+  tri(tack, clew, mid, sail, 0.97);
+  if (stripe) { tri(tack, mid, q, sail, 0.97); tri(q, mid, head, stripe); } else tri(tack, mid, head, sail, 0.97);
+  return build();
+}
+
+// Returns { group, fleet, update(dt, reduced, plane, groundZ) }. cx: court centre x; z: the lake's water height; seed varies each game.
 export function makeSailboats(cx, z, seed) {
   if (seed === undefined) seed = (typeof location !== 'undefined' && +new URLSearchParams(location.search).get('seed')) || (Date.now() % 100000);
   const rand = mulberry32(seed * 31 + 5);
-  const count = 3 + Math.floor(rand() * 3);
+  const count = 2 + (rand() < 0.5 ? 1 : 0);
   const fleet = createSailFleet(seed, { cx, count });
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide, fog: true });
   const group = new THREE.Group();
   const rigs = fleet.boats.map((b, i) => {
-    const geo = buildBoat(i, rand);
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.frustumCulled = false;
-    const outer = new THREE.Group(), inner = new THREE.Group();
-    inner.add(mesh); outer.add(inner); group.add(outer);
-    return { outer, inner, ph: b.phase };
+    const sail = SAIL_COL[Math.floor(rand() * SAIL_COL.length)];
+    const stripe = (sail === '#f6f1e4' || sail === '#efe6cf') && rand() < 0.5 ? STRIPES[Math.floor(rand() * STRIPES.length)] : null;
+    const mk = (geo) => { const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; return m; };
+    const outer = new THREE.Group(), heel = new THREE.Group(), mainPivot = new THREE.Group(), jibTilt = new THREE.Group(), jibPivot = new THREE.Group();
+    heel.add(mk(buildHull(i + Math.floor(rand() * 5))));
+    mainPivot.position.set(MAST_X, 0, 0); mainPivot.add(mk(buildMain(sail, stripe))); heel.add(mainPivot);
+    jibTilt.position.set(...JIB_TACK); jibTilt.rotation.y = -JIB_TILT; jibPivot.add(mk(buildJib(sail, stripe))); jibTilt.add(jibPivot); heel.add(jibTilt);
+    outer.add(heel); group.add(outer);
+    return { outer, heel, mainPivot, jibPivot, ph: b.phase };
   });
   const avoid = { x: 0, y: 0, r: SAIL.avoidR };
   let t = 0;
   function place(reduced) {
+    const sway = reduced ? 0 : 1;
     for (let i = 0; i < rigs.length; i++) {
       const b = fleet.boats[i], r = rigs[i];
-      r.outer.position.set(b.x, b.y, z + 0.05);
+      r.outer.position.set(b.x, b.y, z + 0.05 + sway * Math.sin(t * 1.3 + r.ph) * 0.05);
       r.outer.rotation.z = b.heading;
-      const sway = reduced ? 0 : 1;
-      r.inner.rotation.x = -(0.12 + b.speed * 0.03 + b.turnRate * 0.25) * 1 + sway * Math.sin(t * 0.9 + r.ph) * 0.03;
-      r.inner.rotation.y = sway * Math.sin(t * 0.7 + r.ph * 2) * 0.025; // pitch
-      r.inner.position.z = sway * Math.sin(t * 1.3 + r.ph) * 0.12;
+      r.heel.rotation.x = b.heel + sway * Math.sin(t * 0.9 + r.ph) * 0.02; // + heel = leaning to the right (leeward when the wind is from the left)
+      r.heel.rotation.y = sway * Math.sin(t * 0.7 + r.ph * 2) * 0.02; // pitch
+      r.mainPivot.rotation.z = b.sail; r.mainPivot.scale.y = b.sail < 0 ? -1 : 1; // belly stays to leeward on either tack
+      r.jibPivot.rotation.z = b.jib; r.jibPivot.scale.y = b.jib < 0 ? -1 : 1;
     }
   }
   place(false);
