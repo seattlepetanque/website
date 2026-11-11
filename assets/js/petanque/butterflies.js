@@ -1,101 +1,104 @@
-// F67: low-poly butterflies. Part 1 is pure motion logic (no three.js use):
-// createButterflyField(seed, opts) -> { flies, wind, step(dt, wind?) }. World metres, court coordinates (x across,
-// y along, z up, relative to the grass plane). Butterflies flutter erratically between waypoints along the grass margins and
-// court edges (now and then crossing an edge), 0.3-2 m high, within R metres of the court, never inside a keep-out circle
-// (the throwing circle / player area).
-// step(0, ...) changes nothing (paused). Part 2 (makeButterflies) builds the meshes.
+// F81: butterflies are rare visits. Pure scheduling and path logic first (no three.js use), meshes below.
+// createVisitScheduler(seed, opts) -> { step(dt, { busy }) -> events[] }: the first visit 60-150 s after the game starts, then one
+// every 3-6 minutes of unpaused play (never starting while `busy`: the human's aim/throw or a boule in flight; the visit waits for
+// the next quiet moment). Event: { type: 'visit', t, butterflies: [params] } with 2-4 params per visit.
+// butterflyPath(params, t, out?) -> { pos: {x,y,z}, opacity, flap, amp, heading }: world metres in court coordinates (x across,
+// y along, z up from the grass plane), t seconds since the visit started. Spot on the grass margin 4-14 m from the court edge
+// (mostly in the shoulder camera's view, outside the throwing circle), 0.1 m up, opacity 0 -> 1 over 1.5 s while lifting off, then an
+// ascending, erratic-then-steadier flight away from the court (slightly downwind) to 15-30 m, fading out over the last 3 s.
 import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
 import { mulberry32 } from './rng.js';
 
 export const BF = {
-  radius: 25, // max distance from the court rectangle
-  zMin: 0.3, zMax: 2, maxSpeed: 2.2, glideSpeed: 0.7,
+  firstMin: 60, firstMax: 150, gapMin: 180, gapMax: 360, // seconds
+  countMin: 2, countMax: 4, pool: 4,
+  edgeMin: 4, edgeMax: 14, // spot distance from the court rectangle
+  fadeIn: 1.5, fadeOut: 3, riseMin: 14, riseMax: 20, altMin: 15, altMax: 30, startZ: [0.1, 0.3], maxDelay: 2.5,
+  wind: Object.freeze({ x: 0.9, y: 0.35 }), // unit-ish downwind direction used for the slight drift
   keepOut: Object.freeze([Object.freeze({ x: C.circle.x, y: C.circle.y, r: 3.5 })]), // throwing circle / player area
+  debugFirst: 0.5, debugEvery: 20,
 };
+export const visitDuration = (p) => p.delay + p.rise + BF.fadeOut;
 
 const TAU = Math.PI * 2;
-// distance outside the court rectangle (0 inside)
 const rectDist = (x, y) => Math.hypot(Math.max(-x, 0, x - C.terrainW), Math.max(-y, 0, y - C.terrainL));
+const inKeepOut = (x, y) => BF.keepOut.some((c) => Math.hypot(x - c.x, y - c.y) < c.r);
+// within about +-32 degrees of the shoulder camera's line of sight (from the circle, looking along +y)
+const seen = (x, y) => y - C.circle.y > 3 && Math.abs(x - C.circle.x) <= 0.62 * (y - C.circle.y);
+const okSpot = (x, y) => { const d = rectDist(x, y); return d >= BF.edgeMin && d <= BF.edgeMax && !inKeepOut(x, y); };
 
-export function createButterflyField(seed, { count, keepOut = BF.keepOut } = {}) {
-  const rand = mulberry32(seed * 104729 + 7);
-  const W = C.terrainW, L = C.terrainL;
-  const n = count || 3 + Math.floor(rand() * 4);
-  const wind = { x: 0.3, y: 0.1, speed: 0.3, t: 0, base: rand() * TAU };
-  const out = { x: 0, y: 0 };
-  // push (x, y) out of every keep-out circle (writes into `out`)
-  const clearOf = (x, y, pad = 0) => {
-    for (let k = 0; k < keepOut.length; k++) {
-      const c = keepOut[k], dx = x - c.x, dy = y - c.y, d = Math.hypot(dx, dy), r = c.r + pad;
-      if (d < r) { if (d < 1e-6) { x = c.x; y = c.y + r; } else { x = c.x + dx / d * r; y = c.y + dy / d * r; } }
-    }
-    out.x = x; out.y = y;
-  };
-  // a waypoint on the margins: 0.5-7 m outside a random court edge (or 15 % just inside it), clear of the keep-out circles
-  const pickTarget = (f) => {
-    const side = Math.floor(rand() * 4), off = rand() < 0.15 ? -0.2 - rand() * 0.8 : 0.5 + rand() * 6.5;
-    let x, y;
-    if (side < 2) { x = side ? W + off : -off; y = rand() * L; } else { y = side === 3 ? L + off : -off; x = rand() * W; }
-    // sometimes wander further out along the grass
-    if (rand() < 0.3) { x += (rand() * 2 - 1) * 8; y += (rand() * 2 - 1) * 8; }
-    clearOf(x, y, 0.5);
-    f.tx = out.x; f.ty = out.y; f.tz = BF.zMin + rand() * 1.4; f.hold = 4 + rand() * 8;
-  };
-  const flies = [];
-  for (let i = 0; i < n; i++) {
-    const f = { x: 0, y: 0, z: 1, vx: 0, vy: 0, heading: rand() * TAU, tx: 0, ty: 0, tz: 1, hold: 0, glide: 0, flap: rand() * TAU, flapRate: 0, amp: 1, colour: i % 3, turn: 0, kick: 0 };
-    pickTarget(f); f.x = f.tx; f.y = f.ty; f.z = f.tz; pickTarget(f);
-    f.flapRate = 7 + rand() * 4; f.glide = rand() * 3;
-    flies.push(f);
+function pickSpot(rand, wantSeen) {
+  for (let k = 0; k < 60; k++) {
+    const x = -BF.edgeMax + rand() * (C.terrainW + 2 * BF.edgeMax), y = -BF.edgeMax + rand() * (C.terrainL + 2 * BF.edgeMax);
+    if (okSpot(x, y) && (!wantSeen || seen(x, y))) return { x, y };
   }
+  return { x: C.terrainW + 6, y: C.terrainL * 0.6 }; // fallback: beside the court on the far side of the shoulder view
+}
 
-  const stepFly = (f, dt) => {
-    f.hold -= dt; f.glide -= dt;
-    if (f.glide < -(0.6 + (f.flapRate % 1) * 1.5)) f.glide = 1 + rand() * 2.5; // alternate flutter bursts and gentle glides
-    const gliding = f.glide > 0;
-    f.amp = gliding ? 0.25 : 1;
-    const dx = f.tx - f.x, dy = f.ty - f.y, d = Math.hypot(dx, dy);
-    if (d < 0.8 || f.hold <= 0) pickTarget(f);
-    // erratic turning (smooth noise) while fluttering, a steady heading while gliding
-    f.kick -= dt;
-    if (f.kick <= 0) { f.turn = (rand() * 2 - 1) * (gliding ? 0.4 : 3.2); f.kick = (gliding ? 0.6 : 0.15) + rand() * 0.3; }
-    const want = Math.atan2(dy, dx);
-    let da = want - f.heading; da = Math.atan2(Math.sin(da), Math.cos(da));
-    f.heading += (da * 1.1 + f.turn) * dt;
-    const sp = gliding ? BF.glideSpeed : BF.glideSpeed + 0.6 + 0.6 * Math.abs(Math.sin(f.flap * 0.13));
-    const tvx = Math.cos(f.heading) * Math.min(sp, BF.maxSpeed) + wind.x * 0.5, tvy = Math.sin(f.heading) * Math.min(sp, BF.maxSpeed) + wind.y * 0.5;
-    const k = Math.min(1, dt * 3);
-    f.vx += (tvx - f.vx) * k; f.vy += (tvy - f.vy) * k;
-    const v = Math.hypot(f.vx, f.vy); if (v > BF.maxSpeed) { f.vx *= BF.maxSpeed / v; f.vy *= BF.maxSpeed / v; }
-    f.x += f.vx * dt; f.y += f.vy * dt;
-    f.z += (f.tz - f.z) * Math.min(1, dt * 0.8) + Math.sin(f.flap * 0.5) * 0.35 * dt;
-    f.z = Math.min(BF.zMax, Math.max(BF.zMin, f.z));
-    // keep-out circles: slide out along the boundary and turn away
-    clearOf(f.x, f.y);
-    if (out.x !== f.x || out.y !== f.y) { f.x = out.x; f.y = out.y; f.heading += 0.8; pickTarget(f); }
-    // region bound: stay within radius of the court
-    const rd = rectDist(f.x, f.y);
-    if (rd > BF.radius) {
-      const cx = Math.min(Math.max(f.x, 0), W), cy = Math.min(Math.max(f.y, 0), L), s = BF.radius / rd;
-      f.x = cx + (f.x - cx) * s; f.y = cy + (f.y - cy) * s; pickTarget(f);
-    }
-    if (!gliding || f.amp > 0.9) f.flap += TAU * f.flapRate * dt;
-    else f.flap += TAU * f.flapRate * 0.15 * dt;
-  };
-
-  function step(dt, w) {
-    if (!(dt > 0)) return;
-    if (dt > 0.1) dt = 0.1;
-    wind.t += dt;
-    if (w && typeof w.x === 'number') { wind.x = w.x; wind.y = w.y; }
-    else { // slow varying breeze
-      const a = wind.base + 0.6 * Math.sin(wind.t / 41) + 0.4 * Math.sin(wind.t / 17 + 1), sp = 0.45 + 0.2 * Math.sin(wind.t / 29 + 2);
-      wind.x = Math.cos(a) * sp; wind.y = Math.sin(a) * sp;
-    }
-    for (let i = 0; i < flies.length; i++) stepFly(flies[i], dt);
+function makeVisit(rand, i, centre, wantSeen) {
+  let x = centre.x, y = centre.y;
+  for (let k = 0; k < 10; k++) { // scatter around the visit's centre
+    const sx = centre.x + (rand() * 2 - 1) * 2.5, sy = centre.y + (rand() * 2 - 1) * 2.5;
+    if (okSpot(sx, sy) && (!wantSeen || seen(sx, sy))) { x = sx; y = sy; break; }
   }
-  return { flies, wind, step };
+  // heading: away from the court's centre, bent a little downwind
+  let ax = x - C.terrainW / 2, ay = y - C.terrainL / 2; const al = Math.hypot(ax, ay) || 1; ax /= al; ay /= al;
+  const wl = Math.hypot(BF.wind.x, BF.wind.y);
+  const dx = ax + 0.35 * BF.wind.x / wl, dy = ay + 0.35 * BF.wind.y / wl;
+  const rise = BF.riseMin + rand() * (BF.riseMax - BF.riseMin);
+  return {
+    x, y, z0: BF.startZ[0] + rand() * (BF.startZ[1] - BF.startZ[0]),
+    dir: Math.atan2(dy, dx), reach: 14 + rand() * 12, // horizontal metres travelled over the visit
+    height: BF.altMin + rand() * (BF.altMax - BF.altMin),
+    delay: i === 0 ? 0 : rand() * BF.maxDelay, rise, colour: Math.floor(rand() * 3),
+    flapRate: 8 + rand() * 3, w1: 3 + rand() * 2, w2: 6.5 + rand() * 2.5, ph1: rand() * TAU, ph2: rand() * TAU, wob: 0.5 + rand() * 0.5,
+  };
+}
+
+export function createVisitScheduler(seed, { debug = false } = {}) {
+  const rand = mulberry32(seed * 7919 + 13);
+  let t = 0;
+  let next = debug ? BF.debugFirst : BF.firstMin + rand() * (BF.firstMax - BF.firstMin);
+  const gap = () => (debug ? BF.debugEvery : BF.gapMin + rand() * (BF.gapMax - BF.gapMin));
+  return {
+    get time() { return t; }, get next() { return next; },
+    step(dt, { busy = false } = {}) {
+      const ev = [];
+      if (!(dt > 0)) return ev; // paused: frozen
+      t += Math.min(dt, 5);
+      if (t < next || busy) return ev; // wait for the next quiet moment
+      const n = BF.countMin + Math.floor(rand() * (BF.countMax - BF.countMin + 1));
+      const wantSeen = rand() < 0.85, centre = pickSpot(rand, wantSeen), list = [];
+      for (let i = 0; i < n; i++) list.push(makeVisit(rand, i, centre, wantSeen));
+      ev.push({ type: 'visit', t, butterflies: list });
+      next = t + gap();
+      return ev;
+    },
+  };
+}
+
+const smooth = (u) => { u = Math.min(1, Math.max(0, u)); return u * u * (3 - 2 * u); };
+
+export function butterflyPath(p, t, out) {
+  const o = out || { pos: { x: 0, y: 0, z: 0 }, opacity: 0, flap: 0, amp: 1, heading: 0 };
+  const D = p.rise + BF.fadeOut, lt = t - p.delay, u = Math.min(1, Math.max(0, lt / D));
+  o.opacity = lt <= 0 || lt >= D ? 0 : Math.min(smooth(lt / BF.fadeIn), smooth((D - lt) / BF.fadeOut));
+  const calm = (1 - u) * (1 - u), ramp = smooth(lt / 2); // erratic flutter decays into a steady glide; it starts from the spot
+  const run = p.reach * (0.25 * u + 0.75 * u * u * (3 - 2 * u)) * 1; // slow near the grass, steadier later
+  const lat = p.wob * calm * ramp * (Math.sin(p.w1 * lt + p.ph1) + 0.6 * Math.sin(p.w2 * lt + p.ph2));
+  const fwd = 0.25 * calm * ramp * Math.sin(p.w2 * 0.8 * lt + p.ph1);
+  const c = Math.cos(p.dir), s = Math.sin(p.dir);
+  o.pos.x = p.x + c * (run + fwd) - s * lat;
+  o.pos.y = p.y + s * (run + fwd) + c * lat;
+  const z = p.z0 + (p.height - p.z0) * Math.pow(u, 1.4);
+  const bob = 0.45 * calm * ramp * Math.sin(p.w2 * 1.1 * lt + p.ph2) * Math.min(1, Math.max(0, z - 0.05) * 2);
+  o.pos.z = Math.max(0.05, z + bob);
+  o.heading = p.dir + 0.9 * calm * Math.cos(p.w1 * lt + p.ph1);
+  const l = Math.max(0, lt);
+  o.flap = TAU * (p.flapRate * l - 0.45 * p.flapRate * l * l / (2 * D)); // flapping slows as it settles into the glide
+  o.amp = 1 - 0.45 * u;
+  return o;
 }
 
 // ---------- meshes ----------
@@ -118,30 +121,57 @@ function wingGeometry(side, wingCol, edgeCol) {
 }
 
 export function makeButterflies(z, seed) {
-  if (seed === undefined) seed = (typeof location !== 'undefined' && +new URLSearchParams(location.search).get('seed')) || (Date.now() % 100000);
-  const field = createButterflyField(seed);
-  const group = new THREE.Group(); group.position.z = z;
+  const q = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams();
+  if (seed === undefined) seed = +q.get('seed') || (Date.now() % 100000);
+  const dbg = q.has('debug') && q.has('butterflies'); // ?debug&butterflies: a visit right at the start, and every 20 s
+  const sched = createVisitScheduler(seed, { debug: dbg });
+  const group = new THREE.Group(); group.position.z = z; group.visible = false;
   const body = new THREE.BoxGeometry(0.1, 0.014, 0.014);
-  const bodyMat = new THREE.MeshBasicMaterial({ color: '#1e1a14' });
-  const wingMats = COLOURS.map(() => new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, flatShading: true }));
   const geos = COLOURS.map(([a, b]) => [wingGeometry(1, a, b), wingGeometry(-1, a, b)]);
-  const rigs = field.flies.map((f) => {
-    const g = new THREE.Group();
-    const left = new THREE.Mesh(geos[f.colour][0], wingMats[f.colour]), right = new THREE.Mesh(geos[f.colour][1], wingMats[f.colour]);
+  const SCALE = 1.6;
+  const slots = [];
+  for (let i = 0; i < BF.pool; i++) { // a small pool, reused each visit; own materials so opacity is per butterfly
+    const mats = COLOURS.map(() => new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, flatShading: true, transparent: true, depthWrite: false, opacity: 0 }));
+    const bodyMat = new THREE.MeshBasicMaterial({ color: '#1e1a14', transparent: true, opacity: 0 });
+    const g = new THREE.Group(); g.visible = false; g.scale.setScalar(SCALE);
+    const left = new THREE.Mesh(geos[0][0], mats[0]), right = new THREE.Mesh(geos[0][1], mats[0]);
     const b = new THREE.Mesh(body, bodyMat); b.position.x = 0.04;
     left.frustumCulled = right.frustumCulled = b.frustumCulled = false;
     g.add(left, right, b); group.add(g);
-    return { g, left, right };
-  });
-  const sync = (still) => {
-    for (let i = 0; i < rigs.length; i++) {
-      const f = field.flies[i], r = rigs[i];
-      r.g.position.set(f.x, f.y, f.z); r.g.rotation.z = f.heading;
-      const a = still ? 0.55 : 0.35 + 0.75 * f.amp * Math.sin(f.flap) * (0.5 + 0.5 * Math.min(1, f.amp)) + (1 - f.amp) * 0.4;
-      r.left.rotation.x = a; r.right.rotation.x = -a;
-    }
+    slots.push({ g, left, right, mats, bodyMat, geos, p: null, t: 0, out: { pos: { x: 0, y: 0, z: 0 }, opacity: 0, flap: 0, amp: 1, heading: 0 } });
+  }
+  const start = (s, p) => {
+    s.p = p; s.t = 0;
+    s.left.geometry = geos[p.colour][0]; s.right.geometry = geos[p.colour][1];
+    s.left.material = s.right.material = s.mats[p.colour];
   };
-  sync(true);
-  // dt 0 (paused) or reduced motion: nothing moves, wings held still
-  return { group, field, update(dt, reduced) { if (reduced) { if (!sync.done) { sync(true); sync.done = true; } return; } sync.done = false; field.step(dt); if (dt > 0) sync(false); } };
+  const hideAll = () => { for (const s of slots) { s.p = null; s.g.visible = false; } group.visible = false; };
+  const show = (s) => {
+    const o = butterflyPath(s.p, s.t, s.out);
+    if (o.opacity <= 0) { s.g.visible = false; return; }
+    s.g.visible = true; s.g.position.set(o.pos.x, o.pos.y, o.pos.z); s.g.rotation.z = o.heading;
+    const a = 0.35 + 0.75 * o.amp * Math.sin(o.flap) + (1 - o.amp) * 0.4;
+    s.left.rotation.x = a; s.right.rotation.x = -a;
+    s.mats[s.p.colour].opacity = o.opacity; s.bodyMat.opacity = o.opacity;
+  };
+  let active = 0;
+  // dt 0 (paused): frozen; reduced motion: no visits at all
+  return {
+    group, sched, get active() { return active; },
+    update(dt, reduced, busy) {
+      if (reduced) { if (active) { hideAll(); active = 0; } return; }
+      if (!(dt > 0)) return;
+      if (dt > 0.25) dt = 0.25;
+      const ev = sched.step(dt, { busy: !!busy });
+      for (let e = 0; e < ev.length; e++) for (const p of ev[e].butterflies) { const s = slots.find((x) => !x.p); if (s) start(s, p); }
+      active = 0;
+      for (const s of slots) {
+        if (!s.p) continue;
+        s.t += dt;
+        if (s.t >= visitDuration(s.p)) { s.p = null; s.g.visible = false; continue; }
+        active++; show(s);
+      }
+      group.visible = active > 0;
+    },
+  };
 }
