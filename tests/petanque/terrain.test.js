@@ -188,3 +188,16 @@ test('F52: gravel variant is a pure 50/50 pick from the seed, with a force overr
   const a = createTerrain(9, { gravel: 'grey' }), b = createTerrain(9, { gravel: 'sand' });
   for (const [x, y] of pts(20)) assert.deepEqual(a.sample(x, y), b.sample(x, y));
 });
+
+test('jackMaterialParams: one source for held and world jack; sand is red everywhere, grey stays orange', async () => {
+  const { jackMaterialParams, JACK_STYLE } = await import('../../assets/js/petanque/terrain.js');
+  for (const v of ['grey', 'sand']) {
+    const p = jackMaterialParams(v);
+    assert.equal(p.color, JACK_STYLE[v].color);
+    assert.equal(p.emissive, JACK_STYLE[v].emissive);
+  }
+  const sandBright = jackMaterialParams('sand', true), sandPlain = jackMaterialParams('sand');
+  assert.deepEqual(sandBright, sandPlain, 'live (bright) jack must not recolour on sand');
+  assert.equal(jackMaterialParams('grey').color, '#ff7a00');
+  assert.notEqual(jackMaterialParams('grey', true).color, jackMaterialParams('sand', true).color);
+});

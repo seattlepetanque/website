@@ -2,7 +2,7 @@
 import { stripGeometry } from './strip.js';
 import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
-import { jackStyle } from './terrain.js';
+import { jackMaterialParams } from './terrain.js';
 import { court } from './court.js';
 import { JACK_END_MARGIN } from './rules.js';
 import { mulberry32 } from './rng.js';
@@ -378,7 +378,7 @@ export function createRenderer(canvas, terrain) {
   // Dead (out of play) bodies: greyed and dulled
   const deadBouleMat = new THREE.MeshStandardMaterial({ color: '#a4a8b0', metalness: 0.45, roughness: 0.5, envMapIntensity: 0.9 });
   const deadJackMat = new THREE.MeshStandardMaterial({ color: '#8a7a5e', metalness: 0, roughness: 0.6 });
-  const jackMat = new THREE.MeshStandardMaterial({ color: jackStyle().color, metalness: 0, roughness: 0.45, emissive: jackStyle().emissive }); // orange on grey gravel, bright red on sand (F52), lit a little from within so it stays vivid in shade
+  const jackMat = new THREE.MeshStandardMaterial(jackMaterialParams()); // orange on grey gravel, bright red on sand (F52), lit a little from within so it stays vivid in shade
   const bouleGeo = new THREE.SphereGeometry(1, 40, 24);
   bouleGeo.rotateX(Math.PI / 2); // texture poles along z; any orientation is fine
   const jackGeo = new THREE.SphereGeometry(1, 20, 12);
@@ -444,7 +444,7 @@ export function createRenderer(canvas, terrain) {
   })();
   const jv = jackVisParam === null ? { a: true, c: true }
     : { a: jackVisParam.includes('a'), c: jackVisParam.includes('c') };
-  const jackBright = new THREE.MeshStandardMaterial({ color: '#ff8a1e', metalness: 0, roughness: 0.4, emissive: '#ff6a00', emissiveIntensity: 0.6 });
+  const jackBright = new THREE.MeshStandardMaterial(jackMaterialParams(undefined, true)); // the live jack: livelier orange on grey, the same bright red as jackMat on sand
   const jackChevron = (() => {
     const cv = makeCanvas(64, 96), g = cv.getContext('2d');
     g.lineJoin = 'round';
