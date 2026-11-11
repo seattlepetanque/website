@@ -868,6 +868,7 @@ function boot() {
   // ---- Game flow ----
   function toSetup() {
     userPaused = false;
+    golden.reset(); hideHolding(); // F86: no leftover light drift or who-holds banner
     token++; thinkToken++; pierreChoice = null; wideHold = false;
     match = null; pending = null;
     enableControls(false);
@@ -1043,7 +1044,7 @@ function boot() {
   exitBtn.hidden = true;
   function pauseGame() { if (!playing || !match || userPaused) return; userPaused = true; syncPausedUI(); }
   function resumeGame() { userPaused = false; if (playing) { syncPausedUI(); if (exitBtn.offsetParent) exitBtn.focus(); } else setPlaying(true); }
-  function endGame() { userPaused = false; setPlaying(false); } // leaves the full-window view; the page keeps Resume and New game
+  function endGame() { toSetup(); setPlaying(false); } // F86: back to the landing state a fresh load shows (setup card over the idle court), full-window view left, no match to resume
   exitBtn.addEventListener('click', pauseGame);
   window.addEventListener('keydown', (e) => {
     // Esc pauses (and resumes while paused), unless the browser is in fullscreen (it handles that Esc) or a toss used the key
@@ -2401,11 +2402,13 @@ function boot() {
   aimView();
   nextFrame(frame);
 
-  if (debug) {
+  if (debug) { // F86: ?debug&pausegame=MS / &endgame=MS pause / end the game after MS of wall time (screenshots)
+    if (params.has('pausegame')) setTimeout(() => pauseGame(), +params.get('pausegame') || 0);
+    if (params.has('endgame')) setTimeout(() => endGame(), +params.get('endgame') || 0);
     window.__petanque = {
       world, terrain, renderer, seed, reset: toSetup, startGame, court,
       audio,
-      setPlaying, clock,
+      setPlaying, clock, pauseGame, endGame,
       get paused() { return pausedNow; },
       get match() { return match; },
       throw: (p) => launchBody(jackBody() && !jackBody().dead ? 'boule' : 'jack', 0, 'you', { ...readParams(), ...p }),
