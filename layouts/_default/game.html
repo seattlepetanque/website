@@ -17,7 +17,7 @@
   {{ .Content }}
 </article>
 <div id="petanque" class="petanque"{{ with site.GetPage "/links" }} data-links-url="{{ .RelPermalink }}"{{ end }}>
-  <canvas role="img" aria-label="Pétanque court with boules and jack"></canvas>
+  <div class="petanque-stage"><canvas role="img" aria-label="Pétanque court with boules and jack"></canvas></div>
   <div class="petanque-hud"></div>
   <div class="petanque-controls"></div>
   <p class="petanque-status" aria-live="polite"></p>

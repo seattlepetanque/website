@@ -90,7 +90,7 @@ export function createHud(root, hudEl, cb) {
 
   // Overlay sits on top of the canvas
   const overlay = el('div', 'pt-overlay');
-  root.append(overlay);
+  (root.querySelector('.petanque-stage') || root).append(overlay);
 
   // Scoreboard
   hudEl.textContent = '';

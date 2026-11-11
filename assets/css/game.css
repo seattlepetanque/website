@@ -50,9 +50,11 @@
 
 /* HUD: scoreboard, overlay panels */
 .petanque { position: relative; }
+/* the stage is exactly the canvas box; overlays (scrims, cards) are inset 0 inside it. Full-window view: it drops out of the box tree. */
+.petanque-stage { position: relative; }
+.petanque.is-playing .petanque-stage { display: contents; }
 .pt-overlay {
-  position: absolute; top: .75rem; left: .75rem; right: .75rem;
-  aspect-ratio: 16 / 10;
+  position: absolute; inset: 0;
   display: none; align-items: center; justify-content: center; padding: 1rem;
   pointer-events: none; z-index: 2;
 }
@@ -119,7 +121,7 @@
 .pt-mene { align-self: center; text-align: center; font-weight: 700; color: var(--muted, #4d5468); }
 .pt-turn { margin-top: .6rem; font-weight: 700; }
 @media (max-width: 34rem) {
-  .pt-overlay { top: .5rem; left: .5rem; right: .5rem; aspect-ratio: 3 / 4; padding: .5rem; }
+  .pt-overlay { padding: .5rem; }
   .pt-board { grid-template-columns: 1fr 1fr; }
   .pt-mene { grid-column: 1 / -1; grid-row: 1; }
 }
