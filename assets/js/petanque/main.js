@@ -160,7 +160,7 @@ function boot() {
   let pierreChoice = null; // cached AI choice for Pierre while the chooser is open
   const pickHuman = params.get('humanturn'); // debug: stop at the human's first boule (or 'chooser')
 
-  // Controls (F32): a hamburger menu (Mode, Ambience, TEMP demo buttons) top right; F48 hold-to-use view icons (pan, read the ground, overhead) under it; speaker,
+  // Controls (F32): a hamburger menu (Mode, TEMP demo buttons) top right; F48 hold-to-use view icons (pan, read the ground, overhead) under it; speaker,
   // fullscreen and pause icons bottom right; Resume / New game / End game on the paused bar; no raw sliders
   controls.textContent = '';
   const mkBtn = (parent, text, cls) => {
@@ -208,24 +208,15 @@ function boot() {
     fp.trigger('takeoff');
   });
   // END TEMP F36
-  const ambBtn = mkBtn(bar, 'Ambience', 'pc-ambience');
-  { // F12: Ambience toggle (remembered); the sound starts after the first unlock
-    ambBtn.title = 'Quiet park sounds: birds, breeze, a distant plane.';
-    const syncAmbBtn = () => { ambBtn.setAttribute('aria-checked', String(settings.ambience)); ambBtn.classList.toggle('is-on', settings.ambience); };
-    audio.setAmbience(settings.ambience);
-    syncAmbBtn();
-    ambBtn.addEventListener('click', () => { settings.ambience = !settings.ambience; audio.setAmbience(settings.ambience); syncAmbBtn(); audio.unlock(); });
-  }
-  // F32 hamburger menu: every option button (Mode, Ambience, the demo buttons; built above straight into the bar) moves into one dropdown. Enter, Space,
+  // F32 hamburger menu: every option button (Mode, the demo buttons; built above straight into the bar) moves into one dropdown. Enter, Space,
   // click or ArrowDown opens it; arrows, Home and End move; Esc or Tab close it (Esc returns focus to the button);
-  // an outside press closes it. Toggle items use role menuitemcheckbox + aria-checked.
+  // an outside press closes it.
   const menuPanel = document.createElement('div');
   menuPanel.className = 'pc-menu'; menuPanel.id = 'pc-menu'; menuPanel.setAttribute('role', 'menu'); menuPanel.setAttribute('aria-label', 'Game options');
   menuPanel.hidden = true;
   const menuItems = [...bar.querySelectorAll(':scope > button')];
-  const TOGGLES = new Set([ambBtn]);
-  const STAY_OPEN = new Set([modeBtn, ambBtn]); // the others close the menu so the court is clear
-  for (const it of menuItems) { it.setAttribute('role', TOGGLES.has(it) ? 'menuitemcheckbox' : 'menuitem'); it.tabIndex = -1; it.classList.add('pc-menu-item'); }
+  const STAY_OPEN = new Set([modeBtn]); // the others close the menu so the court is clear
+  for (const it of menuItems) { it.setAttribute('role', 'menuitem'); it.tabIndex = -1; it.classList.add('pc-menu-item'); }
   menuPanel.append(...menuItems);
   const menuBtn = mkBtn(bar, '', 'pc-menu-btn');
   menuBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';

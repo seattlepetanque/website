@@ -30,9 +30,6 @@ export const settings = {
   // F01 (hidden): the camera style, '' (default: observer in slow mode, game cameras in quick) | 'observer' | 'tv' | 'game' | 'broadcast'.
   // localStorage.setItem('petanque-camstyle', 'broadcast'). ?debug&cam=... overrides it.
   get camStyle() { try { const v = localStorage.getItem('petanque-camstyle'); return ['observer', 'tv', 'game', 'broadcast'].includes(v) ? v : ''; } catch (e) { return ''; } },
-  // F12: ambient park sounds on/off (default on); the Ambience button in the controls bar sets it
-  get ambience() { try { return localStorage.getItem('petanque-ambience') !== 'off'; } catch (e) { return true; } },
-  set ambience(v) { try { localStorage.setItem('petanque-ambience', v ? 'on' : 'off'); } catch (e) { /* storage blocked */ } },
   // F45: the partner chosen in the setup dialog ('pierre' | 'marcel' | 'odette'; default Pierre)
   get partner() { try { const v = localStorage.getItem('petanque-partner'); return PARTNERS.includes(v) ? v : 'pierre'; } catch (e) { return 'pierre'; } },
   set partner(v) { if (PARTNERS.includes(v)) { try { localStorage.setItem('petanque-partner', v); } catch (e) { /* storage blocked */ } } },

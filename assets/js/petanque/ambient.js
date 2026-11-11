@@ -265,7 +265,7 @@ export function createAmbient(ctx, dest) {
     eng.stop(t + 2.2);
     eng = null;
   }
-  // Called every frame by the game with the plane's state; throttled here. Silent unless the ambience is on.
+  // Called every frame by the game with the plane's state; throttled here. Silent while muted (setActive false).
   function engine(on, level, pan, rev, dist) {
     try {
       engLevel = on ? level : 0;

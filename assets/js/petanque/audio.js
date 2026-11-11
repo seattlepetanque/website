@@ -133,9 +133,8 @@ export function createAudio(opts = {}) {
   let ctx = null;
   let master = null; // gain -> limiter -> destination; sounds connect here
   let white = null; // shared 2 s white noise
-  let amb = null; // F12 ambience (created in setup, after unlock)
-  let ambOn = true; // the Ambience toggle
-  const syncAmb = () => { if (amb) amb.setActive(ambOn && !muted); };
+  let amb = null; // F12 ambience (created in setup, after unlock); always on, the mute button silences it
+  const syncAmb = () => { if (amb) amb.setActive(!muted); };
   let voices = 0;
   let tickWin = 0, tickCount = 0; // ticks scheduled in the current 1 s window (cap)
   let frame = 0;
@@ -529,10 +528,9 @@ export function createAudio(opts = {}) {
     syncAmb();
   }
 
-  // F12: Ambience on/off (main.js remembers it in settings); audition ('bird' | 'breeze' | 'plane' | 'floatplane' | 'accordion' | 'cicada' | 'bell') ignores both.
-  function setAmbience(on) { ambOn = !!on; syncAmb(); }
+  // F12: audition ('bird' | 'breeze' | 'plane' | 'floatplane' | 'accordion' | 'cicada' | 'bell') ignores mute.
   function playAmbient(name) { unlock(); if (amb) amb.audition(name); }
-  // F19: the floatplane's engine, fed every frame by the game (follows the Ambience toggle and mute; silent while paused)
+  // F19: the floatplane's engine, fed every frame by the game (follows mute; silent while paused)
   function setEngine(on, level, pan, rev, dist) { if (amb && amb.engine && !held) amb.engine(on, level, pan, rev, dist); }
 
   // F66: busy = a human aim/throw moment (no rare tonal events start), slow = slow mode
@@ -556,5 +554,5 @@ export function createAudio(opts = {}) {
     return btn;
   }
 
-  return { unlock, setPaused, handleEvents, update, accent, fanfare, play, setMuted, isMuted, setAmbience, playAmbient, setEngine, setAmbientState, createMuteButton };
+  return { unlock, setPaused, handleEvents, update, accent, fanfare, play, setMuted, isMuted, playAmbient, setEngine, setAmbientState, createMuteButton };
 }
