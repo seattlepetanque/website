@@ -2,12 +2,14 @@
 // World is z-up, metres. The character faces +y at yaw 0; positive yaw turns toward +x.
 // The pose math below is pure (no three.js) so it can be tested in Node.
 import { C } from './constants.js';
-import { jackStyle } from './terrain.js';
+import { jackMaterialParams } from './terrain.js';
 
 const { sin, cos, sqrt, atan2, min, max, abs, PI } = Math;
 const BLEND = 0.25; // s, stance-to-stance blend
 const WALK_SPEED = 1.2; // m/s
 const TURN_RATE = 4; // rad/s
+const STEER_MIN_SPEED = 0.2, STEER_DEADBAND = 0.12, STEER_TURN_RATE = 3, STEER_ARRIVE = 1.2; // F53: crowd-steered heading: ignore slower steering, dead band (rad), rate limit (rad/s)
+const LOOK_DEADBAND = 0.1, LOOK_RATE = 5; // F53: head look-at: retarget only past this change (rad); the head turns at most this fast (rad/s)
 
 // ---------- small vector helpers (arrays [x, y, z]) ----------
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -528,39 +530,6 @@ export function bendDepth(t) {
   if (t < BEND_DOWN + BEND_BEAT) return 1;
   return 1 - ease((t - BEND_DOWN - BEND_BEAT) / BEND_UP);
 }
-// F28: the kick, a gentle nudge with the side of the right foot (a left-hander is mirrored): weight onto the left leg, right foot
-// back (wind-up), a short low sweep forward through the boule (contact), follow-through, recover. t is seconds from the start,
-// 0..KICK_TIME. opts.carry keeps the right arm at the waist (the ring is in the hand).
-export const KICK_WIND = 0.22, KICK_SWING = 0.12, KICK_FOLLOW = 0.26, KICK_RECOVER = 0.25;
-export const KICK_TIME = KICK_WIND + KICK_SWING + KICK_FOLLOW + KICK_RECOVER; // about 0.85 s
-export const KICK_CONTACT = KICK_WIND + KICK_SWING * 0.6;
-const KICK_FOOT_Y = 0.24; // fraction of height the foot reaches ahead at the end of the swing
-export function kickPose(t, opts = {}) {
-  const p = basePose();
-  const wind = ease(t / KICK_WIND);
-  const sw = ease((t - KICK_WIND) / KICK_SWING);
-  const rec = ease((t - KICK_WIND - KICK_SWING - KICK_FOLLOW) / KICK_RECOVER);
-  const w = wind * (1 - sw); // wind-up weight, gone once the foot swings through
-  const out = sw * (1 - rec); // foot forward
-  p.footR = { x: 0.085, y: -0.22 * w + KICK_FOOT_Y * out + 0.03 * ease((t - KICK_WIND) / (KICK_SWING + KICK_FOLLOW)) * out, z: 0.03 * w + 0.016 * out, yaw: 0.15 };
-  p.footL = { x: -0.085, y: 0.02 * (wind - rec * wind), z: 0, yaw: -0.15 };
-  const k = wind * (1 - rec); // body engaged: weight on the left leg, a little lean forward
-  p.pz = 0.505 - 0.015 * k; p.px = -0.03 * k;
-  p.pitch = 0.05 + 0.12 * k;
-  p.twist = 0.12 * w - 0.2 * out; // the hips turn back for the wind-up and through toward the target
-  p.spine = 0.04 * k; p.neck = -0.1 * k;
-  const bal = k * 0.25; // arms out a little for balance
-  p.armL = arm(0.1, 0.1 + bal, 0.3);
-  p.armR = opts.carry ? { ...CARRY_ARM } : arm(0.1, 0.1 + bal, 0.3);
-  p.ry = footprintShift({ footL: p.footL, footR: p.footL }); // the planted left foot stays where the character stands
-  return p;
-}
-// Where the kicking foot is at the contact frame, in root space (x right, y ahead, z up): a kicker stands so this lands on the boule
-export function kickReach(H = 1.75, hand = 'right') {
-  const p = kickPose(KICK_CONTACT);
-  return solveSkeleton(hand === 'left' ? mirrorPose(p) : p, H).joints['foot' + (hand === 'left' ? 'L' : 'R')];
-}
-
 // Arm angle (shoulder swing) at the moment of release for a given loft (radians)
 export function releaseArmAngle(loft) {
   const lo = 8 * PI / 180, hi = 75 * PI / 180;
@@ -823,7 +792,7 @@ export function createCharacter(THREE, spec = {}) {
   // E23: the cochonnet in the dominant hand for a jack throw: the live jack's colour (terrain.js JACK_STYLE, render.js jackMat), jack radius
   const jackHeld = new THREE.Mesh(
     geo(new THREE.SphereGeometry(C.jack.r, 14, 10)),
-    new THREE.MeshStandardMaterial({ color: jackStyle().color, metalness: 0, roughness: 0.45, emissive: jackStyle().emissive }),
+    new THREE.MeshStandardMaterial(jackMaterialParams()),
   );
   mats.push(jackHeld.material);
   jackHeld.castShadow = true; jackHeld.visible = false;
@@ -841,7 +810,7 @@ export function createCharacter(THREE, spec = {}) {
   const st = {
     t: 0, yaw: 0, stance: 'idle', mode: 'stance', blend: 1, snap: null, out: null,
     look: null, lookSm: { yaw: 0, pitch: 0 }, holding: false,
-    walk: null, throwing: null, bending: null, kicking: null, carry: false, solved: null, frame: null, forceQuirk: null,
+    walk: null, throwing: null, bending: null, carry: false, solved: null, frame: null, forceQuirk: null,
   };
   let vis = null; // skinned-mesh visual: { scene, s, name, bones, hatG, mHat }
   const V = THREE;
@@ -869,10 +838,6 @@ export function createCharacter(THREE, spec = {}) {
     if (st.mode === 'bend') {
       const b = st.bending;
       return sw(bendPose(bendDepth(b.t), { carry: b.kind === 'pickup' ? b.acted : !b.acted }));
-    }
-    if (st.mode === 'kick') { // F28: authored for a right-hander, mirrored for a left-hander
-      const kp = kickPose(st.kicking.t, { carry: st.carry });
-      return hand === 'left' ? mirrorPose(kp) : kp;
     }
     if (st.mode === 'throw') {
       const p = throwPose(st.throwing.t, stancePose(stanceKind, st.t, {}), stanceKind);
@@ -949,16 +914,15 @@ export function createCharacter(THREE, spec = {}) {
       const l = twist(d, -st.yaw);
       ty = atan2(l[0], l[1]); tp = -atan2(l[2], sqrt(l[0] * l[0] + l[1] * l[1]));
     }
-    const k = 1 - Math.exp(-dt * 8);
-    st.lookSm.yaw += (ty - st.lookSm.yaw) * k;
-    st.lookSm.pitch += (tp - st.lookSm.pitch) * k;
+    // F53: hysteresis, so a look target that shivers (a turning or blocked body) does not make the head jitter
+    const lt = st.lookTgt || (st.lookTgt = { yaw: 0, pitch: 0 });
+    if (!st.look || abs(ty - lt.yaw) > LOOK_DEADBAND) lt.yaw = ty;
+    if (!st.look || abs(tp - lt.pitch) > LOOK_DEADBAND) lt.pitch = tp;
+    const k = 1 - Math.exp(-dt * 8), mx = LOOK_RATE * dt;
+    st.lookSm.yaw += Math.max(-mx, Math.min(mx, (lt.yaw - st.lookSm.yaw) * k));
+    st.lookSm.pitch += Math.max(-mx, Math.min(mx, (lt.pitch - st.lookSm.pitch) * k));
   }
 
-  function endKick() { // F28
-    const k = st.kicking; st.kicking = null;
-    switchMode('stance');
-    if (k) k.done();
-  }
   function endBend() {
     const b = st.bending; st.bending = null;
     st.carry = b.kind === 'pickup';
@@ -1000,24 +964,42 @@ export function createCharacter(THREE, spec = {}) {
         // F14: a crowd-steered step ({ vx, vy } scaled 0..1 from crowd.js): head along it, never past the leg's end
         const sv = st.steer, m = sqrt(sv.vx * sv.vx + sv.vy * sv.vy);
         const lx = w.leg.x - root.position.x, ly = w.leg.y - root.position.y, left = sqrt(lx * lx + ly * ly);
-        if (m > 1e-6) w.heading = atan2(sv.vx, sv.vy);
-        const step = min(w.speed * dt * m, left);
+        // F53: the heading follows the steering only when it really moves (m >= STEER_MIN_SPEED: a blocked walker's tiny, flipping vector is
+        // ignored), only past a dead band (hysteresis: once turning it goes on until nearly aligned), and at a limited rate
+        // F60: near the leg's end the walker aims straight at it (the rate-limited steering heading orbits a goal inside its turning
+        // circle: 2.4 m/s at 3 rad/s is a 0.8 m radius), and anybody facing well away from where they want to go turns before moving on
+        const arriving = left < STEER_ARRIVE;
+        let want = null;
+        if (arriving) want = atan2(lx, ly); else if (m >= STEER_MIN_SPEED) want = atan2(sv.vx, sv.vy);
+        let align = 1;
+        if (want !== null) {
+          const dd = atan2(sin(want - w.heading), cos(want - w.heading));
+          if (arriving) w.heading += Math.sign(dd) * min(abs(dd), TURN_RATE * 1.5 * dt);
+          else {
+            if (abs(dd) > STEER_DEADBAND) w.turning = true; else if (abs(dd) < STEER_DEADBAND * 0.35) w.turning = false;
+            if (w.turning) w.heading += Math.sign(dd) * min(abs(dd), STEER_TURN_RATE * dt);
+          }
+          align = Math.max(0, cos(atan2(sin(want - w.heading), cos(want - w.heading))));
+          if (align < 0.5) align = 0; // turn on the spot first
+        }
+        const step = min(w.speed * dt * (want !== null ? (arriving ? 1 : m) * align : 0), left);
         const dh = atan2(sin(w.heading - st.yaw), cos(w.heading - st.yaw));
         if (abs(dh) > 1e-6) setYaw(abs(dh) <= TURN_RATE * dt ? w.heading : st.yaw + Math.sign(dh) * TURN_RATE * dt);
-        if (m > 1e-6) { root.position.x += sin(w.heading) * step; root.position.y += cos(w.heading) * step; w.phase += step / (4 * 0.18 * H * w.stride) * 2 * PI; }
+        if (step > 1e-9) { root.position.x += sin(w.heading) * step; root.position.y += cos(w.heading) * step; w.phase += step / (4 * 0.18 * H * w.stride) * 2 * PI; }
         if (left - step < 0.02) {
           root.position.x = w.leg.x; root.position.y = w.leg.y;
           if (w.via.length) nextLeg(w); else w.stage = 'turn2';
         }
       } else if (w.stage === 'go') {
-        const step = min(w.speed * dt, w.dist - w.moved);
-        w.moved += step;
-        // turn towards the leg's heading while walking (a corner of a multi-leg path), then move along it
+        // position-based (a steered frame may have moved the walker off the planned line): head straight for the leg's end
+        const lx = w.leg.x - root.position.x, ly = w.leg.y - root.position.y, left = sqrt(lx * lx + ly * ly);
+        if (left > 0.01) w.heading = atan2(lx, ly);
+        const step = min(w.speed * dt, left);
         const dh = atan2(sin(w.heading - st.yaw), cos(w.heading - st.yaw));
         if (abs(dh) > 1e-6) setYaw(abs(dh) <= TURN_RATE * dt ? w.heading : st.yaw + Math.sign(dh) * TURN_RATE * dt);
         root.position.x += sin(w.heading) * step; root.position.y += cos(w.heading) * step;
         w.phase += w.speed * dt / (4 * 0.18 * H * w.stride) * 2 * PI;
-        if (w.dist - w.moved < 1e-6) {
+        if (left - step < 1e-6) {
           root.position.x = w.leg.x; root.position.y = w.leg.y;
           if (w.via.length) nextLeg(w); else w.stage = 'turn2';
         }
@@ -1035,14 +1017,6 @@ export function createCharacter(THREE, spec = {}) {
         if (b.onAct) { const f = b.onAct; b.onAct = null; evalPose(); applyMeshes(); f(handWorldPosition()); }
       }
       if (b.t >= BEND_TIME) endBend();
-    } else if (st.mode === 'kick') { // F28: onContact (the kicking foot's world position) fires once at KICK_CONTACT
-      const k = st.kicking;
-      k.t += dt;
-      if (!k.contacted && k.t >= KICK_CONTACT) {
-        k.contacted = true;
-        if (k.onContact) { const f = k.onContact; k.onContact = null; evalPose(); applyMeshes(); f(toWorld(st.solved.joints['foot' + HK])); }
-      }
-      if (k.t >= KICK_TIME) endKick();
     } else if (st.mode === 'throw') {
       const th = st.throwing;
       th.t += dt;
@@ -1174,7 +1148,7 @@ export function createCharacter(THREE, spec = {}) {
     const valid = ['idle', 'aim', 'crouch', 'stand', 'watch', 'celebrate', 'dismay', 'give'];
     if (!valid.includes(name)) throw new Error('unknown stance ' + name);
     if (st.mode === 'throw') cancelThrow();
-    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
+    if (st.mode === 'bend') endBend();
     if (name === 'crouch' || name === 'stand') stanceKind = name;
     st.stance = name;
     if (st.mode === 'stance') switchMode('stance');
@@ -1186,7 +1160,7 @@ export function createCharacter(THREE, spec = {}) {
   }
   function walkTo(target) {
     if (st.mode === 'throw') cancelThrow();
-    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
+    if (st.mode === 'bend') endBend();
     if (st.walk) st.walk.resolve();
     return new Promise((resolve) => {
       // target.via: waypoints [{x, y, lift}] walked first without stopping (lift > 1: stepping over something)
@@ -1211,21 +1185,11 @@ export function createCharacter(THREE, spec = {}) {
   // 'putdown': it is let go at BEND_ACT (onAct runs once, with the hand's world position), the hand is empty afterwards.
   function playBend({ kind = 'pickup', onAct } = {}) {
     if (st.mode === 'throw') cancelThrow();
-    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
+    if (st.mode === 'bend') endBend();
     if (st.walk) { const w = st.walk; st.walk = null; w.resolve(); }
     return new Promise((resolve) => {
       st.bending = { t: 0, kind, acted: false, onAct, done: resolve };
       switchMode('bend');
-    });
-  }
-  // F28: a gentle kick with the side of the dominant foot (see kickPose); resolves when the character is upright again
-  function playKick({ onContact } = {}) {
-    if (st.mode === 'throw') cancelThrow();
-    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
-    if (st.walk) { const w = st.walk; st.walk = null; w.resolve(); }
-    return new Promise((resolve) => {
-      st.kicking = { t: 0, contacted: false, onContact, done: resolve };
-      switchMode('kick');
     });
   }
   // F14: for this frame only, a walk's 'go' stage follows { vx, vy } (crowd.js steer) instead of its straight leg
@@ -1235,7 +1199,7 @@ export function createCharacter(THREE, spec = {}) {
   function setCarrying(on) { st.carry = !!on; }
   function playThrow({ loft = 0.5, onRelease } = {}) {
     if (st.mode === 'throw') cancelThrow();
-    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
+    if (st.mode === 'bend') endBend();
     if (st.walk) { const w = st.walk; st.walk = null; w.resolve(); }
     return new Promise((resolve) => {
       st.throwing = { t: 0, tRel: releaseTime(loft), released: false, onRelease, done: resolve, loft };
@@ -1269,7 +1233,7 @@ export function createCharacter(THREE, spec = {}) {
   function setPlacement(x, y, yaw = st.yaw) {
     // a teleport ends any walk in progress, else the walk would carry on and snap the figure to its old goal
     if (st.mode === 'throw') cancelThrow();
-    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
+    if (st.mode === 'bend') endBend();
     if (st.walk) { const w = st.walk; st.walk = null; switchMode('stance'); w.resolve(); }
     root.position.set(x, y, root.position.z); setYaw(yaw);
   }
@@ -1326,7 +1290,7 @@ export function createCharacter(THREE, spec = {}) {
   function dispose() {
     if (st.walk) { const w = st.walk; st.walk = null; w.resolve(); }
     if (st.throwing) cancelThrow();
-    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
+    if (st.mode === 'bend') endBend();
     if (vis) {
       vis.model.traverse((o) => {
         if (!o.isMesh) return;
@@ -1343,7 +1307,7 @@ export function createCharacter(THREE, spec = {}) {
   evalPose();
   applyMeshes();
   return {
-    root, update, setStance, walkTo, playThrow, playBend, playKick, setCarrying, handWorldPosition, dispose,
+    root, update, setStance, walkTo, playThrow, playBend, setCarrying, handWorldPosition, dispose,
     setTrousers: (c) => mTrousers.color.set(c), // F45: team colour of the trousers
     lookAt, setHolding, setHeldBoules, shiftBoule, setPlacement, setSteer, walkLeg, attachModel, forceQuirk, setReducedMotion, fadeTo, setOpacity,
     hand, // 'right' | 'left': the dominant (throwing, carrying) hand

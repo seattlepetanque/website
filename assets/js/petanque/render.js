@@ -2,13 +2,13 @@
 import { stripGeometry } from './strip.js';
 import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
-import { jackStyle } from './terrain.js';
+import { jackMaterialParams } from './terrain.js';
 import { court } from './court.js';
 import { JACK_END_MARGIN } from './rules.js';
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
-import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, framePlane } from './camera.js';
-import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeSkyPanorama, makeLake, skyColor, SKY_HAZE, isPhone } from './scenery.js';
+import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, scoringTargetBox } from './camera.js';
+import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeTreeShadows, makeSkyPanorama, makeLake, makeSailboats, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 import { createFloatplane } from './floatplane.js'; // F19
 
 const TRANSITION = 0.6; // seconds for camera moves
@@ -251,11 +251,13 @@ export function createRenderer(canvas, terrain) {
   scene.add(ground);
   const lake = makeLake(C.terrainW / 2, edgeZ); // F19: distant lake (shimmer frozen when paused or under reduced motion)
   scene.add(lake.mesh);
+  const sailboats = makeSailboats(C.terrainW / 2, edgeZ); scene.add(sailboats.group); // F64
   const floatplane = createFloatplane({ cx: C.terrainW / 2, z: edgeZ + 0.05 });
   scene.add(floatplane.group);
   scene.add(makeTufts(terrain, isPhone()));
   const trees = makeTrees(terrain);
   scene.add(trees);
+  scene.add(makeTreeShadows(terrain, sunOffset)); // F73: blob shadows for the trees outside the shadow map's job
   let swayT = 0; // D15: a slow lean of each tree about its foot; frozen when paused (render dt 0), none under reduced motion
 
   // Lumber surround: weathered 6x6 timbers, one mesh per board section (long sides split with butt joints,
@@ -378,7 +380,7 @@ export function createRenderer(canvas, terrain) {
   // Dead (out of play) bodies: greyed and dulled
   const deadBouleMat = new THREE.MeshStandardMaterial({ color: '#a4a8b0', metalness: 0.45, roughness: 0.5, envMapIntensity: 0.9 });
   const deadJackMat = new THREE.MeshStandardMaterial({ color: '#8a7a5e', metalness: 0, roughness: 0.6 });
-  const jackMat = new THREE.MeshStandardMaterial({ color: jackStyle().color, metalness: 0, roughness: 0.45, emissive: jackStyle().emissive }); // orange on grey gravel, bright red on sand (F52), lit a little from within so it stays vivid in shade
+  const jackMat = new THREE.MeshStandardMaterial(jackMaterialParams()); // orange on grey gravel, bright red on sand (F52), lit a little from within so it stays vivid in shade
   const bouleGeo = new THREE.SphereGeometry(1, 40, 24);
   bouleGeo.rotateX(Math.PI / 2); // texture poles along z; any orientation is fine
   const jackGeo = new THREE.SphereGeometry(1, 20, 12);
@@ -444,7 +446,7 @@ export function createRenderer(canvas, terrain) {
   })();
   const jv = jackVisParam === null ? { a: true, c: true }
     : { a: jackVisParam.includes('a'), c: jackVisParam.includes('c') };
-  const jackBright = new THREE.MeshStandardMaterial({ color: '#ff8a1e', metalness: 0, roughness: 0.4, emissive: '#ff6a00', emissiveIntensity: 0.6 });
+  const jackBright = new THREE.MeshStandardMaterial(jackMaterialParams(undefined, true)); // the live jack: livelier orange on grey, the same bright red as jackMat on sand
   const jackChevron = (() => {
     const cv = makeCanvas(64, 96), g = cv.getContext('2d');
     g.lineJoin = 'round';
@@ -779,7 +781,7 @@ export function createRenderer(canvas, terrain) {
   // leave free. measure() -> { free: {l,t,r,b}, card: {l,t,r,b} | null } in canvas pixels. A near top-down camera at
   // elevation el; the target and distance are solved by projecting the content into the free box, and the labels are
   // re-placed with the card rect as an obstacle. Re-runs on resize.
-  function fitScoring(measure, el = 1.38) {
+  function fitScoring(measure, el = 1.5) {
     if (!scoringArgs) return;
     scoringFit = { measure, el };
     solveScoring(true);
@@ -788,8 +790,7 @@ export function createRenderer(canvas, terrain) {
     const { jack, o } = scoringArgs, { measure, el } = scoringFit;
     const W = canvas.clientWidth || 1, H = canvas.clientHeight || 1;
     const m = measure(), fr = m.free || { l: 0, t: 0, r: W, b: H };
-    const pad = Math.max(10, Math.min(W, H) * 0.03);
-    const box = { l: fr.l + pad, t: fr.t + pad, r: fr.r - pad, b: fr.b - pad };
+    const cardH = m.card ? m.card.b - m.card.t : 0; // F62: a tall card lifts the centre
     const cam = camera.clone(); cam.aspect = W / H; cam.updateProjectionMatrix();
     const place = (tx, ty, dist) => {
       const gz = terrain.sample(tx, ty).h;
@@ -817,6 +818,8 @@ export function createRenderer(canvas, terrain) {
       for (let it = 0; it < 24; it++) {
         place(tx, ty, dist);
         const bb = bounds(pts), bw = bb.r - bb.l, bh = bb.b - bb.t;
+        // F62: the box is centred in the free rectangle and the content fills ~76% of it, whatever the content's aspect
+        const box = scoringTargetBox(fr, bw / Math.max(1, bh), { cardH, H });
         const s = Math.max(bw / (box.r - box.l), bh / (box.b - box.t));
         const dx = (box.l + box.r) / 2 - (bb.l + bb.r) / 2, dy = (box.t + box.b) / 2 - (bb.t + bb.b) / 2;
         if (Math.abs(s - 1) < 0.01 && Math.abs(dx) < 1 && Math.abs(dy) < 1) break;
@@ -825,12 +828,12 @@ export function createRenderer(canvas, terrain) {
         const a = (cx.x - c0.x) / 0.1, b = (cy.x - c0.x) / 0.1, c = (cx.y - c0.y) / 0.1, d = (cy.y - c0.y) / 0.1, det = a * d - b * c || 1e-6;
         // want the content to move by (dx, dy): move the target the other way
         tx -= (d * dx - b * dy) / det * 0.8; ty -= (-c * dx + a * dy) / det * 0.8;
-        dist = Math.max(0.9, Math.min(16, dist * (s > 1 ? s : Math.max(s, 0.9)) ** 0.9));
+        dist = Math.max(0.35, Math.min(16, dist * (s > 1 ? s : Math.max(s, 0.9)) ** 0.9));
       }
     }
     scoringArgs.pts = pts;
     const fitOpts = { now: true, target: { x: jack.x, y: jack.y }, exact: { x: tx, y: ty, dist }, el };
-    if (cut) setCamera('head', fitOpts); else { opts = fitOpts; computeGoal(0, true); cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt); }
+    if (cut) setCamera('head', fitOpts); else { opts = fitOpts; computeGoal(0, true); cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt); trans = 1; } // F62: a resize re-fit lands at once, a transition in flight must not pull it back
   }
   function labelSprite(text, color, bg, border) {
     const cv = makeCanvas(160, 64), g = cv.getContext('2d');
@@ -1282,25 +1285,7 @@ export function createRenderer(canvas, terrain) {
 
   let bcFrame = null; // F01: camera.js state of the current broadcast shot (a new shot is a cut)
   let tvFrame = null, tvPending = null; // E27: the TV shot's state, and a camera request held until the shot has played out
-  // F38: a plane shot overlays the current camera. Requests made meanwhile are remembered and replayed when it ends, except the
-  // human's own cameras (aim, shoulder, inspect), which end it at once.
-  let planeSaved = null, planeFrame = null;
-  function setPlaneShot(on) {
-    if (on === !!planeSaved) return;
-    if (on) {
-      planeSaved = [mode, opts, false]; planeFrame = null;
-      from.pos.copy(cur.pos); from.tgt.copy(cur.tgt);
-      mode = 'plane'; opts = {}; trans = 1; computeGoal(0, true);
-    } else {
-      const [m, o, f] = planeSaved; planeSaved = null; planeFrame = null;
-      mode = m; opts = o; setCamera(m, o, f);
-    }
-  }
   function setCamera(m, o = {}, flush = false) {
-    if (planeSaved) {
-      if (m === 'aim' || m === 'shoulder' || m === 'inspect') setPlaneShot(false);
-      else { planeSaved = [m, o, flush]; return; }
-    }
     if (mode === 'tv' && m !== 'tv' && m !== 'flight' && !flush && !o.now) { // let the boule settle on screen before the next cut
       if (tvFrame && tvFrame.restT < (TV.hold[tvFrame.variant] || 0) && !reduce()) { tvPending = [m, o]; return; }
     }
@@ -1342,10 +1327,8 @@ export function createRenderer(canvas, terrain) {
       obsFrame = f;
       goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
       goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
-    } else if (mode === 'plane') { // F38: a spectator's view of the floatplane
-      const pp = floatplane.pos;
-      const f = framePlane({ x: pp.x, y: pp.y, z: pp.z }, { dt, aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50, groundAt: (x, y) => terrain.sample(x, y).h, width: C.terrainW }, planeFrame);
-      planeFrame = f;
+    } else if (mode === 'wide') { // F57: the whole court from behind the near end, Rainier in the background
+      const f = frameCourtWide({ width: C.terrainW, length: C.terrainL, aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50, groundAt: (x, y) => terrain.sample(x, y).h });
       goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
       goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
     } else if (mode === 'broadcast') { // F01: a director's shot (opts.shot: prep | throw | reaction | flight)
@@ -1540,7 +1523,6 @@ export function createRenderer(canvas, terrain) {
       fov = baseFov * (1 - 0.32 * focusK * Math.max(0, Math.min(1, (d - 3) / 5)));
     }
     if (mode === 'observer' && obsFrame) fov *= obsFrame.fovK; // E11: the spectator's slow zoom
-    if (mode === 'plane' && planeFrame) fov *= planeFrame.fovK; // F38
     if (Math.abs(fov - camera.fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
     if (trans < 1) {
       trans = Math.min(1, trans + dt / TRANSITION);
@@ -1555,7 +1537,8 @@ export function createRenderer(canvas, terrain) {
       cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
     }
     camera.position.copy(cur.pos);
-    camera.lookAt(cur.tgt);
+    let lookAt = cur.tgt;
+    camera.lookAt(lookAt);
     // shadow frustum follows what we look at
     aimSun(cur.tgt);
   }
@@ -1663,6 +1646,7 @@ export function createRenderer(canvas, terrain) {
     updateCamera(dt);
     if (!reduce()) lake.update(dt);
     floatplane.update(dt, camera, reduce());
+    sailboats.update(dt, reduce(), floatplane, edgeZ); // F64
     updatePreview();
     updateJackMark(dt);
     renderScene();
@@ -1693,5 +1677,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { sync, fadeBody, setCamera, setPlaneShot, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  return { sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
 }

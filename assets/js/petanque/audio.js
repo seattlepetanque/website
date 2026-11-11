@@ -21,7 +21,6 @@
 //   roll      per rolling body: very faint, sparse, dry pebble ticks (1-3 ms band-passed noise bursts,
 //             random centre 1.5-4 kHz, 2-6 ms decay, some duller gravel ticks, rare 2-3 tick clatter).
 //             Poisson-ish scheduling on AudioContext time; rate and level follow speed. No noise floor.
-//   scuff     (F28) a kicked boule: soft low-passed swish + a few gravel grains
 //   stone     one slightly louder pebble tick when the physics reports a stone contact
 
 import { createAmbient } from './ambient.js'; // F12: park ambience (birds, breeze, airplane)
@@ -134,9 +133,8 @@ export function createAudio(opts = {}) {
   let ctx = null;
   let master = null; // gain -> limiter -> destination; sounds connect here
   let white = null; // shared 2 s white noise
-  let amb = null; // F12 ambience (created in setup, after unlock)
-  let ambOn = true; // the Ambience toggle
-  const syncAmb = () => { if (amb) amb.setActive(ambOn && !muted); };
+  let amb = null; // F12 ambience (created in setup, after unlock); always on, the mute button silences it
+  const syncAmb = () => { if (amb) amb.setActive(!muted); };
   let voices = 0;
   let tickWin = 0, tickCount = 0; // ticks scheduled in the current 1 s window (cap)
   let frame = 0;
@@ -252,17 +250,6 @@ export function createAudio(opts = {}) {
       const bp = filt('bandpass', rnd(K.freqLo, K.freqHi), K.q);
       src.connect(bp).connect(envGain(gt, K.gain * amount * rnd(0.3, 1), len, K.attack)).connect(master);
     }
-  }
-
-  // F28: a boule nudged along the gravel by a foot: a soft scuff (a short low-passed noise swish plus a few gravel grains).
-  // No thud, no click: it is a gentle sound. len: seconds the boule slides (0.3 to 1).
-  function scuff(t, len) {
-    const d = clamp01(len / 1) * 0.25 + 0.12;
-    startVoice(t, d + 0.1);
-    const src = noiseSrc(t, d);
-    const lp = filt('lowpass', 1400, 0.5);
-    src.connect(lp).connect(envGain(t, 0.045, d, 0.03)).connect(master);
-    crunch(t + 0.02, 0.5);
   }
 
   // Boule on gravel: soft low thud + faint crunch. No ringing tone, no sharp attack.
@@ -469,10 +456,26 @@ export function createAudio(opts = {}) {
     try { click(ctx.currentTime + 0.005, SOUND.carreauAccent, 1); } catch (e) { /* ignore */ }
   }
 
-  // F28: the scuff of a kicked boule (silent when muted, locked or paused; never throws)
-  function playScuff(len = 0.7) {
-    if (!ctx || muted || ctx.state !== 'running') return;
-    try { scuff(ctx.currentTime + 0.005, len); } catch (e) { /* ignore */ }
+  // F61: a short synthesized fanfare for the CARREAU / BIBERON overlay (a rising arpeggio with a glittering top). Respects mute.
+  function fanfare(kind) {
+    if (!ctx || muted || held || ctx.state !== 'running') return;
+    try {
+      const t0 = ctx.currentTime + 0.02;
+      const notes = kind === 'carreau' ? [523.25, 659.25, 783.99, 1046.5] : [440, 554.37, 659.25, 880];
+      notes.forEach((f, i) => {
+        const t = t0 + i * 0.075;
+        const o = ctx.createOscillator();
+        o.type = 'triangle';
+        o.frequency.value = f;
+        o.connect(envGain(t, 0.14, 0.38, 0.01)).connect(master);
+        o.start(t); o.stop(t + 0.42);
+        const s = ctx.createOscillator(); // octave sparkle
+        s.type = 'sine';
+        s.frequency.value = f * 2;
+        s.connect(envGain(t, 0.05, 0.25, 0.005)).connect(master);
+        s.start(t); s.stop(t + 0.3);
+      });
+    } catch (e) { /* ignore */ }
   }
 
   // Audition entry point. Ignores mute (explicit user action) but needs unlock().
@@ -485,7 +488,6 @@ export function createAudio(opts = {}) {
       const t = ctx.currentTime + 0.01;
       switch (name) {
         case 'land': land(t, p.speed ?? 4); break;
-        case 'scuff': scuff(t, p.len ?? 0.7); break;
         case 'jackLand': jackLand(t, p.speed ?? 3); break;
         case 'jackHit': tick(t, p.speed ?? 4); break;
         case 'graze': hit(t, p.speed ?? 2.5, p.rel ?? 8); break;
@@ -526,11 +528,13 @@ export function createAudio(opts = {}) {
     syncAmb();
   }
 
-  // F12: Ambience on/off (main.js remembers it in settings); audition ('bird' | 'breeze' | 'plane') ignores both.
-  function setAmbience(on) { ambOn = !!on; syncAmb(); }
+  // F12: audition ('bird' | 'breeze' | 'plane' | 'floatplane' | 'accordion' | 'cicada' | 'bell') ignores mute.
   function playAmbient(name) { unlock(); if (amb) amb.audition(name); }
-  // F19: the floatplane's engine, fed every frame by the game (follows the Ambience toggle and mute; silent while paused)
+  // F19: the floatplane's engine, fed every frame by the game (follows mute; silent while paused)
   function setEngine(on, level, pan, rev, dist) { if (amb && amb.engine && !held) amb.engine(on, level, pan, rev, dist); }
+
+  // F66: busy = a human aim/throw moment (no rare tonal events start), slow = slow mode
+  function setAmbientState(st) { if (amb && amb.setState) amb.setState(st); }
 
   function isMuted() {
     return muted;
@@ -550,5 +554,5 @@ export function createAudio(opts = {}) {
     return btn;
   }
 
-  return { unlock, setPaused, handleEvents, update, accent, playScuff, play, setMuted, isMuted, setAmbience, playAmbient, setEngine, createMuteButton };
+  return { unlock, setPaused, handleEvents, update, accent, fanfare, play, setMuted, isMuted, playAmbient, setEngine, setAmbientState, createMuteButton };
 }

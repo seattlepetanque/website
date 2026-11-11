@@ -67,6 +67,14 @@ let activeGravel = 'sand';
 export function currentGravel() { return activeGravel; }
 export function jackStyle() { return JACK_STYLE[activeGravel]; }
 
+// Single source for every jack material (held in the hand, world jack, live-jack "bright" variant). On sand all of them
+// are the same bright red; on grey the held/plain jack is the original orange and the live (bright) jack a livelier orange.
+export function jackMaterialParams(variant = activeGravel, bright = false) {
+  const st = JACK_STYLE[variant] || JACK_STYLE.grey;
+  if (bright && variant === 'grey') return { color: '#ff8a1e', metalness: 0, roughness: 0.4, emissive: '#ff6a00', emissiveIntensity: 0.6 };
+  return { color: st.color, metalness: 0, roughness: 0.45, emissive: st.emissive, emissiveIntensity: 1 };
+}
+
 function debugGravel() {
   try { return typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug') ? new URLSearchParams(location.search).get('gravel') : null; } catch (e) { return null; }
 }

@@ -1,8 +1,8 @@
 // Game loop: terrain, world, renderer, rules, AI, toss input (donnée throw), audio and HUD wired together.
 import { C } from './constants.js';
 import { court, setCourt, resetCourt, baseYaw, ahead } from './court.js';
-import { cameraStyle, tvVariant, clampViewOffset, panViewOffset, walkSubject } from './camera.js';
-import { createDirector, createPlaneCuts } from './director.js';
+import { cameraStyle, tvVariant, clampViewOffset, panViewOffset, walkSubject, freeViewRect } from './camera.js';
+import { createDirector } from './director.js';
 import { mulberry32 } from './rng.js';
 import { createTerrain } from './terrain.js';
 import { createWorld, createBody, launch, placeDeadBall, deadRowSlot, deadJackSpot } from './physics.js';
@@ -10,6 +10,8 @@ import { createRenderer } from './render.js';
 import {
   createMatch, defaultPlayers, teamNamesFor, validPartner, opponentIds, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm, deadJackText,
 } from './rules.js';
+import { detectAnnouncement } from './announce.js';
+import { createAnnouncer } from './announce-view.js';
 import { createHud, createHoldIcons } from './hud.js';
 import { settings } from './settings.js';
 import { chooseThrowAsync, chooseJackThrow, chooseJackPlacement, whoThrows } from './ai.js';
@@ -20,9 +22,9 @@ import {
 import { createAudio } from './audio.js';
 import { createClock } from './clock.js';
 import * as THREE from '../vendor/three.module.js';
-import { createCharacter, releaseOffset, bendReach, kickReach } from './character.js';
+import { createCharacter, releaseOffset, bendReach } from './character.js';
 import { planRoute, standPoint, pathLength } from './fetch.js';
-import { ringBlockers, ringGate, meneEndReady, steer, planGoals, BLOCK_FADE_S, KICK_TIMEOUT, KICK_STAGGER, ZONE_R, assignZones, collectOrder, kickList, kickOk, kickMove, isCrowded } from './crowd.js';
+import { meneEndReady, atPlaces, steer, planGoals, BLOCK_FADE_S } from './crowd.js';
 import { pickWaitingSlot, waitingSlots } from './waiting.js';
 import { attachModels } from './models.js';
 import { createGroundView } from './groundview.js';
@@ -119,12 +121,19 @@ function boot() {
   const camStyle = (human = false) => cameraStyle({ slow: slow(), human, override: (debug && params.get('cam')) || settings.camStyle || (debug && params.has('tvcam') ? 'tv' : null), tv: tvVar() }); // F01: settings.camStyle (hidden) or ?debug&cam=broadcast
   const observing = () => camStyle() === 'observer';
   const broadcasting = () => camStyle() === 'broadcast'; // F01
-  const observerView = (points, extra) => { if (humanWalk && !(extra && extra.follow)) humanWalk.cam = false; renderer.setCamera('observer', { points, ...extra }); };
+  const observerView = (points, extra) => { if (wideHold) return; if (humanWalk && !(extra && extra.follow)) humanWalk.cam = false; renderer.setCamera('observer', { points, ...extra }); };
   // F39: slow mode, the human walking to the circle: the observer follows them (walkSubject), per frame in followHumanWalk
   let humanWalk = null; // { id, goal, pts, cam, tok }
-  const isHumanId = (id) => !!(match && match.players.find((q) => q.id === id && q.isHuman));
+  // F57: after Next the camera shows the whole court (wide shot) until the first player walks to the circle
+  let wideHold = false;
+  function wideShot() { wideHold = false; renderer.setCamera('wide'); wideHold = true; }
+  // F39/F57: any thrower (the human or an AI player) walking to the circle is followed in slow mode. A walker already followed keeps
+  // the camera (it re-aims at the newcomer smoothly, no cut).
   function startHumanWalk(id, goal) {
-    if (!slow() || !isHumanId(id)) return;
+    if (!slow()) return;
+    wideHold = false; // the first walker ends the wide shot: back to the regular camera behaviour
+    const prevW = humanWalk;
+    if (prevW && prevW.tok === token && prevW.cam && prevW.id !== id) { Object.assign(prevW, { id, goal: { x: goal.x, y: goal.y } }); return; }
     humanWalk = { id, goal: { x: goal.x, y: goal.y }, pts: walkSubject(cast.get(id).root.position, goal), cam: false, tok: token };
   }
   function followHumanWalk() {
@@ -137,24 +146,21 @@ function boot() {
   }
   const watchCircle = () => observerView([{ x: court.circle.x, y: court.circle.y }, ahead(5)]); // somebody about to throw
   const aimView = () => (observing() && match ? watchCircle() : shoulderView());
-  // F38: the occasional plane shot (decision in director.js, framing in camera.js, the overlay in render.js). Never while the human
-  // is busy (their walk, aim, throw or a turn pending), any boule is in flight, a toss or the end-of-mène card is up.
-  const planeCuts = createPlaneCuts();
-  const humanFree = () => !!match && playing && !userPaused && !pending && !flying && !humanWalk && !(circleWalk && isHumanId(circleWalk.id))
-    && toss.getPhase() === 'off' && match.phase !== 'meneEnd' && match.phase !== 'gameOver' && !scoringShown;
-  function planeShot() {
-    const fp = renderer.floatplane;
-    const verdict = planeCuts.update({ flight: fp.active ? fp.flight : 0, kind: fp.kind, t: fp.t, visible: fp.opacity > 0.4, allowed: slow() && !reduceMotion(), eligible: humanFree() });
-    if (verdict === 'cut') renderer.setPlaneShot(true); else if (verdict === 'end') renderer.setPlaneShot(false);
-  }
   const KEEP_YAW = 35 * DEG; // E12 (see setAdjust); the pan limits live in camera.js (VIEW_PAN, F48)
   let adjusting = false, viewAnim = 0;
   const audio = createAudio();
+  const announcer = createAnnouncer(root, { audio }); // F61
+  if (debug && ['carreau', 'biberon'].includes(params.get('announce'))) { // ?debug&announce=carreau|biberon: preview at page load, and again every 4 s
+    const kind = params.get('announce');
+    const go = () => announcer.show(kind, { force: true, still: params.has('still') });
+    setTimeout(go, 600);
+    if (!params.has('once')) setInterval(go, 4000);
+  }
   let thinkToken = 0; // bumped to drop stale partner-suggestion results
   let pierreChoice = null; // cached AI choice for Pierre while the chooser is open
   const pickHuman = params.get('humanturn'); // debug: stop at the human's first boule (or 'chooser')
 
-  // Controls (F32): a hamburger menu (Mode, Ambience, TEMP demo buttons) top right; F48 hold-to-use view icons (pan, read the ground, overhead) under it; speaker,
+  // Controls (F32): a hamburger menu (Mode, TEMP demo buttons) top right; F48 hold-to-use view icons (pan, read the ground, overhead) under it; speaker,
   // fullscreen and pause icons bottom right; Resume / New game / End game on the paused bar; no raw sliders
   controls.textContent = '';
   const mkBtn = (parent, text, cls) => {
@@ -202,24 +208,15 @@ function boot() {
     fp.trigger('takeoff');
   });
   // END TEMP F36
-  const ambBtn = mkBtn(bar, 'Ambience', 'pc-ambience');
-  { // F12: Ambience toggle (remembered); the sound starts after the first unlock
-    ambBtn.title = 'Quiet park sounds: birds, breeze, a distant plane.';
-    const syncAmbBtn = () => { ambBtn.setAttribute('aria-checked', String(settings.ambience)); ambBtn.classList.toggle('is-on', settings.ambience); };
-    audio.setAmbience(settings.ambience);
-    syncAmbBtn();
-    ambBtn.addEventListener('click', () => { settings.ambience = !settings.ambience; audio.setAmbience(settings.ambience); syncAmbBtn(); audio.unlock(); });
-  }
-  // F32 hamburger menu: every option button (Mode, Ambience, the demo buttons; built above straight into the bar) moves into one dropdown. Enter, Space,
+  // F32 hamburger menu: every option button (Mode, the demo buttons; built above straight into the bar) moves into one dropdown. Enter, Space,
   // click or ArrowDown opens it; arrows, Home and End move; Esc or Tab close it (Esc returns focus to the button);
-  // an outside press closes it. Toggle items use role menuitemcheckbox + aria-checked.
+  // an outside press closes it.
   const menuPanel = document.createElement('div');
   menuPanel.className = 'pc-menu'; menuPanel.id = 'pc-menu'; menuPanel.setAttribute('role', 'menu'); menuPanel.setAttribute('aria-label', 'Game options');
   menuPanel.hidden = true;
   const menuItems = [...bar.querySelectorAll(':scope > button')];
-  const TOGGLES = new Set([ambBtn]);
-  const STAY_OPEN = new Set([modeBtn, ambBtn]); // the others close the menu so the court is clear
-  for (const it of menuItems) { it.setAttribute('role', TOGGLES.has(it) ? 'menuitemcheckbox' : 'menuitem'); it.tabIndex = -1; it.classList.add('pc-menu-item'); }
+  const STAY_OPEN = new Set([modeBtn]); // the others close the menu so the court is clear
+  for (const it of menuItems) { it.setAttribute('role', 'menuitem'); it.tabIndex = -1; it.classList.add('pc-menu-item'); }
   menuPanel.append(...menuItems);
   const menuBtn = mkBtn(bar, '', 'pc-menu-btn');
   menuBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
@@ -295,12 +292,11 @@ function boot() {
       ['Jack rolls 2 s', 'roll', { kind: 'jack', speed: 1.5, dur: 2 }],
       ['Jack lands', 'jackLand', {}], ['Jack hit by boule', 'jackHit', {}],
       ['Boules graze', 'graze', {}], ['Boules hit direct', 'direct', {}], ['Carreau', 'carreau', {}],
-      ['Boule kicked (scuff, F28)', 'scuff', { len: 0.8 }],
     ];
     for (const [label, name, p] of SOUNDS) {
       mkBtn(panel, label, 'pc-sound').addEventListener('click', () => { audio.unlock(); audio.play(name, p); });
     }
-    for (const [label, name] of [['Ambience: bird', 'bird'], ['Ambience: breeze swell', 'breeze'], ['Ambience: airplane (25 s)', 'plane'], ['Ambience: floatplane engine (10 s)', 'floatplane']]) {
+    for (const [label, name] of [['Ambience: bird', 'bird'], ['Ambience: breeze swell', 'breeze'], ['Ambience: airplane (25 s)', 'plane'], ['Ambience: floatplane engine (10 s)', 'floatplane'], ['Ambience: musette accordion (~20-28 s, fades)', 'accordion'], ['Ambience: church bell (4 strikes)', 'bell'], ['Ambience: cicada (12 s)', 'cicada']]) {
       mkBtn(panel, label, 'pc-sound').addEventListener('click', () => audio.playAmbient(name));
     }
     drawer.append(panel);
@@ -552,7 +548,7 @@ function boot() {
   panBtn.addEventListener('keyup', (e) => { if (pan.keys.delete(e.key)) panRefresh(); });
   const hud = createHud(root, document.querySelector('.petanque-hud'), {
     onStart: (opts) => { audio.unlock(); setPlaying(true); startGame(opts); },
-    onNext: () => nextMene(),
+    onNext: () => { releaseHold(); nextMene(); },
     onPlayAgain: () => toSetup(),
     onResume: () => resumeGame(),
     onNewGame: () => { userPaused = false; setPlaying(true); toSetup(); },
@@ -738,7 +734,7 @@ function boot() {
 
   // Per frame: animate, keep feet on the terrain, everyone watches the boule in flight (or the jack)
   function tickCast(dt) {
-    if (frozen) return;
+    if (frozen || holdSim) return; // F55: holdSim: the sim waits for the click on Next mène (players and idle fidgets stand still)
     if (fetchScript || f02Script) { // ?debug&fetch: fixed steps; with &fetchat the animation is pumped synchronously (headless frames are too few)
       if (fetchFreezeAt && !fetchPump) return;
       dt = 1 / 60; clock.tick(1000 / 60);
@@ -749,7 +745,6 @@ function boot() {
     const w = flying && !flying.dead ? flying : jackBody();
     crowdTick(dt); // F14
     followHumanWalk(); // F39
-    kickTick(dt); // F28
     for (const ch of cast.values()) {
       const p = ch.root.position;
       p.z = terrain.sample(p.x, p.y).h;
@@ -882,7 +877,7 @@ function boot() {
   let bcastDelay = 1800; // ms from the stop to the next turn (longer when a reaction shot plays)
 
   function clearWorld() {
-    cancelFetch(); carry = null; jackFetch = null; placing = null; gateSince = 0; lastThrowerId = null; ringTask = null; jackTask = null; jackFetcher = null; ringHolder = null; ringCarry = null; ringPlaced = false; collect = null; // D11, F07, F02
+    releaseHold(); cancelFetch(); carry = null; jackFetch = null; placing = null; gateSince = 0; lastThrowerId = null; ringTask = null; jackTask = null; jackFetcher = null; ringHolder = null; ringCarry = null; ringPlaced = false; collect = null; // D11, F07, F02
     world.bodies.length = 0;
     world.events.length = 0;
     terrain.resetDivots();
@@ -937,7 +932,7 @@ function boot() {
   // ---- Game flow ----
   function toSetup() {
     userPaused = false;
-    token++; thinkToken++; pierreChoice = null;
+    token++; thinkToken++; pierreChoice = null; wideHold = false;
     match = null; pending = null;
     enableControls(false);
     clearWorld();
@@ -957,7 +952,7 @@ function boot() {
 
   function startGame(opts) {
     userPaused = false;
-    token++; thinkToken++; pierreChoice = null;
+    token++; thinkToken++; pierreChoice = null; wideHold = false;
     difficulty = opts.difficulty || 'medium';
     instant = !!opts.instant;
     partner = validPartner((debug && params.get('partner')) || opts.partner || settings.partner); // F45
@@ -976,6 +971,7 @@ function boot() {
   }
 
   function beginMene(first) {
+    wideHold = false; // F57
     clearWorld();
     resetCast();
     pending = null;
@@ -1401,8 +1397,9 @@ function boot() {
     const ch = cast.get(id), r = reachOf(ch), from = { x: court.circle.x, y: court.circle.y };
     const job = { id, tok: t, cancelled: false, scripted: false, obstacles: () => obstaclesExcept(null) };
     await sleep(900); // the throw's follow-through and the first look at the result
-    for (let n = 0; n < 80 && fetchJob && t === token; n++) await sleep(100); // let a fetch finish first
-    if (jackTask) await jackTask; // F10: the jack goes back in bounds before the ring is brought
+    // Only the carrier's OWN fetch is waited for. Another player's fetch (a dead boule) and the F10 dead-jack walk (startJackReturn picks
+    // someone other than ringWho(), and ringDest() comes from the rules, not from where the jack is put down) run in parallel with the ring.
+    for (let n = 0; n < 80 && fetchJob && fetchJob.id === id && t === token; n++) await sleep(100);
     if (ringDrop(t)) return;
     if (inCircle === id) inCircle = null;
     ch.setHolding(false); ch.setHeldBoules(null); ch.setStance('watch'); shadow(id, true);
@@ -1418,8 +1415,9 @@ function boot() {
     const g = apply(match, { type: 'nextMene' }).geometry;
     return { x: g.circle.x, y: g.circle.y };
   }
-  // The holder walks the ring to `to` and sets it down once nothing lies in it and nobody stands on it (ringGate; a click or
-  // key skips, and after RING_WAIT_MAX s it goes down anyway). The holder is free for their own boules after that.
+  // The holder walks the ring to `to` and DROPS it as soon as they arrive (nothing is waited for: boules are already in hands after Next).
+  // A click or key skips. The holder is free for their own boules after that.
+  const RING_BOUNCE_T = 0.14; // s: the ring's one small bounce after it lands
   async function setRingDown(job, id, t, to) {
     const ch = cast.get(id), r = reachOf(ch);
     ringSkip = false; ringPlaced = false;
@@ -1434,18 +1432,22 @@ function boot() {
       if (!ringCarry) { ringCarry = id; ch.setCarrying(true); followRing(); }
       await walkVia(job, id, { x: to.x - r.x, y: to.y - r.y, yaw: 0 });
       if (t !== token) { ringCarry = null; renderer.setRingPose(null); return; }
-      let waited = 0;
-      while (!ringSkip && t === token && ringGate(ringBlockersAt(to, id), waited) === 'wait') { await sleep(200); waited += 0.2; }
-      if (t !== token) { ringCarry = null; renderer.setRingPose(null); return; }
       if (ringSkip) { finish(); return; }
-      await ch.playBend({ kind: 'putdown', onAct: () => { ringCarry = null; ch.setCarrying(false); renderer.setRingPose({ x: to.x, y: to.y, z: terrain.sample(to.x, to.y).h + 0.006 }); } });
+      // F53: the ring is dropped, not set down: the hand lets go over the spot and it falls flat with a small bounce (no leaning down)
+      const h0 = ch.handWorldPosition(), z0 = Math.max(h0.z - 0.04, terrain.sample(to.x, to.y).h + 0.03);
+      ringCarry = null; ch.setCarrying(false);
+      const gz = terrain.sample(to.x, to.y).h + 0.006, fall = Math.sqrt(2 * Math.max(z0 - gz, 0.02) / 9.81);
+      for (let e = 0; e < fall + RING_BOUNCE_T && !ringSkip && t === token; e += 0.02) {
+        const hop = e < fall ? 0 : 0.025 * (1 - Math.pow(((e - fall) / RING_BOUNCE_T) * 2 - 1, 2));
+        renderer.setRingPose({ x: to.x, y: to.y, z: e < fall ? Math.max(gz, z0 - 4.905 * e * e) : gz + hop });
+        await sleep(20);
+      }
+      if (t !== token) { ringCarry = null; renderer.setRingPose(null); return; }
+      renderer.setRingPose({ x: to.x, y: to.y, z: gz });
       ringAt = { x: to.x, y: to.y }; markRingDown();
       if (ringSkip && ringCarry) finish();
     } finally { ringCarry = null; ringSkipFn = null; ringHolder = null; }
   }
-  const ringBlockersAt = (spot, holder) => ringBlockers(spot,
-    world.bodies.filter((b) => b.kind === 'boule' && !b.dead && !(carry && carry.body === b)).map((b) => ({ id: b.id, x: b.x, y: b.y, r: b.r })),
-    [...cast.keys()].map((k) => { const q = cast.get(k).root.position; return { id: k, x: q.x, y: q.y }; }), holder);
   function markRingDown() { ringPlaced = true; if (collect && collect.plan) collect.plan.ringDown = true; } // F15: the next jack thrower may walk to the circle
   function dropDead(body, slot) { // set a dead ball down in the row (or its jack spot): out of play, nobody's
     const s = slot || (body.kind === 'jack' ? deadJackSpot() : deadRowSlot(rowCount()));
@@ -1457,11 +1459,11 @@ function boot() {
   // E02: true inside the strings, the field of play
   const inField = (p) => p.x > 0 && p.x < C.terrainW && p.y > 0 && p.y < C.terrainL;
   // walk a planned route (around live boules, over the timbers; `outside`: round the outside of the timbers) to { x, y, yaw }
-  async function walkVia(job, id, to, outside = false) {
+  async function walkVia(job, id, to, outside = false, hurry = 1) {
     const ch = cast.get(id), p = ch.root.position;
     const path = planRoute({ x: p.x, y: p.y }, to, job.obstacles ? job.obstacles() : obstaclesExcept(null), { outside });
     const last = path[path.length - 1] || { lift: 1 };
-    await ch.walkTo({ x: to.x, y: to.y, yaw: to.yaw, speed: FETCH_SPEED, lift: last.lift, via: path.slice(0, -1) });
+    await ch.walkTo({ x: to.x, y: to.y, yaw: to.yaw, speed: FETCH_SPEED * hurry, lift: last.lift, via: path.slice(0, -1) });
   }
   // The head camera follows the fetch loosely: it frames the fetcher and where they are going (never over an aim)
   function fetchCam(job, ids, spots = []) {
@@ -1715,8 +1717,8 @@ function boot() {
     gateSince = 0;
   });
   const skipEvent = (ev) => {
+    if (holdSim && !isPaused() && (ev.type === 'pointerdown' || ev.key === 'Enter' || ev.key === ' ')) { nextMene(); return; } // F56: a click or key at the outcome view is Next
     if (isPaused()) return; // a drag to orbit the paused scene (or Esc) is not a skip
-    if (planeCuts.skip()) renderer.setPlaneShot(false); // F38: a click or key returns from the plane shot
     if (placing && ev.timeStamp - placing.start > 350) skipPlacement();
     else if (circleWalk && performance.now() - circleWalk.start > 350) { // E02: the thrower is at the circle at once
       const w = circleWalk; circleWalk = null;
@@ -2020,6 +2022,12 @@ function boot() {
     if (instant) markLandings(world.events);
     const snap = snapshot();
     const note = describe(was, evs);
+    if (was.kind === 'boule' && !instant) { // F61: CARREAU / BIBERON overlay (the sim keeps running)
+      try {
+        const kind = detectAnnouncement({ before: preThrow, bodies: world.bodies, shooterId: was.id, events: evs });
+        if (kind) announcer.show(kind);
+      } catch (err) { console.error('[announce]', err); }
+    }
     if (was.kind === 'jack') {
       const team = match.jackTeam;
       match = apply(match, { type: 'jackThrown', team, jack: snap.jack });
@@ -2056,7 +2064,7 @@ function boot() {
   let scoringShown = false, closeCall = false;
   function endOfMene(note) {
     const r = match.result;
-    scoringShown = false; closeCall = false;
+    scoringShown = false; closeCall = false; nextStarted = false; meneEndWork = null;
     const j = jackBody();
     const jackOut = !j || j.dead;
     if (!jackOut) {
@@ -2123,10 +2131,18 @@ function boot() {
       if (win) note = `${closeCall ? 'Close call! ' : ''}${special}Closest: ${ownerName(win)} boule, ${gapText(win, j)} from the jack.`;
     }
     refreshHud(null);
-    startRingPickup(); // F07 (slow mode)
-    startJackReturn(); // F10 (slow mode): a dead jack is carried to its last in-bounds spot
-    gather(r.void ? null : r.team);
-    if (match.phase === 'meneEnd') startCollect(); // F02 (slow mode)
+    // F56: in a slow mène the outcome view and the card wait for the click (the sim clock is held); the ring, jack return, gathering and
+    // collecting then start from nextMene (startMeneEndWork). Otherwise (quick, instant, game over) they start now.
+    const hold = slow() && match.phase === 'meneEnd' && !(instant && !params.has('meneend'));
+    const winTeam = r.void ? null : r.team, workTok = token;
+    meneEndWork = () => {
+      if (workTok !== token || !match || (match.phase !== 'meneEnd' && match.phase !== 'gameOver')) return;
+      startRingPickup(); // F07 (slow mode)
+      startJackReturn(); // F10 (slow mode): a dead jack is carried to its last in-bounds spot
+      gather(winTeam);
+      if (match.phase === 'meneEnd') startCollect(); // F02 (slow mode)
+    };
+    if (!hold) startMeneEndWork();
     let text, detail = note;
     if (r.void) text = 'Void mène: no points';
     else {
@@ -2154,22 +2170,33 @@ function boot() {
     if (scoringShown) renderer.fitScoring(() => {
       const cv = canvas.getBoundingClientRect(), rel = (r) => ({ l: r.left - cv.left, t: r.top - cv.top, r: r.right - cv.left, b: r.bottom - cv.top });
       const card = root.querySelector('.pt-overlay.pt-mene-end .pt-card');
-      const free = { l: 0, t: 0, r: cv.width, b: cv.height };
-      for (const n of root.querySelectorAll('.pt-board, .pc-bar')) {
-        const r = n.getBoundingClientRect();
-        if (r.height > 0 && r.bottom < cv.top + cv.height * 0.4) free.t = Math.max(free.t, r.bottom - cv.top);
-      }
-      let cr = null;
-      if (card) { cr = rel(card.getBoundingClientRect()); free.b = Math.min(free.b, Math.max(free.t + 40, cr.t)); }
+      // F62: measured from the DOM now and on every resize: the top score bar, the card, and the right-hand icon cluster
+      const vis = (n) => { const r = n.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(n).visibility !== 'hidden' ? rel(r) : null; };
+      const bars = [...root.querySelectorAll('.pt-board, .pc-bar')].map(vis).filter(Boolean);
+      const cr = card ? rel(card.getBoundingClientRect()) : null;
+      const icons = [...root.querySelectorAll('button, .pc-corner')].filter((n) => !(card && card.contains(n)) && !n.closest('.pc-menu, .pt-overlay')).map(vis).filter(Boolean);
+      const free = freeViewRect({ W: cv.width, H: cv.height, bars, card: cr, icons });
       return { free, card: cr };
     });
+    if (hold) holdSim = true, clock.pause(); // F56: the camera is on the outcome view and the card is up: the sim waits for the click
     if (instant && !params.has('meneend')) later(() => nextMene(), 0);
   }
+
+  // F56: the score card and Next mène show as soon as the outcome view is up and the sim clock pauses (holdSim: no sepia, no pause card;
+  // players and fidgets stand still, the camera stays on the outcome). The click (Next, a canvas click or Enter/Space) releases the clock,
+  // starts the ring, jack return, gathering and collecting (meneEndWork), and nextMene carries on by itself once they are all done.
+  let holdSim = false, meneEndWork = null, nextStarted = false;
+  function releaseHold() { if (!holdSim) return; holdSim = false; if (!isPaused()) clock.resume(); }
+  function startMeneEndWork() { const w = meneEndWork; meneEndWork = null; if (w) w(); }
 
   // E10: the next mène starts from a new circle around the last jack (rules.js picks it), played the other way.
   // Slow mode: the last thrower walks the ring over first; quick mode: it fades to the new spot as the jack throw starts.
   async function nextMene() {
-    if (!match || match.phase !== 'meneEnd' || ringBusy) return;
+    if (!match || match.phase !== 'meneEnd' || ringBusy || nextStarted) return;
+    nextStarted = true;
+    releaseHold();
+    startMeneEndWork();
+    if (slow() && observing()) wideShot(); // F57: the whole court with Rainier behind, held through the collecting
     const next = apply(match, { type: 'nextMene' });
     const g = next.geometry, to = { x: g.circle.x, y: g.circle.y };
     const t = token;
@@ -2193,6 +2220,10 @@ function boot() {
       } catch (err) { console.error(err); renderer.setRingPose(null); ringCarry = null; }
       if (collect && collect.plan) collect.plan.ringDown = true; // F15: the next jack thrower may walk to the circle
       try { await finishCollect(); } catch (err) { console.error(err); } // F02: the rest of the collecting
+      if (collect && collect.places && t === token) { // F59: the mène starts when the ring is down and everybody is at their place (the fade covers the stuck ones)
+        const at = () => new Map([...cast.keys()].map((k) => [k, cast.get(k).root.position]));
+        for (let w = 0; w < 25 && t === token && !meneEndReady({ ringDown: ringPlaced || !ringTask, collectDone: atPlaces(at(), collect.places) }); w++) await sleep(200);
+      }
       ringBusy = false;
       if (t !== token) return;
     }
@@ -2204,33 +2235,18 @@ function boot() {
     if (fadeOut) for (const ch of cast.values()) { ch.setOpacity(0); ch.fadeTo(1, FADE_S); }
   }
 
-  // ---- F02/F14: after a mène the players collect their boules, then walk to their spots ----
-  // Slow mode: a little after the result every free player starts at once (the ring carrier F07 and the jack fetcher F10
-  // join when they are free) and walks to their own boules, nearest first (the dead ones are in the row past the far
-  // string, reached round the outside of the timbers), bends and takes each up (the held count grows, the boule leaves
-  // the court). Walkers steer round each other (`crowdTick`, crowd.js: separation, slowing for whoever is ahead) and
-  // wait while somebody is bending where they want to stand. After KICK_TIMEOUT s of game time any boule still on
-  // the ground goes straight into its owner's hand. nextMene lets this run beside the ring carrying, then sends
-  // everyone but the next jack thrower to waiting slots round the new circle (`walkToSpots`, steered too; blocked for
-  // more than BLOCK_FADE_S they fade to the slot); the mène start leaves them there (spotsKept) and collectBoules
-  // skips anyone already holding their boules. A click or key (skipCollect) jumps to the end state.
-  // Quick mode: boules and players fade (nextMene). Instant: nothing.
-  let collect = null, spotsKept = 0, f02Script = false; // collect: { tok, ids, skipped, finished, done, walkers, goal, blocked, fb }
+  // ---- F60: after Next every boule goes at once into its owner's hands; the owners walk straight to their next-mène places ----
+  // Slow mode: the ring carrier (F07) and the jack fetcher (F10) finish first and then take their boules. Walkers steer round
+  // each other (`crowdTick`, crowd.js) and, blocked for more than BLOCK_FADE_S, fade to the place. The mène starts when the ring
+  // is down and everybody is at their place (nextMene); the start leaves them there (spotsKept). A click or key (skipCollect)
+  // jumps to the end state. Quick mode: boules and players fade (nextMene). Instant: nothing.
+  let collect = null, spotsKept = 0, f02Script = false; // collect: { tok, ids, skipped, finished, done, walkers, goal, blocked }
   const ownBoules = (id) => world.bodies.filter((b) => b.kind === 'boule' && b.owner === id && !(carry && carry.body === b));
-  function takeBoule(st, id, b) { // the boule leaves the court and is in the hand
-    const i = world.bodies.indexOf(b);
-    if (i >= 0) world.bodies.splice(i, 1);
-    renderer.sync(world);
-    if (!st.picked) { st.picked = true; renderer.clearMeasure(); } // the result labels would point at nothing
-    const ch = cast.get(id), n = (st.held.get(id) || 0) + 1;
-    st.held.set(id, n);
-    ch.setHeldBoules({ ...splitHeld(n), color: teamColor(id) });
-  }
-  function startCollect(delay = 2600) {
+  function startCollect() {
     if (!slow() || collect || !match || match.phase !== 'meneEnd') return;
-    const st = { tok: token, ids: match.players.map((p) => p.id), skipped: false, finished: false, held: new Map(), picked: false, walkers: new Set(), goal: new Map(), blocked: new Map(), fb: new Set(), goalStarted: new Set(), plan: planNext(), slides: [], zones: null, marks: [] };
+    const st = { tok: token, ids: match.players.map((p) => p.id), skipped: false, finished: false, held: new Map(), picked: false, walkers: new Set(), goal: new Map(), blocked: new Map(), goalStarted: new Set(), plan: planNext(), places: new Map() };
     collect = st;
-    st.done = runCollect(st, delay).catch((err) => console.error(err)).then(() => { st.finished = true; clearZoneMarks(st); });
+    st.done = runCollect(st).catch((err) => console.error(err)).then(() => { st.finished = true; });
   }
   // F15: the next mène's circle and waiting slots depend only on the final jack spot, so they are known as soon as the result
   // is. Each player walks to their own spot straight after picking up their boules; the next jack thrower goes to the new
@@ -2260,7 +2276,7 @@ function boot() {
       for (let w = 0; w < 900 && live() && !pl.ringDown && !ringPlaced; w++) await sleep(200);
       if (!live()) return;
       g = { x: pl.to.x, y: pl.to.y, yaw: baseYaw(pl.dir) };
-    } else g = slotFor(st, id);
+    } else { g = slotFor(st, id); st.places.set(id, { x: g.x, y: g.y }); }
     const job = { id, tok: st.tok, cancelled: false, scripted: false, obstacles: () => obstaclesExcept(null) };
     ch.setCarrying(false); ch.setHolding(false); ch.setStance('watch');
     st.walkers.add(id); st.goal.set(id, g);
@@ -2281,7 +2297,9 @@ function boot() {
       if (!leg) { st.blocked.delete(id); continue; }
       const p = ch.root.position;
       if (Math.hypot(leg.x - p.x, leg.y - p.y) < 0.4) continue; // arriving: no steering, so the last step always lands
-      const v = steer({ x: p.x, y: p.y }, leg, all.filter((o) => o.id !== id));
+      // F53: the next jack thrower close to their circle stands their ground: others slow for them, they are not pushed sideways
+      const stand = !!st.plan && id === st.plan.thrower && Math.hypot(st.plan.to.x - p.x, st.plan.to.y - p.y) < 2.5;
+      const v = steer({ x: p.x, y: p.y }, leg, all.filter((o) => o.id !== id), { push: !stand });
       ch.setSteer(v);
       if (!st.goal.has(id)) continue;
       const bt = v.blocked ? (st.blocked.get(id) || 0) + dt : 0;
@@ -2295,137 +2313,25 @@ function boot() {
     ch.fadeTo(0, 0.15);
     later(() => { if (st.tok !== token) return; placeAt(id, g.x, g.y, g.yaw); ch.fadeTo(1, 0.15); ch.setStance('watch'); shadow(id, false); }, 200);
   }
-  function giveBoules(st, id) { // the fallback (or a skip): every boule still on the court is in its owner's hands
+  function giveBoules(st, id) { // F60: every boule still on the court is at once in its owner's hands (a skip does the same)
     const rest = ownBoules(id);
     for (const b of rest) { const i = world.bodies.indexOf(b); if (i >= 0) world.bodies.splice(i, 1); }
     const n = (st.held.get(id) || 0) + rest.length;
     st.held.set(id, n);
-    if (n) cast.get(id).setHeldBoules({ ...splitHeld(n), color: teamColor(id) });
-    return rest.length;
+    if (rest.length) { cast.get(id).setHeldBoules({ ...splitHeld(n), color: teamColor(id) }); renderer.sync(world); renderer.clearMeasure(); } // (the result labels would point at nothing)
   }
-  function fallbackFor(st, id) { // KICK_TIMEOUT s passed: stop where they stand with their boules in hand
-    if (st.tok !== token || st.skipped || st.fb.has(id) || st.goalStarted.has(id) || gatherBusy(id)) return; // (already on the way to the next spot: leave them)
-    st.fb.add(id); st.walkers.delete(id);
-    const ch = cast.get(id), p = ch.root.position;
-    giveBoules(st, id);
-    ch.setPlacement(p.x, p.y); ch.setCarrying(false); // ends a walk or bend in place
-    renderer.sync(world); renderer.clearMeasure();
-    goalWalk(st, id, () => st.tok === token && !st.skipped && !!match).catch((err) => console.error(err)); // F15: then on to the next spot
-  }
-  // ---- F28: kick to open space, then collect (GAME-PLAN 10c) ----
-  // Each player gets a private zone of open court (crowd.js assignZones). A boule is kicked there (a scripted slide: kickMove,
-  // exact end point, the body stays at rest in the world) only when the head is crowded for it (isCrowded: somebody within
-  // 1.5 m of it or its approach, or another player's boule against it) and the kick is safe (kickOk); every other boule is
-  // walked to and picked up in place. &f28 forces every safe kick and draws the zones.
-  const f28 = debug && params.has('f28');
-  const kickReachOf = (ch) => { const r = kickReach(ch.height, ch.hand); return { x: r[0], y: r[1] }; };
-  function clearZoneMarks(st) { for (const m of st.marks || []) { renderer.removeObject(m); m.geometry.dispose(); m.material.dispose(); } if (st.marks) st.marks.length = 0; }
-  function planZones(st) {
-    const jack = world.bodies.find((b) => b.kind === 'jack' && !b.dead);
-    const live = world.bodies.filter((b) => b.kind === 'boule' && !b.dead && inField(b) && !(carry && carry.body === b));
-    const head = jack && inField(jack) ? { x: jack.x, y: jack.y } : live.length ? { x: live.reduce((s2, b) => s2 + b.x, 0) / live.length, y: live.reduce((s2, b) => s2 + b.y, 0) / live.length } : { x: C.terrainW / 2, y: C.terrainL / 2 };
-    const players = st.ids.map((id) => { const q = cast.get(id).root.position; return { id, team: match.players.find((p) => p.id === id).team, x: q.x, y: q.y }; });
-    const obstacles = [];
-    if (ringHolder && st.plan) {
-      const q = cast.get(ringHolder).root.position;
-      obstacles.push({ x: q.x, y: q.y, r: 1.2 }, { x: q.x, y: q.y, x2: st.plan.to.x, y2: st.plan.to.y, r: 0.8 });
-    }
-    st.head = head;
-    st.zones = assignZones(players, live.map((b) => ({ id: b.id, owner: b.owner, x: b.x, y: b.y })), head, st.plan, { dims: { terrainW: C.terrainW, terrainL: C.terrainL }, obstacles, holder: ringHolder });
-    st.order = collectOrder(players, head, match.result && match.result.team !== undefined ? match.result.team : null);
-    if (f28) for (const id of st.ids) { // zones are drawn on the ground in debug only
-      const z = st.zones[id];
-      if (!z) continue;
-      const m = new THREE.Mesh(new THREE.RingGeometry(ZONE_R - 0.03, ZONE_R, 40), new THREE.MeshBasicMaterial({ color: teamColor(id), transparent: true, opacity: 0.9, depthWrite: false }));
-      m.position.set(z.x, z.y, terrain.sample(z.x, z.y).h + 0.03);
-      renderer.addObject(m); st.marks.push(m);
-    }
-  }
-  // who is standing or going where, for the kick checks: every other person with their current goal
-  const peopleFor = (st, id) => [...cast.keys()].filter((k) => k !== id).map((k) => { const q = cast.get(k).root.position, g = st.goal.get(k); return { x: q.x, y: q.y, gx: g ? g.x : undefined, gy: g ? g.y : undefined }; });
-  function kickWanted(st, id, b, target) {
-    const p = cast.get(id).root.position, ppl = peopleFor(st, id);
-    const others = world.bodies.filter((o) => o !== b && !o.dead && (o.kind === 'jack' || (o.kind === 'boule' && o.owner !== id)));
-    const live = world.bodies.filter((o) => o.kind === 'boule' && !o.dead);
-    return (f28 || isCrowded(b, { id, x: p.x, y: p.y }, ppl, live)) && kickOk(b, b, target, ppl, others);
-  }
-  function startSlide(st, id, b, target) {
-    const z = st.zones[id];
-    const mv = kickMove({ x: b.x, y: b.y }, target, terrain, { zone: z ? { x: z.x, y: z.y, r: ZONE_R } : null, r: b.r });
-    b.state = 'resting'; b.vx = b.vy = b.vz = 0;
-    st.slides.push({ b, mv, t: 0, owner: id });
-    audio.playScuff(mv.T);
-  }
-  let f28Cam = 0;
-  function kickTick(dt) { // each frame: boules sliding to their zones, on the game clock
-    if (f28 && f02Script && f28Cam++ % 20 === 0) renderer.setCamera('inspect', { target: { x: 2, y: 9 }, dist: 11, az: baseYaw() + Math.PI * 0.85, el: 1.05, height: 0.5, reset: true, fit: 1.4 }); // debug: look from above, to see the zones
-    const st = collect;
-    if (!st || st.tok !== token || !st.slides.length) return;
-    for (const s of [...st.slides]) {
-      s.t += dt;
-      if (world.bodies.includes(s.b)) { const p = s.mv.at(s.t); s.b.x = p.x; s.b.y = p.y; s.b.z = p.z; }
-      if (s.t >= s.mv.T || !world.bodies.includes(s.b)) st.slides.splice(st.slides.indexOf(s), 1);
-    }
-    renderer.sync(world);
-  }
-  async function runCollect(st, delay) {
-    const t = st.tok, alive = (id) => t === token && !st.skipped && !!match && !st.fb.has(id);
-    await sleep(delay);
-    later(() => { for (const id of st.ids) fallbackFor(st, id); }, KICK_TIMEOUT * 1000);
-    planZones(st);
-    const ringSpot = slow() && match ? ringDest() : null;
+  // F60: after Next every boule on the court (dead ones in the row included) is in its owner's hands at once, then the owner
+  // walks straight to their next-mene place (goalWalk). The ring holder (and a jack fetcher) keeps going and takes his boules
+  // once free. The next mene starts when the ring is down and everybody is at a place (nextMene).
+  async function runCollect(st) {
+    const t = st.tok, alive = (id) => t === token && !st.skipped && !!match;
     const run = async (id) => {
-      const ch = cast.get(id), job = { id, tok: t, cancelled: false, scripted: false };
-      let waited = false;
-      for (let w = 0; w < 600 && alive(id) && gatherBusy(id); w++) { waited = true; await sleep(200); } // the ring carrier or a fetcher joins when free
-      if (jackTask && jackFetcher === id) { waited = true; await jackTask; }
+      const ch = cast.get(id);
+      for (let w = 0; w < 600 && alive(id) && gatherBusy(id); w++) await sleep(200); // the ring carrier or a fetcher joins when free
+      if (jackTask && jackFetcher === id) await jackTask;
       if (!alive(id)) return;
-      if (waited) later(() => fallbackFor(st, id), KICK_TIMEOUT * 1000);
-      st.walkers.add(id);
-      shadow(id, true); ch.setHolding(false); ch.setStance('watch');
-      await sleep(600 + 400 * ((id.charCodeAt(0) * 7) % 5) / 4); // locate: look round at the head (0.6 to 1.0 s)
-      // 1. kicks: only the boules that are crowded and safe to send; the player's own kicks farthest-from-the-zone first
-      const zone = st.zones && st.zones[id];
-      let slid = 0, staggered = false;
-      if (zone) {
-        for (const k of kickList(ownBoules(id), zone, inField)) {
-          if (!alive(id)) return;
-          const b = k.boule;
-          if (!world.bodies.includes(b) || !kickWanted(st, id, b, k.target)) continue; // picked up in place later
-          if (!staggered) { staggered = true; await sleep(Math.max(0, st.order.indexOf(id) * KICK_STAGGER * 1000 - 800)); if (!alive(id)) return; }
-          const dx = k.target.x - b.x, dy = k.target.y - b.y, d = Math.hypot(dx, dy) || 1;
-          const sp = standPoint(b, { x: b.x - dx / d, y: b.y - dy / d }, kickReachOf(ch));
-          sp.x -= dx / d * b.r; sp.y -= dy / d * b.r; // the toe meets the boule's near edge
-          job.obstacles = () => obstaclesExcept(b);
-          await walkVia(job, id, sp);
-          if (!alive(id)) return;
-          if (!world.bodies.includes(b) || !kickWanted(st, id, b, k.target)) continue; // people moved: pick it up where it lies
-          ch.setHolding(false);
-          await ch.playKick({ onContact: () => { if (alive(id) && world.bodies.includes(b) && kickWanted(st, id, b, k.target)) { startSlide(st, id, b, k.target); slid++; } } });
-        }
-      }
-      // 2. to the zone, then pick up: the zone's boules first (nearest first), anything left in place after, dead ones last
-      if (slid && alive(id)) { job.obstacles = () => obstaclesExcept(null); await walkVia(job, id, { x: zone.x, y: zone.y }); }
-      while (alive(id)) {
-        const p = ch.root.position, mine = ownBoules(id), moving = st.slides.some((s) => s.owner === id);
-        const rest = mine.filter((b) => !st.slides.some((s) => s.b === b));
-        if (!mine.length) break;
-        if (!rest.length && moving) { await sleep(100); continue; } // wait for the last boule to arrive
-        const key = (b) => (inField(b) ? 0 : 1000) + Math.hypot(b.x - p.x, b.y - p.y) - (ringSpot && !ringPlaced && !ringBlockers(ringSpot, [{ id: b.id, x: b.x, y: b.y, r: b.r }]).clear ? 500 : 0); // F51: a boule in the ring's way goes first
-        const b = rest.sort((a, c) => key(a) - key(c))[0];
-        const sp = standPoint(b, { x: p.x, y: p.y }, reachOf(ch));
-        job.obstacles = () => obstaclesExcept(b);
-        shadow(id, true); ch.setHolding(false); ch.setStance('watch');
-        const near = () => st.ids.some((k) => k !== id && Math.hypot(cast.get(k).root.position.x - sp.x, cast.get(k).root.position.y - sp.y) < 0.7);
-        for (let w = 0; w < 30 && alive(id) && near(); w++) await sleep(200); // somebody is bending there: wait a moment
-        if (!alive(id)) return;
-        await walkVia(job, id, sp, !inField(b));
-        if (!alive(id)) return;
-        await ch.playBend({ kind: 'pickup', onAct: () => { if (alive(id)) takeBoule(st, id, b); } });
-      }
-      if (!alive(id)) return;
-      ch.setCarrying(false);
-      st.walkers.delete(id);
+      giveBoules(st, id);
+      shadow(id, true); ch.setHolding(false); ch.setCarrying(false); ch.setStance('watch');
       await goalWalk(st, id, () => alive(id)); // F15: straight to the next mène's spot
     };
     await Promise.all(st.ids.map((id) => run(id)));
@@ -2479,7 +2385,7 @@ function boot() {
     pausedNow = p;
     root.classList.toggle('is-paused', p);
     for (const n of root.querySelectorAll('.pt-board, .pt-dock, .petanque-controls, .pt-overlay')) n.inert = p;
-    if (p) { clock.pause(); pausedTok = token; tossPhase = toss.getPhase() === 'toss' ? 'aim' : toss.getPhase(); toss.setPhase('off'); } else { clock.resume(); toss.setPhase(pausedTok === token ? tossPhase : 'off'); } // a New game while paused leaves the toss off
+    if (p) { clock.pause(); pausedTok = token; tossPhase = toss.getPhase() === 'toss' ? 'aim' : toss.getPhase(); toss.setPhase('off'); } else { if (!holdSim) clock.resume(); toss.setPhase(pausedTok === token ? tossPhase : 'off'); } // a New game while paused leaves the toss off
     audio.setPaused(p);
     renderer.setPaused(p);
   }
@@ -2528,8 +2434,8 @@ function boot() {
       // F37: random planes are scheduled in slow mode only (quick mode: none). The demo buttons trigger directly, in either mode.
       fp.schedule(match && !pausedNow && playing ? dt : 0, match, reduceMotion() || settings.mode !== 'slow');
       const en = fp.engine;
+      audio.setAmbientState({ busy: !!(pending || flying), slow: settings.mode !== 'quick' });
       audio.setEngine(en.on && !pausedNow, en.level, en.pan, en.rev, en.dist);
-      if (!pausedNow) planeShot(); // F38
     }
     renderer.render(pausedNow ? 0 : dt);
     nextFrame(frame);
@@ -2546,7 +2452,7 @@ function boot() {
 
   if (debug) {
     window.__petanque = {
-      world, terrain, renderer, seed, reset: toSetup, startGame, court, planeCuts,
+      world, terrain, renderer, seed, reset: toSetup, startGame, court,
       audio,
       setPlaying, clock,
       get paused() { return pausedNow; },

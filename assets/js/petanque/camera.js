@@ -262,42 +262,40 @@ export function frameObserver(subject, opts, prev) {
   return { pos, tgt, yaw, pitch, fovK, side, dollyGoal, center: c, v: { y: vy, yaw: vyaw, p: vp, z: vz }, active: true };
 }
 
-// ---- F38: the occasional plane shot ----
-// While a floatplane flies and the human is not busy, the camera cuts (render.js, mode 'plane') to a spectator beside the court
-// looking down the lake at the plane, then goes back to whatever it was doing. The spectator stands on the side away from the
-// plane, so the court (its near corner and side) lies across the foreground, and the frame is aimed a little below the plane
-// so the lake and shore sit in the lower part of the picture. Pure: the renderer passes the plane position and a groundAt().
-export const PSHOT = Object.freeze({
-  y: 3, eye: 1.7, // where the spectator stands: along the court, and eye height above the ground
-  size: 16, // m: the plane with its wake, to keep in the picture
-  fill: 0.22, // the plane's angular size as a fraction of the horizontal view
-  minFovK: 0.4, maxFovK: 0.9,
-  lower: 0.3, // aim this fraction of the half-view below the plane, for lake and shore
-  follow: 1.8, // 1/s: how closely the frame tracks the plane
+// ---- F57: the wide court shot after Next ----
+// A spectator behind the near end, raised, looking down the court (+y) so the whole court is in the picture and Mount Rainier
+// (scenery.js paints it at about 9 degrees of elevation straight down-court) stands in the top of the frame. Pure.
+export const WIDE = Object.freeze({
+  rainierEl: 9, skyMargin: 3, // degrees: the painted summit and the gap kept above it
+  edge: 3.5, // degrees of slack between the near end and the bottom of the picture
+  side: 0.4, // m of slack either side of the court
+  minBack: 3, maxBack: 60, step: 0.25, // m behind the near end
 });
 
-// plane: { x, y, z } (world position); opts: { dt, aspect, fov (vertical degrees), groundAt, width }; prev: the last result (null to snap).
-// Returns { pos, tgt, yaw, pitch, fovK, side } (feed `prev` back).
-export function framePlane(plane, opts, prev) {
-  const W = opts.width || C.terrainW, groundAt = opts.groundAt || (() => 0);
-  const side = prev ? prev.side : (plane.x >= W / 2 ? -1 : 1);
-  const px = side < 0 ? -OBS.side : W + OBS.side;
-  const pos = { x: px, y: PSHOT.y, z: groundAt(px, PSHOT.y) + PSHOT.eye };
-  const dx = plane.x - pos.x, dy = plane.y - pos.y, dh = Math.max(1, Math.hypot(dx, dy)), dist = Math.hypot(dh, plane.z - pos.z);
-  const baseFov = (opts.fov || 50) * Math.PI / 180, aspect = opts.aspect || 1.5;
-  const wantFovK = clamp(2 * Math.atan(PSHOT.size / 2 / dist) / (2 * Math.atan(Math.tan(baseFov / 2) * aspect) * PSHOT.fill), PSHOT.minFovK, PSHOT.maxFovK);
-  const wantYaw = Math.atan2(dx, dy);
-  const wantPitch = Math.atan2(plane.z - pos.z, dh) - PSHOT.lower * baseFov * wantFovK / 2;
-  let yaw = wantYaw, pitch = wantPitch, fovK = wantFovK;
-  const dt = clamp(opts.dt || 0, 0, 0.1);
-  if (prev) {
-    const k = 1 - Math.exp(-dt * PSHOT.follow);
-    yaw = prev.yaw + wrapAngle(wantYaw - prev.yaw) * k;
-    pitch = prev.pitch + (wantPitch - prev.pitch) * k;
-    fovK = prev.fovK + (wantFovK - prev.fovK) * k;
-  }
-  const cp = Math.cos(pitch);
-  return { pos, tgt: { x: pos.x + Math.sin(yaw) * cp * 50, y: pos.y + Math.cos(yaw) * cp * 50, z: pos.z + Math.sin(pitch) * 50 }, yaw, pitch, fovK, side };
+// opts: { width, length, aspect, fov (vertical degrees), groundAt }. Returns { pos, tgt, yaw: 0, pitch (rad, looking down), back, height, topEl }:
+// topEl is the elevation (degrees) of the top edge of the picture, always above rainierEl.
+export function frameCourtWide(opts = {}) {
+  const W = opts.width || C.terrainW, L = opts.length || C.terrainL, groundAt = opts.groundAt || (() => 0);
+  const aspect = opts.aspect || 1.5, vf = (opts.fov || 50) * Math.PI / 180, deg = Math.PI / 180;
+  const vHalf = vf / 2, hHalf = Math.atan(Math.tan(vHalf) * aspect);
+  const pitch = clamp(vHalf - (WIDE.rainierEl + WIDE.skyMargin) * deg, 0.05, 0.6);
+  const aNear = pitch + vHalf - WIDE.edge * deg; // the near end's depression below the horizon
+  let back = WIDE.minBack;
+  while (back < WIDE.maxBack && Math.atan((W / 2 + WIDE.side) / back) > hHalf * 0.92) back += WIDE.step;
+  const x = W / 2, y = -back, h = back * Math.tan(aNear);
+  const pos = { x, y, z: groundAt(x, y) + h };
+  const tgt = { x, y: y + Math.cos(pitch) * 40, z: pos.z - Math.sin(pitch) * 40 };
+  return { pos, tgt, yaw: 0, pitch, back, height: h, topEl: (vHalf - pitch) / deg };
+}
+
+// Where a world point lands in that picture: { x, y } in [-1, 1] when inside (y up), or null when behind the camera.
+export function viewPoint(p, frame, { aspect = 1.5, fov = 50 } = {}) {
+  const dx = p.x - frame.pos.x, dy = p.y - frame.pos.y, dz = (p.z || 0) - frame.pos.z;
+  const cp = Math.cos(frame.pitch), sp = Math.sin(frame.pitch);
+  const fwd = dy * cp - dz * sp, up = dy * sp + dz * cp; // yaw 0: forward is +y, tilted down by pitch
+  if (fwd <= 0) return null;
+  const t = Math.tan(fov * Math.PI / 360);
+  return { x: dx / fwd / (t * aspect), y: up / fwd / t };
 }
 
 // ---- E27: TV-presentation cameras for AI turns ----
@@ -473,4 +471,54 @@ export function clampViewOffset(yaw, pitch, lim = VIEW_PAN) {
 export function panViewOffset(view, dirX, dirY, dt, lim = VIEW_PAN) {
   const dx = clamp(dirX || 0, -1, 1), dy = clamp(dirY || 0, -1, 1), t = clamp(dt || 0, 0, 0.25);
   return clampViewOffset(view.yaw + dx * lim.yawRate * t, view.pitch + dy * lim.pitchRate * t, lim);
+}
+
+// ---- F62: the outcome (scoring) view fits ring + badges + labels into the free viewport rectangle ----
+export const SCORING_FIT = Object.freeze({
+  fill: 0.76,      // the content's box fills this share of the free rectangle (the larger of its two ratios)
+  margin: 10,      // px kept clear on every side of the free rectangle
+  tallCard: 0.22,  // a card taller than this share of the viewport lifts the centre
+  lift: 0.06,      // share of the free height the centre is lifted by on a tall card
+});
+
+// The free rectangle {l,t,r,b} of a W x H viewport. bars: wide HUD rects at the top (score board); card: the result card
+// rect at the bottom (or null); icons: small controls hugging the right edge (hamburger column, bottom-right buttons). All rects {l,t,r,b}.
+export function freeViewRect({ W, H, bars = [], card = null, icons = [], gap = 8 } = {}) {
+  const f = { l: 0, t: 0, r: W, b: H };
+  for (const q of bars) if (q.b > q.t && q.t < H * 0.4 && q.r - q.l > W * 0.3) f.t = Math.max(f.t, q.b + gap);
+  if (card) f.b = Math.min(f.b, card.t - gap);
+  f.b = Math.max(f.b, f.t + Math.min(60, H * 0.3));
+  for (const q of icons) {
+    if (q.r <= q.l || q.b <= q.t || q.l < W * 0.6) continue; // only the right-hand cluster
+    if (q.b <= f.t || q.t >= f.b) continue;                  // outside the free band
+    if (q.t > f.t + (f.b - f.t) * 0.7) f.b = Math.max(f.t + 40, Math.min(f.b, q.t - gap)); // a low control: shorten, not narrow
+    else f.r = Math.min(f.r, q.l - gap);
+  }
+  f.r = Math.max(f.r, f.l + Math.min(80, W * 0.3));
+  return f;
+}
+
+// The pixel box the content's bounding box should land in: centred in `free` (lifted a little when the card is tall),
+// sized so the content fills `fill` of the free rectangle (the limiting dimension). aspect = content width / height.
+// Returns { l, t, r, b }.
+export function scoringTargetBox(free, aspect, { cardH = 0, H = 1, fill = SCORING_FIT.fill, margin = SCORING_FIT.margin } = {}) {
+  const fw = Math.max(1, free.r - free.l - 2 * margin), fh = Math.max(1, free.b - free.t - 2 * margin);
+  const a = Math.max(0.05, aspect || 1);
+  let w = fw * fill, h = w / a;
+  if (h > fh * fill) { h = fh * fill; w = h * a; }
+  const lift = cardH > H * SCORING_FIT.tallCard ? SCORING_FIT.lift * fh : 0;
+  const cx = (free.l + free.r) / 2, cy = (free.t + free.b) / 2 - lift;
+  return { l: cx - w / 2, t: cy - h / 2, r: cx + w / 2, b: cy + h / 2 };
+}
+
+// Pure fit for a top-down view (+y up the screen): world points -> { scale px/m, box, centre, screen }: with `scale` pixels per metre
+// the points' bounding box lands in `box` (scoringTargetBox), its world centre `centre` shown at pixel `screen`.
+export function fitScoringView(pts, free, opts = {}) {
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const p of pts) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+  const bw = Math.max(1e-6, x1 - x0), bh = Math.max(1e-6, y1 - y0);
+  const box = scoringTargetBox(free, bw / bh, opts);
+  const scale = Math.min((box.r - box.l) / bw, (box.b - box.t) / bh);
+  const sx = (box.l + box.r) / 2, sy = (box.t + box.b) / 2, mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+  return { scale, box, centre: { x: mx, y: my }, screen: { x: sx, y: sy } };
 }
