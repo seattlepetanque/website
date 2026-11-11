@@ -76,7 +76,7 @@ export function jackMaterialParams(variant = activeGravel, bright = false) {
 }
 
 function debugGravel() {
-  try { return typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug') ? new URLSearchParams(location.search).get('gravel') : null; } catch (e) { return null; }
+  try { return globalThis.__DEBUG__ !== false && typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug') ? new URLSearchParams(location.search).get('gravel') : null; } catch (e) { return null; }
 }
 
 export function createTerrain(seed, opts = {}) {

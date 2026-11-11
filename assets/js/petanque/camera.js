@@ -475,14 +475,14 @@ export function panViewOffset(view, dirX, dirY, dt, lim = VIEW_PAN) {
 
 // ---- F62: the outcome (scoring) view fits ring + badges + labels into the free viewport rectangle ----
 export const SCORING_FIT = Object.freeze({
-  fill: 0.76,      // the content's box fills this share of the free rectangle (the larger of its two ratios)
-  margin: 10,      // px kept clear on every side of the free rectangle
+  fill: 0.92,      // the content's box fills this share of the free rectangle (the larger of its two ratios)
+  margin: 8,       // px kept clear on every side of the free rectangle
   tallCard: 0.22,  // a card taller than this share of the viewport lifts the centre
   lift: 0.06,      // share of the free height the centre is lifted by on a tall card
 });
 
 // The free rectangle {l,t,r,b} of a W x H viewport. bars: wide HUD rects at the top (score board); card: the result card
-// rect at the bottom (or null); icons: small controls hugging the right edge (hamburger column, bottom-right buttons). All rects {l,t,r,b}.
+// rect at the bottom (or null); icons: small controls hugging the right edge (hold-icon column at the top, bottom-right buttons). All rects {l,t,r,b}.
 export function freeViewRect({ W, H, bars = [], card = null, icons = [], gap = 8 } = {}) {
   const f = { l: 0, t: 0, r: W, b: H };
   for (const q of bars) if (q.b > q.t && q.t < H * 0.4 && q.r - q.l > W * 0.3) f.t = Math.max(f.t, q.b + gap);
@@ -506,7 +506,7 @@ export function scoringTargetBox(free, aspect, { cardH = 0, H = 1, fill = SCORIN
   const a = Math.max(0.05, aspect || 1);
   let w = fw * fill, h = w / a;
   if (h > fh * fill) { h = fh * fill; w = h * a; }
-  const lift = cardH > H * SCORING_FIT.tallCard ? SCORING_FIT.lift * fh : 0;
+  const lift = cardH > H * SCORING_FIT.tallCard ? Math.min(SCORING_FIT.lift * fh, Math.max(0, (fh - h) / 2)) : 0; // F82: never lifted out of the margin
   const cx = (free.l + free.r) / 2, cy = (free.t + free.b) / 2 - lift;
   return { l: cx - w / 2, t: cy - h / 2, r: cx + w / 2, b: cy + h / 2 };
 }

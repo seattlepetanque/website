@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mulberry32 } from '../../assets/js/petanque/rng.js';
 import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { createWorld, createBody, launch, simulate } from '../../assets/js/petanque/physics.js';
-import { createMatch, defaultPlayers, apply, nextTeam, playersWithBoules, jackValid } from '../../assets/js/petanque/rules.js';
+import { createMatch, defaultPlayers, apply, nextTeam, playersWithBoules, jackValid, jackCentreRange } from '../../assets/js/petanque/rules.js';
 import { AI, chooseThrow, chooseJackThrow, chooseJackPlacement } from '../../assets/js/petanque/ai.js';
 import { court, setCourt, resetCourt, nextCircle } from '../../assets/js/petanque/court.js';
 
@@ -23,7 +23,8 @@ function play(seed) {
     assert.equal(g.dir, court.dir, `${label}: rules dir = court dir`);
     assert.equal(g.circle.x, court.circle.x); assert.equal(g.circle.y, court.circle.y);
     const d = Math.hypot(spot.x - court.circle.x, spot.y - court.circle.y);
-    assert.ok(d >= 6 - 1e-6 && d <= 10 + 1e-6, `${label}: seed ${seed} jack ${d.toFixed(2)} m from the circle (dir ${court.dir})`);
+    const r = jackCentreRange(g); // F73-F77: the 6-10 m range is edge to edge, so the centre bound is shifted by circle + jack radius
+    assert.ok(d >= r.min - 1e-6 && d <= r.max + 1e-6, `${label}: seed ${seed} jack ${d.toFixed(2)} m from the circle (dir ${court.dir})`);
     assert.ok((spot.y - court.circle.y) * court.dir > 0, `${label}: ahead of the circle`);
     assert.ok(jackValid(spot, g), `${label}: valid`);
   };

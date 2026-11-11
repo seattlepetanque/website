@@ -2,7 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createMatch, apply, nextTeam, meneResult, holdingTeam, jackValid, jackFault, jackPlaceValid, jackPlaceFault, playersWithBoules, deadJackText,
+  jackGap, jackTooClose, jackCentreRange, TIE_EPS, JACK_END_MARGIN, JACK_R, JACK_DEAD_DIST, JACK_CENTRE_SHIFT,
 } from '../../assets/js/petanque/rules.js';
+import { FRONT_MIN, FRONT_WANT, nextCircle, CIRCLE_R } from '../../assets/js/petanque/court.js';
+import { C } from '../../assets/js/petanque/constants.js';
+
+const K = JACK_CENTRE_SHIFT; // centre distance = edge gap + K (circle radius 0.25 + jack radius 0.015)
 
 const jackAt = { x: 2, y: 8 };
 const b = (id, team, x, y, dead = false) => ({ id, team, owner: team ? 'm' : 'y', x, y, dead });
@@ -30,8 +35,8 @@ test('jack validity', () => {
   assert.ok(jackValid({ x: 2, y: 8 }));
   assert.ok(!jackValid({ x: 2, y: 5 })); // 4 m
   assert.ok(!jackValid({ x: 2, y: 12 })); // 11 m
-  assert.ok(jackValid({ x: 2, y: 7 })); // exactly 6 m
-  assert.ok(jackValid({ x: 2, y: 11 })); // exactly 10 m
+  assert.ok(jackValid({ x: 2, y: 1 + 6 + K })); // F75: exactly 6 m from the circle's inner edge to the jack's near edge
+  assert.ok(jackValid({ x: 2, y: 1 + 10 + K })); // exactly 10 m
   assert.ok(jackValid({ x: 0.5, y: 8 })); // E20: no side margin
   assert.ok(jackValid({ x: 3.5, y: 8 }));
   assert.ok(!jackValid({ x: -0.5, y: 8 }));
@@ -65,7 +70,7 @@ test('jackFault explains invalid jacks', () => {
   assert.equal(jackFault({ x: 2, y: 12 }).reason, 'far');
   assert.equal(jackFault({ x: -0.5, y: 8 }).reason, 'line');
   assert.equal(jackFault({ x: 2, y: 8, dead: true }).reason, 'out');
-  assert.ok(Math.abs(jackFault({ x: 2, y: 5 }).dist - 4) < 1e-9);
+  assert.ok(Math.abs(jackFault({ x: 2, y: 5 }).dist - (4 - K)) < 1e-9);
 });
 
 test('reducer does not mutate input', () => {
@@ -93,10 +98,66 @@ test('team with no live boule on ground throws; dead boules do not count', () =>
   assert.equal(nextTeam(m), 1);
 });
 
-test('nobody on the ground: last thrower throws again', () => {
+test('first boule dead: the opponent throws next (Art. 16)', () => {
   let m = started({});
   m = throwBoule(m, 'you', jackAt, [b('a', 0, 9, 9, true)]);
+  assert.equal(nextTeam(m), 1);
+});
+
+test('all boules dead: strict alternation 0,1,0,1 until one stays', () => {
+  let m = started({});
+  const dead = [];
+  const order = [];
+  const who = { 0: ['you', 'pierre'], 1: ['marcel', 'odette'] };
+  const used = { 0: 0, 1: 0 };
+  let team = 0;
+  for (let i = 0; i < 4; i++) {
+    const id = who[team][used[team]++ % 2];
+    dead.push(b('d' + i, team, 9, 9, true));
+    m = throwBoule(m, id, jackAt, dead.slice());
+    team = nextTeam(m);
+    order.push(team);
+  }
+  assert.deepEqual(order, [1, 0, 1, 0]);
+  // a boule stays in play: normal rules resume (team 1 has no boule on the ground, so it plays)
+  m = throwBoule(m, 'you', jackAt, [...dead, b('s', 0, 2, 8.5)]);
+  assert.equal(m.stayed, true);
+  assert.equal(nextTeam(m), 1);
+});
+
+test('a shot that clears the ground after boules stayed: the last thrower plays again (Art. 29)', () => {
+  let m = started({});
+  m = throwBoule(m, 'you', jackAt, [b('a', 0, 2, 8.5)]);
+  assert.equal(nextTeam(m), 1);
+  m = throwBoule(m, 'marcel', jackAt, [b('a', 0, 9, 9, true), b('c', 1, 9, 9, true)]);
+  assert.equal(m.stayed, true);
+  assert.equal(nextTeam(m), 1);
+});
+
+test('first boule dead, second live: the other team of the live boule plays', () => {
+  let m = started({});
+  m = throwBoule(m, 'you', jackAt, [b('a', 0, 9, 9, true)]);
+  m = throwBoule(m, 'marcel', jackAt, [b('a', 0, 9, 9, true), b('c', 1, 2, 8.5)]);
   assert.equal(nextTeam(m), 0);
+});
+
+test('every boule dead: the mène is void and the same jack team throws next', () => {
+  let m = started({});
+  const dead = [];
+  const ids = [['you', 'you', 'you', 'pierre', 'pierre', 'pierre'], ['marcel', 'marcel', 'marcel', 'odette', 'odette', 'odette']];
+  const used = [0, 0];
+  let team = 0;
+  while (m.phase === 'play' && dead.length < 12) {
+    dead.push(b('d' + dead.length, team, 9, 9, true));
+    m = throwBoule(m, ids[team][used[team]++], jackAt, dead.slice());
+    team = nextTeam(m) ?? team;
+  }
+  assert.equal(dead.length, 12);
+  assert.equal(m.phase, 'meneEnd');
+  assert.equal(m.result.void, true);
+  m = apply(m, { type: 'nextMene' });
+  assert.equal(m.jackTeam, 0);
+  assert.equal(m.stayed, false);
 });
 
 test('one team out of boules: the other plays its remaining boules', () => {
@@ -249,23 +310,25 @@ test('E20: a jack is in while any part is inside a side string, out only when wh
   assert.ok(!side(4.02, yAt(4.02, 8.6)), 'whole jack past the right string');
   assert.ok(jackValid({ x: -0.01, y: yAt(-0.01, 8.6) }) && !jackValid({ x: -0.02, y: yAt(-0.02, 8.6) }), 'thrown = placed');
   // distance still enforced out at the strings
-  assert.ok(!side(0.02, yAt(0.02, 5.9)) && !side(0.02, yAt(0.02, 10.1)));
-  assert.ok(side(0.02, yAt(0.02, 6.001)) && side(0.02, yAt(0.02, 9.999)));
+  assert.ok(!side(0.02, yAt(0.02, 6 + K - 0.1)) && !side(0.02, yAt(0.02, 10 + K + 0.1)));
+  assert.ok(side(0.02, yAt(0.02, 6 + K + 0.001)) && side(0.02, yAt(0.02, 10 + K - 0.001)));
 });
 
-test('E20: the jack centre must be more than 0.5 m before the end string', () => {
+test('E20/F75: the jack EDGE must be more than 0.5 m before the end string (centre more than 0.515 m)', () => {
   const g = { length: 11.2 }; // a short court so the end string is reachable inside 6-10 m of the circle
-  assert.ok(jackValid({ x: 2, y: 10.69 }, g), '0.51 m from the end string');
-  assert.ok(!jackValid({ x: 2, y: 10.71 }, g), '0.49 m from the end string');
-  assert.ok(!jackValid({ x: 2, y: 10.7 }, g), 'exactly 0.5 m is not more than 0.5 m');
+  assert.ok(jackValid({ x: 2, y: 10.68 }, g), 'edge 0.505 m from the end string');
+  assert.ok(!jackValid({ x: 2, y: 10.69 }, g), 'edge 0.495 m (centre 0.51 m, the old rule would accept)');
+  assert.ok(!jackValid({ x: 2, y: 11.2 - JACK_END_MARGIN - JACK_R }, g), 'edge exactly 0.5 m is not more than 0.5 m');
+  assert.ok(jackValid({ x: 2, y: 11.2 - JACK_END_MARGIN - JACK_R - 0.001 }, g), 'edge 0.501 m');
   const f = jackFault({ x: 2, y: 10.9 }, g);
   assert.equal(f.reason, 'end');
-  assert.ok(Math.abs(f.gap - 0.3) < 1e-9 && f.margin === 0.5);
+  assert.ok(Math.abs(f.gap - 0.285) < 1e-9 && f.margin === 0.5, 'gap is edge to string');
   // flipped direction: the end string is at y = 0
   const flip = { circle: { x: 2, y: 12 }, dir: -1 };
   assert.ok(jackValid({ x: 2, y: 4.0 }, flip) && jackFault({ x: 2, y: 4.0 }, flip) === null);
+  assert.ok(!jackValid({ x: 2, y: 0.5 + JACK_R }, { ...flip, jackMax: 12 }));
   assert.ok(!jackValid({ x: 2, y: 0.4 }, { ...flip, jackMax: 12 }));
-  assert.ok(jackValid({ x: 2, y: 0.6 }, { ...flip, jackMax: 12 }));
+  assert.ok(jackValid({ x: 2, y: 0.52 + JACK_R }, { ...flip, jackMax: 12 }));
 });
 
 test('E20: placed-jack faults', () => {
@@ -336,13 +399,13 @@ test('E08/E20: the old x = 3.17 case (0.83 m from the right string) is now valid
   assert.equal(right.side, 'right');
   assert.ok(Math.abs(right.gap - 0.485) < 1e-9);
   assert.equal(jackFault({ x: -0.96, y: 9.21 }).side, 'left');
-  assert.equal(jackFault({ x: 2, y: 7 }), null);
+  assert.equal(jackFault({ x: 2, y: 7.27 }), null);
   assert.equal(jackFault({ x: 0.96, y: 9.21 }), null);
 });
 
 test('E08: far and short faults carry the measured distance; a dead jack that rolled back is flagged', () => {
   assert.equal(jackFault({ x: 2, y: 11.4 }).reason, 'far');
-  assert.ok(Math.abs(jackFault({ x: 2, y: 11.4 }).dist - 10.4) < 1e-9);
+  assert.ok(Math.abs(jackFault({ x: 2, y: 11.4 }).dist - (10.4 - K)) < 1e-9, 'dist is the edge gap');
   assert.equal(jackFault({ x: 2, y: 6.2 }).reason, 'short');
   const back = jackFault({ x: 1.13, y: 10.9, dead: true });
   assert.equal(back.reason, 'out');
@@ -386,4 +449,116 @@ test('F31: E15 early end still fires with a capped score', () => {
   assert.equal(r.phase, 'gameOver');
   assert.equal(r.winner, 0);
   assert.deepEqual(r.scores, [13, 0]);
+});
+
+// --- F75: the 6-10 m throw limits are edge to edge ---
+test('F75: jack gap is the circle inner edge to the jack near edge; 6.00 and 10.00 valid, 5.99 and 10.01 not', () => {
+  assert.ok(Math.abs(K - 0.265) < 1e-12);
+  const at = (gap) => ({ x: 2, y: 1 + gap + K });
+  assert.ok(Math.abs(jackGap(at(7)) - 7) < 1e-9);
+  for (const g of [6, 6.01, 10]) assert.ok(jackValid(at(g)), `gap ${g}`);
+  for (const g of [5.99, 10.01, 5.74]) assert.ok(!jackValid(at(g)), `gap ${g}`);
+  assert.equal(jackFault(at(5.99)).reason, 'short');
+  assert.equal(jackFault(at(10.01)).reason, 'far');
+  assert.ok(Math.abs(jackFault(at(5.99)).dist - 5.99) < 1e-9, 'fault distance is the edge gap');
+  // diagonal and a circle with its own radius
+  assert.ok(jackValid({ x: 2 + 3, y: 1 + Math.sqrt((6 + K) ** 2 - 9) }, { width: 8 }));
+  assert.ok(!jackValid({ x: 2, y: 1 + 6.4 + 0.1 }, { circle: { x: 2, y: 1, r: 0.5 } }), 'a bigger ring pushes the limit out');
+  const r = jackCentreRange();
+  assert.ok(Math.abs(r.min - 6.265) < 1e-9 && Math.abs(r.max - 10.265) < 1e-9);
+});
+
+test('F75: end margin is tested at the jack edge: centre exactly 0.515 m from the string is not valid, 0.516 m is', () => {
+  const g = { length: 11.5 };
+  assert.ok(!jackValid({ x: 2, y: 11.5 - (JACK_END_MARGIN + JACK_R) }, g));
+  assert.ok(jackValid({ x: 2, y: 11.5 - (JACK_END_MARGIN + JACK_R) - 0.001 }, g));
+  assert.equal(jackFault({ x: 2, y: 11.5 - 0.51 }, g).reason, 'end');
+});
+
+// --- F76: Art. 9.3, a jack closer than 3 m to the circle is dead ---
+test('F76: a settled live jack with an edge gap under 3 m is dead; 3.01 m stays live', () => {
+  const play = (gap, boulesFor = []) => {
+    let m = started({}); // jack (2, 8): 6.735 m
+    m = apply(m, { type: 'bouleThrown', playerId: m.players.find((p) => p.team === 0).id });
+    return apply(m, { type: 'throwSettled', jack: { x: 2, y: 1 + gap + K }, boules: boulesFor });
+  };
+  const near = play(2.99), edge = play(3.01);
+  assert.equal(JACK_DEAD_DIST, 3);
+  assert.equal(near.phase, 'meneEnd');
+  assert.ok(near.jack.dead && near.jack.reason === 'close');
+  assert.deepEqual(near.jack.spot, { x: 2, y: 1 + 2.99 + K }, 'the ring goes where it lies (F10 spot)');
+  assert.equal(near.result.jackReason, 'close');
+  assert.ok(near.result.void, 'both teams hold boules: void mène');
+  assert.equal(edge.phase, 'play');
+  assert.ok(!edge.jack.dead);
+  assert.ok(jackTooClose({ x: 2, y: 1 + 2.99 + K }) && !jackTooClose({ x: 2, y: 1 + 3.01 + K }) && !jackTooClose({ x: 2, y: 1 + 3 + K }));
+  // the message names the rule
+  const t = deadJackText(near.result.inHand, ['A', 'B'], near.result.jackReason);
+  assert.match(t, /too close to the circle \(less than 3 m\)/);
+  assert.match(t, /both teams still have boules, so the mène is void/);
+  assert.equal(deadJackText([5, 6], ['A', 'B'], 'out'), 'The cochonnet went out: both teams still have boules, so the mène is void.');
+});
+
+test('F76: a too-close jack follows the dead-jack scoring and the next ring goes around it', () => {
+  let m = started({});
+  for (const p of m.players.filter((q) => q.team === 1)) m = { ...m, players: m.players.map((q) => (q.id === p.id ? { ...q, boulesLeft: 0 } : q)) };
+  m = apply(m, { type: 'bouleThrown', playerId: m.players.find((p) => p.team === 0).id });
+  const left = m.players.filter((p) => p.team === 0).reduce((n, p) => n + p.boulesLeft, 0);
+  m = apply(m, { type: 'throwSettled', jack: { x: 2.2, y: 1 + 2.5 + K }, boules: [] });
+  assert.equal(m.phase, 'meneEnd');
+  assert.equal(m.result.team, 0);
+  assert.equal(m.result.points, left, 'only team 0 holds boules: it scores them');
+  assert.match(deadJackText(m.result.inHand, ['A', 'B'], m.result.jackReason), /too close to the circle \(less than 3 m\): dead jack with only A holding boules/);
+  const n = apply(m, { type: 'nextMene' });
+  assert.ok(Math.hypot(n.geometry.circle.x - 2.2, n.geometry.circle.y - (1 + 2.5 + K)) <= 0.25 + 1e-9 || n.geometry.circle.y !== m.geometry.circle.y);
+});
+
+// --- F77: one tie tolerance ---
+test('F77: TIE_EPS is the one tie tolerance for holding, scoring and the void message', async () => {
+  assert.equal(TIE_EPS, 0.001);
+  const j = { x: 2, y: 8 };
+  assert.equal(holdingTeam(j, [b('a', 0, 2.5, 8), b('b', 1, 1.5005, 8)]), 'tie'); // 0.5 vs 0.4995
+  assert.notEqual(holdingTeam(j, [b('a', 0, 2.5, 8), b('b', 1, 1.5025, 8)]), 'tie');
+  assert.ok(meneResult(j, [b('a', 0, 2.5, 8), b('b', 1, 1.5005, 8)]).void);
+  assert.ok(!meneResult(j, [b('a', 0, 2.5, 8), b('b', 1, 1.5025, 8)]).void);
+  const fs = await import('node:fs');
+  const main = fs.readFileSync(new URL('../../assets/js/petanque/main.js', import.meta.url), 'utf8');
+  const tac = fs.readFileSync(new URL('../../assets/js/petanque/tactics.js', import.meta.url), 'utf8');
+  assert.ok(main.includes('<= TIE_EPS') && !/<= 0\.00[12]\) note/.test(main), 'main.js void message uses the shared constant');
+  assert.ok(tac.includes('<= TIE_EPS'));
+});
+
+// --- F79 / F80: placement geometry ---
+test('F79: the ring may sit against or across a side string, but stays on the court and clear of the timbers', () => {
+  for (const x of [-0.5, 0, 0.1, 0.5, 3.9, 4, 4.4]) {
+    for (const dir of [1, -1]) {
+      const n = nextCircle({ x, y: 7 }, dir);
+      assert.ok(n.circle.x >= 0 && n.circle.x <= 4, `x ${n.circle.x}`);
+      assert.ok(n.circle.x - CIRCLE_R > -C.lumberGap && n.circle.x + CIRCLE_R < C.terrainW + C.lumberGap, 'clear of the timbers');
+    }
+  }
+  assert.equal(nextCircle({ x: 0.3, y: 7 }, 1).circle.x, 0.3, 'no longer pushed out to 1 m');
+  assert.equal(nextCircle({ x: 3.8, y: 7 }, 1).circle.x, 3.8);
+  assert.equal(nextCircle({ x: 0, y: 7 }, 1).circle.x, 0);
+  assert.equal(nextCircle({ x: 2, y: 0.2 }, -1).circle.y, 1, 'end margin unchanged');
+});
+
+test('F80: the front covers a full 10 m throw: a legal jack at the maximum always fits the front', () => {
+  assert.ok(Math.abs(FRONT_MIN - (10 + 0.5 + 2 * C.jack.r)) < 1e-12 && Math.abs(FRONT_MIN - 10.53) < 1e-9);
+  assert.equal(FRONT_WANT, FRONT_MIN + 1);
+  assert.equal(C.jack.r, JACK_R);
+  assert.equal(JACK_END_MARGIN, 0.5);
+  for (const dir of [1, -1]) {
+    for (let y = 1; y <= 14; y += 0.05) {
+      const n = nextCircle({ x: 2, y }, dir);
+      const g = { circle: { x: n.circle.x, y: n.circle.y }, dir: n.dir };
+      const gap = jackGap({ x: n.circle.x, y: n.circle.y + n.dir * (10 + K) }, g);
+      assert.ok(Math.abs(gap - 10) < 1e-9);
+      assert.ok(jackValid({ x: n.circle.x, y: n.circle.y + n.dir * (10 + K) }, g), `ring y ${n.circle.y} dir ${n.dir}: a 10 m jack is valid (front ${n.front})`);
+    }
+  }
+  // just under the minimum front is moved back; exactly the minimum is left alone
+  const keep = nextCircle({ x: 2, y: FRONT_MIN + CIRCLE_R }, 1); // toward y = 0 with exactly FRONT_MIN in front
+  assert.ok(!keep.moved);
+  assert.ok(nextCircle({ x: 2, y: FRONT_MIN + CIRCLE_R - 0.01 }, 1).moved);
 });

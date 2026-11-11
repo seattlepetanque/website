@@ -2,7 +2,7 @@
 // createAmbient(ctx, dest) -> { setActive(bool), audition(name) }. Never throws; without a context it is a no-op.
 // Events are scheduled a few seconds ahead on the audio clock (a 0.4 s timer tops up), so a suspended
 // context (game paused) simply stops everything. One shared looped noise buffer; voices are capped.
-import { createAmbientSchedule, PHRASES, CHORDS, midiHz, phraseBars, phraseDuration, accordionEnvelope } from './ambient-schedule.js';
+import { createAmbientSchedule } from './ambient-schedule.js';
 
 export const AMBIENT = {
   level: 0.10, // the whole ambience bus (linear, into the game master). Boule knocks peak ~0.3-1 there.
@@ -16,21 +16,9 @@ export const AMBIENT = {
   plane: { every: [120, 300], first: [50, 130], dur: [22, 30], gain: 0.9, tone: 0.1 },
   // F19 floatplane engine: sawtooth + detuned octave + sub square through a low-pass, a rasp of band-passed noise and a
   // firing-rate tremolo; revs 0..1 move the pitch (hz) and brightness. `gain` is the peak at level 1.
-  // F66 (UNVERIFIED BY EAR: tune these). Rare events are scheduled by ambient-schedule.js (gaps, phrases and notes live there).
+  // F66 (UNVERIFIED BY EAR: tune these). Rare events are scheduled by ambient-schedule.js (gaps live there).
   // Gains are peaks into the ambience bus (level 0.10), quickGain scales everything in quick mode.
   quickGain: 0.5,
-  // F-far: a much more distant, quieter phrase (two passes, ~14-21 s) that fades in slowly, breathes while it plays,
-  // and fades out over a long tail that rings out through the echo.
-  accordion: { fadeIn: 6, fadeOut: 7, // s: smoothstep fade in / out of the whole piece
-    swellPeriod: 6, swellDepth: 0.45, // s, and depth: the loudness drifts between 1 and 1 - swellDepth (55%..100%)
-    gain: 0.18, lowpass: 1400, // master peak (linear) and low-pass cutoff (Hz): far away and dull
-    melody: 0.5, chord: 0.22, bass: 0.3, // per-part mix before the master `gain`
-    detune: [-9, 0, 8], // cents of the 3 melody reeds (sawtooth, square, sawtooth)
-    vibratoHz: 5.4, vibratoCents: 7, tremoloHz: 6.2, tremoloDepth: 0.18, // LFOs
-    hpf: 450, // thin reedy tone (high-pass, Hz)
-    attack: 0.035, release: 0.07, legato: 0.92, // bellows envelope per melody note (s, fraction of the note held)
-    echo: { time: 0.31, feedback: 0.5, lpf: 1500, wet: 0.75, dry: 0.5 }, // street reverb: wet well above dry, long ring-out
-  },
   cicada: { gain: 0.07, q: 7, amHz: [34, 46], amDepth: 0.55, sweep: 300, fade: 0.4 }, // fade = fraction of dur used for rise and for fall
   bell: { gain: 0.5, hz: [262, 349], lpf: 1700, decay: 4.2, // fundamental range (Hz); decay = s of the prime
     // [freq ratio, amplitude, decay scale] inharmonic partials of a church bell (hum, prime, tierce, quint, nominal, ...)
@@ -284,8 +272,8 @@ export function createAmbient(ctx, dest) {
   }
 
 
-  // ---- F66: distant musette accordion, cicada swell, church bell ----
-  // Shared: a feedback delay with a low-pass in the loop (a cheap street-reverb) mixed in parallel with the dry path.
+  // ---- F66: cicada swell, church bell ----
+  // Echo: a feedback delay with a low-pass in the loop (a cheap street-reverb) mixed in parallel with the dry path.
   function echoSend(src, out, E, dryGain) {
     const dry = ctx.createGain(), dl = ctx.createDelay(1), fb = ctx.createGain(), lp = ctx.createBiquadFilter(), wet = ctx.createGain();
     dry.gain.value = dryGain; dl.delayTime.value = E.time; fb.gain.value = E.feedback; wet.gain.value = E.wet;
@@ -295,71 +283,6 @@ export function createAmbient(ctx, dest) {
     return [dry, dl, fb, lp, wet];
   }
   const cleanup = (nodes, at) => setTimeout(() => { for (const n of nodes) { try { n.disconnect(); } catch (e) { /* ignore */ } } }, Math.max(0, (at - ctx.currentTime) * 1000) + 500);
-
-  function accordion(t, out, ev, vol) {
-    const X = A.accordion, ph = PHRASES[ev.variant], beat = 60 / ph.bpm, bars = phraseBars(ev.variant);
-    const dur = phraseDuration(ev.variant), total = dur + X.fadeOut; // total = audible span incl. the fade-out
-    const env = ctx.createGain(), pan = panner(ev.pan || 0), mix = ctx.createGain();
-    // whole-piece envelope (fade in, breathing swell, fade out) sampled from the pure shape in ambient-schedule.js
-    const shape = { duration: total, fadeIn: X.fadeIn, fadeOut: X.fadeOut, swellPeriod: X.swellPeriod, swellDepth: X.swellDepth };
-    const N = Math.ceil(total / 0.05), curve = new Float32Array(N + 1);
-    for (let i = 0; i <= N; i++) curve[i] = X.gain * vol * accordionEnvelope(i * total / N, shape);
-    env.gain.value = 0;
-    env.gain.setValueCurveAtTime(curve, t, total);
-    const hp = ctx.createBiquadFilter(), lp = ctx.createBiquadFilter(), trem = ctx.createGain();
-    hp.type = 'highpass'; hp.frequency.value = X.hpf; lp.type = 'lowpass'; lp.frequency.value = X.lowpass; lp.Q.value = 0.6;
-    trem.gain.value = 1 - X.tremoloDepth / 2;
-    mix.connect(hp).connect(lp).connect(trem).connect(env);
-    const stopAt = t + total + 1.5, nodes = [env, pan, mix, hp, lp, trem];
-    const tl = ctx.createOscillator(), tg = ctx.createGain();
-    tl.frequency.value = X.tremoloHz; tg.gain.value = X.tremoloDepth / 2; tl.connect(tg).connect(trem.gain); tl.start(t); tl.stop(stopAt);
-    // melody: 3 detuned reeds -> bellows envelope; one vibrato LFO moves all their detune
-    const menv = ctx.createGain(); menv.gain.setValueAtTime(0.0001, t);
-    const reeds = X.detune.map((c, i) => {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.type = i === 1 ? 'square' : 'sawtooth'; o.detune.value = c; g.gain.value = i === 1 ? 0.18 : 0.33;
-      o.connect(g).connect(menv); o.start(t); o.stop(stopAt);
-      return o;
-    });
-    const vl = ctx.createOscillator(), vg = ctx.createGain();
-    vl.frequency.value = X.vibratoHz; vg.gain.value = X.vibratoCents; vl.connect(vg);
-    for (const o of reeds) vg.connect(o.detune);
-    vl.start(t); vl.stop(stopAt);
-    menv.connect(mix);
-    // chord reeds (4) and bass reed: oom (bass, beat 1) pah (chord, beats 2 and 3)
-    const cenv = ctx.createGain(), benv = ctx.createGain();
-    cenv.gain.setValueAtTime(0.0001, t); benv.gain.setValueAtTime(0.0001, t);
-    const chordOs = [0, 1, 2, 3].map((i) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sawtooth'; o.detune.value = (i - 1.5) * 5; g.gain.value = 0.22; o.connect(g).connect(cenv); o.start(t); o.stop(stopAt); return o; });
-    const bo = ctx.createOscillator(), bg = ctx.createGain(); bo.type = 'sawtooth'; bg.gain.value = 0.5; bo.connect(bg).connect(benv); bo.start(t); bo.stop(stopAt);
-    cenv.connect(mix); benv.connect(mix);
-    const att = X.attack, rel = X.release;
-    const pulse = (g, at, len, peak) => { // short bellows puff
-      g.gain.setValueAtTime(0.0001, at); g.gain.linearRampToValueAtTime(peak, at + att);
-      g.gain.setValueAtTime(peak * 0.8, at + len - rel); g.gain.linearRampToValueAtTime(0.0001, at + len);
-    };
-    bars.forEach(([chord, mel], b) => {
-      const bt = t + b * 3 * beat, C = CHORDS[chord];
-      bo.frequency.setValueAtTime(midiHz(C.bass), bt);
-      for (let i = 0; i < 4; i++) chordOs[i].frequency.setValueAtTime(midiHz(C.notes[i % C.notes.length] + (i === 3 ? 12 : 0)), bt);
-      pulse(benv, bt, beat * 0.9, X.bass);
-      pulse(cenv, bt + beat, beat * 0.55, X.chord);
-      pulse(cenv, bt + 2 * beat, beat * 0.55, X.chord);
-      let at = bt;
-      for (const [m, bts] of mel) {
-        const len = bts * beat;
-        if (m != null) {
-          for (const o of reeds) o.frequency.setValueAtTime(midiHz(m), at);
-          pulse(menv, at, len * X.legato, X.melody);
-        }
-        at += len;
-      }
-    });
-    // the echo is fed from the faded envelope but returns straight to the panner, so its tail rings out after the fade
-    const echo = echoSend(env, pan, X.echo, X.echo.dry);
-    pan.connect(out);
-    cleanup([...nodes, ...echo], t + total + 4);
-    return total;
-  }
 
   // Cicada: noise -> narrow band-pass around 4-6 kHz -> fast AM (a buzzing shimmer), rising and falling over `dur`.
   function cicada(t, out, ev, vol) {
@@ -400,7 +323,7 @@ export function createAmbient(ctx, dest) {
     cleanup([mix, lp, master, pan], stopAt);
     return ev.dur;
   }
-  const EVENTS = { accordion, cicada, bell };
+  const EVENTS = { cicada, bell };
   function runEvent(ev, t, out, vol) { try { return EVENTS[ev.kind](t, out, ev, vol); } catch (e) { return 0; } }
 
   // ---- scheduler ----
@@ -419,7 +342,7 @@ export function createAmbient(ctx, dest) {
       }
       if (nextPlane < now) nextPlane = now + rr(A.plane.first);
       if (nextPlane < horizon && planeEnd < nextPlane) { plane(nextPlane, bus); nextPlane += rr(A.plane.every) + rr(A.plane.dur); }
-      // F66: rare accordion / bell / cicada events (pure scheduling in ambient-schedule.js; paused time never counts)
+      // F66: rare bell / cicada events (pure scheduling in ambient-schedule.js; paused time never counts)
       const loud = engLevel > 0.12 || planeEnd > now;
       const ev = sched.tick(now, { busy: ctl.busy, loud, slow: ctl.slow });
       if (ev) runEvent(ev, now + 0.15, bus, ctl.slow ? 1 : A.quickGain);
@@ -466,8 +389,6 @@ export function createAmbient(ctx, dest) {
           c.set(t + k * 10, Math.pow(1 - Math.max(0, k - 0.5) * 1.6, 1.5) * (0.5 + 0.5 * Math.min(1, k * 3)), -0.7 + 1.5 * k, rev, Math.max(0, k - 0.4), 0.15);
         }
         c.stop(t + 10.5);
-      } else if (name === 'accordion') {
-        runEvent({ kind: 'accordion', variant: Math.floor(Math.random() * PHRASES.length), pan: 0.3 }, t, audBus, 1);
       } else if (name === 'cicada') { // 12 s swell
         runEvent({ kind: 'cicada', dur: 12, pan: -0.3, hz: 4800 }, t, audBus, 1);
       } else if (name === 'bell') {

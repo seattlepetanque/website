@@ -47,6 +47,10 @@ buildFuture = true
     pageRef = "/blog"
     weight = 30
   [[menus.main]]
+    name = "Play"
+    pageRef = "/game"
+    weight = 35
+  [[menus.main]]
     name = "Links"
     pageRef = "/links"
     weight = 40

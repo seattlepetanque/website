@@ -8,7 +8,7 @@ import { createTerrain } from './terrain.js';
 import { createWorld, createBody, launch, placeDeadBall, deadRowSlot, deadJackSpot } from './physics.js';
 import { createRenderer } from './render.js';
 import {
-  createMatch, defaultPlayers, teamNamesFor, validPartner, opponentIds, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm, deadJackText,
+  createMatch, defaultPlayers, teamNamesFor, validPartner, opponentIds, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm, deadJackText, jackGap, jackTooClose, TIE_EPS,
 } from './rules.js';
 import { detectAnnouncement } from './announce.js';
 import { createAnnouncer } from './announce-view.js';
@@ -21,6 +21,7 @@ import {
 } from './donnee.js';
 import { createAudio } from './audio.js';
 import { createClock } from './clock.js';
+import { createDrift, REDUCED_PROGRESS } from './daylight.js'; // F71
 import * as THREE from '../vendor/three.module.js';
 import { createCharacter, releaseOffset, bendReach } from './character.js';
 import { planRoute, standPoint, pathLength } from './fetch.js';
@@ -37,7 +38,10 @@ const AIM_MAX = 0.6; // rad of aim either side of straight ahead
 const MAX_STEPS = 24; // physics steps per frame; backlog beyond this is dropped
 const DEG = Math.PI / 180;
 const params = new URLSearchParams(location.search);
-const debug = params.has('debug');
+// F84: `debug` is not declared here. Hugo's js.Build defines it: the literal false in a production build (esbuild then
+// drops every `debug && ...` / `if (debug)` branch with its strings), and globalThis.__dbg under `hugo server` and
+// development builds, where it is set from ?debug just below. The set-up code is itself dropped in production.
+if (globalThis.__DEBUG__ !== false) globalThis.__dbg = params.has('debug');
 const modelTimeout = +params.get('modeltimeout') || 5000; // ms; ?modeltimeout=600000 for virtual-time screenshots
 const useMeshes = params.get('figures') === 'mesh'; // stick figures by default; ?figures=mesh loads the Kenney models (opt-in; ?figures=stick is the same as the default)
 const AI_MIN_THINK = 800; // ms: the AI never answers faster than this
@@ -158,10 +162,10 @@ function boot() {
   }
   let thinkToken = 0; // bumped to drop stale partner-suggestion results
   let pierreChoice = null; // cached AI choice for Pierre while the chooser is open
-  const pickHuman = params.get('humanturn'); // debug: stop at the human's first boule (or 'chooser')
+  const pickHuman = debug ? params.get('humanturn') : null; // debug: stop at the human's first boule (or 'chooser')
 
-  // Controls (F32): a hamburger menu (Mode, TEMP demo buttons) top right; F48 hold-to-use view icons (pan, read the ground, overhead) under it; speaker,
-  // fullscreen and pause icons bottom right; Resume / New game / End game on the paused bar; no raw sliders
+  // Controls (F32): F48 hold-to-use view icons (pan, read the ground, overhead) top right; speaker,
+  // fullscreen and pause icons bottom right; Resume / New game / End game and the Mode (Slow / Quick) choice on the paused card; no raw sliders
   controls.textContent = '';
   const mkBtn = (parent, text, cls) => {
     const b = document.createElement('button');
@@ -169,8 +173,6 @@ function boot() {
     parent.append(b);
     return b;
   };
-  const bar = document.createElement('div');
-  bar.className = 'pc-bar';
   // F05 "Read the ground": slope arrows and a firmness wash, human turn only, shown while its icon is held (F48), can be disabled in settings
   const gv = createGroundView(terrain, { phone: isPhone(), reduced: () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) });
   renderer.addObject(gv.object);
@@ -180,71 +182,6 @@ function boot() {
     gv.setVisible(avail && gvOn);
     gv.update(dt);
   };
-  const modeBtn = mkBtn(bar, '', 'pc-mode'); // E01: Quick / Slow
-  const syncModeBtn = () => {
-    modeBtn.textContent = 'Mode: ' + (settings.mode === 'quick' ? 'Quick' : 'Slow');
-    modeBtn.title = 'Quick: no walking. Slow: people walk. Click to switch.';
-  };
-  syncModeBtn();
-  modeBtn.addEventListener('click', () => { settings.mode = settings.mode === 'quick' ? 'slow' : 'quick'; });
-  settings.onChange(syncModeBtn);
-  // TEMP F29: remove after review. Floatplane landing on demand, in the background with no camera change.
-  const landingBtn = mkBtn(bar, '✈ Landing', 'pc-landing');
-  landingBtn.setAttribute('aria-label', 'Start a floatplane landing');
-  landingBtn.title = 'Watch the floatplane come in to land (temporary)';
-  landingBtn.addEventListener('click', () => {
-    const fp = renderer.floatplane;
-    if (fp.active) return; // one plane at a time
-    fp.trigger('landing');
-  });
-  // END TEMP F29
-  // TEMP F36: remove after review. Floatplane takeoff from the lake on demand, ambient like the landing button.
-  const takeoffBtn = mkBtn(bar, '✈ Takeoff', 'pc-takeoff');
-  takeoffBtn.setAttribute('aria-label', 'Start a floatplane takeoff');
-  takeoffBtn.title = 'Watch the floatplane take off from the lake (temporary)';
-  takeoffBtn.addEventListener('click', () => {
-    const fp = renderer.floatplane;
-    if (fp.active) return; // one plane at a time
-    fp.trigger('takeoff');
-  });
-  // END TEMP F36
-  // F32 hamburger menu: every option button (Mode, the demo buttons; built above straight into the bar) moves into one dropdown. Enter, Space,
-  // click or ArrowDown opens it; arrows, Home and End move; Esc or Tab close it (Esc returns focus to the button);
-  // an outside press closes it.
-  const menuPanel = document.createElement('div');
-  menuPanel.className = 'pc-menu'; menuPanel.id = 'pc-menu'; menuPanel.setAttribute('role', 'menu'); menuPanel.setAttribute('aria-label', 'Game options');
-  menuPanel.hidden = true;
-  const menuItems = [...bar.querySelectorAll(':scope > button')];
-  const STAY_OPEN = new Set([modeBtn]); // the others close the menu so the court is clear
-  for (const it of menuItems) { it.setAttribute('role', 'menuitem'); it.tabIndex = -1; it.classList.add('pc-menu-item'); }
-  menuPanel.append(...menuItems);
-  const menuBtn = mkBtn(bar, '', 'pc-menu-btn');
-  menuBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
-  menuBtn.setAttribute('aria-label', 'Game options'); menuBtn.title = 'Game options';
-  menuBtn.setAttribute('aria-haspopup', 'menu'); menuBtn.setAttribute('aria-expanded', 'false'); menuBtn.setAttribute('aria-controls', 'pc-menu');
-  bar.append(menuPanel);
-  const liveItems = () => menuItems.filter((n) => !n.hidden && !n.disabled);
-  function setMenu(open, focus) {
-    menuPanel.hidden = !open;
-    menuBtn.setAttribute('aria-expanded', String(open));
-    if (open) { const f = liveItems(); if (focus === 'last') f[f.length - 1]?.focus(); else f[0]?.focus(); }
-    else if (focus === 'button') menuBtn.focus();
-  }
-  menuBtn.addEventListener('click', () => setMenu(menuPanel.hidden, menuPanel.hidden ? 'first' : 'button'));
-  menuBtn.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setMenu(true, 'first'); } else if (e.key === 'ArrowUp') { e.preventDefault(); setMenu(true, 'last'); }
-  });
-  menuPanel.addEventListener('keydown', (e) => {
-    const f = liveItems(), i = f.indexOf(document.activeElement);
-    if (e.key === 'Escape') { e.preventDefault(); setMenu(false, 'button'); } // preventDefault keeps Esc from also pausing
-    else if (e.key === 'Tab') setMenu(false);
-    else if (e.key === 'ArrowDown') { e.preventDefault(); f[(i + 1) % f.length]?.focus(); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); f[(i - 1 + f.length) % f.length]?.focus(); }
-    else if (e.key === 'Home') { e.preventDefault(); f[0]?.focus(); }
-    else if (e.key === 'End') { e.preventDefault(); f[f.length - 1]?.focus(); }
-  });
-  menuPanel.addEventListener('click', (e) => { const it = e.target.closest('.pc-menu-item'); if (it && !STAY_OPEN.has(it)) setMenu(false, 'button'); });
-  document.addEventListener('pointerdown', (e) => { if (!menuPanel.hidden && !bar.contains(e.target)) setMenu(false); });
   // E14/F32: the bottom-right icon cluster holds the speaker (mute), the fullscreen toggle (desktop only) and pause
   const corner = document.createElement('div');
   corner.className = 'pc-corner';
@@ -258,7 +195,7 @@ function boot() {
   exitBtn.title = 'Pause (Esc)';
   corner.append(muteBtn, fsBtn, exitBtn);
   root.append(corner);
-  // F48: Adjust view, Read the ground and View (overhead) are translucent press-and-hold icons under the hamburger button.
+  // F48: Adjust view, Read the ground and View (overhead) are translucent press-and-hold icons at the top right.
   const holdSvg = (inner) => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
   const holds = createHoldIcons([
     { cls: 'pc-pan', label: 'Adjust view: hold to pan up, down, left or right', title: 'Hold the arrows to look around the thrower (or hold Space, then use the arrow keys)',
@@ -274,7 +211,6 @@ function boot() {
   root.append(holds.el);
   holds.buttons[1].hidden = !settings.groundView; // the hidden kill switch for slow devices (localStorage petanque-groundview=off)
   root.append(gv.legend);
-  controls.append(bar);
   if (debug && params.has('sounds')) {
     // ?debug&sounds panel sits in a collapsible drawer: below the game on the page, an overlay while playing
     const drawer = document.createElement('details');
@@ -296,7 +232,7 @@ function boot() {
     for (const [label, name, p] of SOUNDS) {
       mkBtn(panel, label, 'pc-sound').addEventListener('click', () => { audio.unlock(); audio.play(name, p); });
     }
-    for (const [label, name] of [['Ambience: bird', 'bird'], ['Ambience: breeze swell', 'breeze'], ['Ambience: airplane (25 s)', 'plane'], ['Ambience: floatplane engine (10 s)', 'floatplane'], ['Ambience: musette accordion (~20-28 s, fades)', 'accordion'], ['Ambience: church bell (4 strikes)', 'bell'], ['Ambience: cicada (12 s)', 'cicada']]) {
+    for (const [label, name] of [['Ambience: bird', 'bird'], ['Ambience: breeze swell', 'breeze'], ['Ambience: airplane (25 s)', 'plane'], ['Ambience: floatplane engine (10 s)', 'floatplane'], ['Ambience: church bell (4 strikes)', 'bell'], ['Ambience: cicada (12 s)', 'cicada']]) {
       mkBtn(panel, label, 'pc-sound').addEventListener('click', () => audio.playAmbient(name));
     }
     drawer.append(panel);
@@ -735,7 +671,7 @@ function boot() {
   // Per frame: animate, keep feet on the terrain, everyone watches the boule in flight (or the jack)
   function tickCast(dt) {
     if (frozen || holdSim) return; // F55: holdSim: the sim waits for the click on Next mène (players and idle fidgets stand still)
-    if (fetchScript || f02Script) { // ?debug&fetch: fixed steps; with &fetchat the animation is pumped synchronously (headless frames are too few)
+    if (debug && (fetchScript || f02Script)) { // ?debug&fetch: fixed steps; with &fetchat the animation is pumped synchronously (headless frames are too few)
       if (fetchFreezeAt && !fetchPump) return;
       dt = 1 / 60; clock.tick(1000 / 60);
     }
@@ -950,7 +886,9 @@ function boot() {
     if (debug && params.has('topcam')) hud.hideOverlay();
   }
 
+  const golden = createDrift(), goldenParam = debug && params.has('golden') ? Math.max(0, Math.min(1, +params.get('golden') || 0)) : null; // F71 (?debug&golden=0..1 fixes it)
   function startGame(opts) {
+    golden.reset(); // F71
     userPaused = false;
     token++; thinkToken++; pierreChoice = null; wideHold = false;
     difficulty = opts.difficulty || 'medium';
@@ -985,7 +923,7 @@ function boot() {
     refreshHud({ team, playerId: thrower.id, text: `${thrower.isHuman ? 'You' : thrower.name} throw${thrower.isHuman ? '' : 's'} the jack` });
     aimView();
     if (thrower.isHuman) {
-      humanTurn('jack', thrower.id, lead + 'Your jack. Aim, then toss it onto the court between the two yellow lines (6 to 10 metres out). It rolls on after landing: aim so the orange dashes end inside the zone.');
+      humanTurn('jack', thrower.id, lead + 'Your jack. Aim, then toss it onto the court between the two yellow lines (6 to 10 metres from the edge of the circle). It rolls on after landing: aim so the orange dashes end inside the zone.');
     } else {
       aiJack(thrower, lead).catch((err) => console.error(err));
     }
@@ -1025,7 +963,7 @@ function boot() {
     if (debug && params.has('holdhead')) setView('head'); // ?debug&humanturn&holdhead: the overhead view as while its icon is held (screenshots)
     say2(text);
     if (pickHuman !== null || store(HINT_KEY) !== '1') hud.showHint(HINT_TEXT);
-    if (demo) { // ?debug&humanturn&demo: a scripted toss preview for screenshots
+    if (debug && demo) { // ?debug&humanturn&demo: a scripted toss preview for screenshots
       // &loft=15 (degrees), &dist=7 (m ahead of the circle), &dx=0.9 (m across), &tir (snap onto the jack)
       const jb = jackBody();
       const tir = params.has('tir') && jb;
@@ -1103,12 +1041,12 @@ function boot() {
     else tryFullscreen();
   });
   exitBtn.hidden = true;
-  function pauseGame() { if (!playing || !match || userPaused) return; setMenu(false); userPaused = true; syncPausedUI(); }
+  function pauseGame() { if (!playing || !match || userPaused) return; userPaused = true; syncPausedUI(); }
   function resumeGame() { userPaused = false; if (playing) { syncPausedUI(); if (exitBtn.offsetParent) exitBtn.focus(); } else setPlaying(true); }
   function endGame() { userPaused = false; setPlaying(false); } // leaves the full-window view; the page keeps Resume and New game
   exitBtn.addEventListener('click', pauseGame);
   window.addEventListener('keydown', (e) => {
-    // Esc pauses (and resumes while paused), unless the browser is in fullscreen (it handles that Esc) or a menu or toss used the key
+    // Esc pauses (and resumes while paused), unless the browser is in fullscreen (it handles that Esc) or a toss used the key
     if (e.key !== 'Escape' || !playing || e.defaultPrevented || document.fullscreenElement) return;
     if (userPaused) resumeGame(); else pauseGame();
   });
@@ -1140,7 +1078,7 @@ function boot() {
   const ailog = debug && params.has('ailog');
   let aiLogRec = null;
   function aiLogPlan(player, choice) {
-    if (!ailog || !choice.from) return;
+    if (!debug || !ailog || !choice.from) return;
     const hand = handFrom(player.id, choice.loft, aiYaw), j = jackBody();
     aiLogRec = {
       player: player.id, difficulty, intent: choice.intent, style: choice.style, loftDeg: +(choice.loft * 180 / Math.PI).toFixed(1),
@@ -1152,7 +1090,7 @@ function boot() {
     };
   }
   function aiLogResult(was) {
-    if (!aiLogRec || !was || was.kind !== 'boule') return;
+    if (!debug || !aiLogRec || !was || was.kind !== 'boule') return;
     const j = jackBody(), rec = aiLogRec;
     aiLogRec = null;
     console.log('[ailog]', JSON.stringify({ ...rec, restY: +((was.y - court.circle.y) * court.dir).toFixed(2), dead: was.dead, toJackM: j && !was.dead ? +Math.hypot(was.x - j.x, was.y - j.y).toFixed(2) : null }));
@@ -1198,7 +1136,7 @@ function boot() {
     const showArc = debug && params.has('aispot'); // the arc, cone, donnée and legal zone stay hidden from players (D18)
     renderer.setThrowPreview(null);
     renderer.showJackZone(false);
-    if (showArc) {
+    if (debug && showArc) {
       const skill = scaledSkill(SKILL[player.id] || SKILL.human, difficulty);
       const cone = coneFor({ skill, from, landing: choice.donnee, loft: choice.loft, energyFrac: choice.energyFrac });
       const env = coneEnvelope({ from, landing: choice.donnee, loft: choice.loft, cone, terrain: world.terrain });
@@ -1467,7 +1405,7 @@ function boot() {
   }
   // The head camera follows the fetch loosely: it frames the fetcher and where they are going (never over an aim)
   function fetchCam(job, ids, spots = []) {
-    if (pending || flying || job.jack || !fetchAlive(job) || (job.scripted && !params.has('fetchcam'))) return;
+    if (pending || flying || job.jack || !fetchAlive(job) || (job.scripted && !(debug && params.has('fetchcam')))) return;
     const pts = ids.map((i) => cast.get(i).root.position).concat(spots).map((q) => ({ x: q.x, y: q.y }));
     const cx = pts.reduce((s, q) => s + q.x, 0) / pts.length, cy = pts.reduce((s, q) => s + q.y, 0) / pts.length;
     if (observing()) { observerView(pts); return; }
@@ -1704,8 +1642,11 @@ function boot() {
     gateSince = 0;
   }
   // E01: switching to quick mid-game finishes any walk in progress at once (switching to slow starts at the next action)
-  settings.onChange((m) => {
-    if (m !== 'quick' || !match) return;
+  // F32: the Mode choice lives on the pause card; switching to quick while paused is applied on Resume (the cast is frozen meanwhile)
+  let quickPending = false;
+  function applyQuick() {
+    quickPending = false;
+    if (!match) return;
     if (placing) skipPlacement();
     const fj = fetchJob, jf = jackFetch;
     if (fj) { cancelFetch(); if (!fj.jack || !jf) sendHome(fj.id); }
@@ -1715,7 +1656,8 @@ function boot() {
     if (deadTargets().length) dropAllDead();
     for (const [id, ch] of cast) if (id !== inCircle && ch.busy && !(carry && carry.id === id)) sendHome(id);
     gateSince = 0;
-  });
+  }
+  settings.onChange((m) => { if (m !== 'quick') { quickPending = false; return; } if (isPaused()) quickPending = true; else applyQuick(); });
   const skipEvent = (ev) => {
     if (holdSim && !isPaused() && (ev.type === 'pointerdown' || ev.key === 'Enter' || ev.key === ' ')) { nextMene(); return; } // F56: a click or key at the outcome view is Next
     if (isPaused()) return; // a drag to orbit the paused scene (or Esc) is not a skip
@@ -1801,7 +1743,8 @@ function boot() {
     const j = jackBody();
     lastKind = null;
     if (j && j.dead) return 'The jack is out: dead jack.';
-    if (was.kind === 'jack') return `Jack is ${Math.hypot(was.x - court.circle.x, was.y - court.circle.y).toFixed(1)} m out.`;
+    if (was.kind === 'jack') return `Jack is ${jackGap(was, match && match.geometry).toFixed(1)} m out.`; // F75: edge to edge
+    if (j && match && jackTooClose(j, match.geometry)) return 'The jack is too close: less than 3 m from the circle, dead jack.'; // F76, Art. 9.3
     if (was.dead) lastKind = 'dead';
     if (was.dead) return `${ownerName(was)} boule is out: dead boule.`;
     const gap = Math.hypot(was.x - j.x, was.y - j.y) - was.r - j.r;
@@ -1889,7 +1832,7 @@ function boot() {
       say2(`${why} ${TEAM_NAMES[placing]} place the cochonnet.`);
       later(() => aiPlaceJack(why).catch((err) => console.error(err)), 1300);
     } else {
-      say2(`${why} You and ${PERSONALITIES[partner].name} place the cochonnet: click a green spot between the yellow arcs (6 to 10 m out).`);
+      say2(`${why} You and ${PERSONALITIES[partner].name} place the cochonnet: click a green spot between the yellow arcs (6 to 10 m from the edge of the circle).`);
       later(() => humanPlaceJack(), 1300);
       if (debug && params.has('px')) humanPlaceMarker(); // screenshots: show the marker at once
     }
@@ -1908,6 +1851,7 @@ function boot() {
     if (debug && params.has('px')) humanPlaceMarker();
   }
   function humanPlaceMarker() { // ?debug&px=2&py=8.5: show the marker without a pointer
+    if (!debug) return;
     const p = { x: +params.get('px'), y: +params.get('py') || 8.5 };
     renderer.setPlaceMarker({ ...p, valid: jackPlaceValid(p, match.geometry) });
   }
@@ -1924,7 +1868,7 @@ function boot() {
       placeView();
       // E03: an AI's target stays hidden from players; ?debug&showtarget shows it in the aispot / jackplace=ai debug views
       const showTarget = debug && params.has('showtarget') && (params.has('aispot') || params.get('jackplace') === 'ai');
-      if (showTarget) renderer.setPlaceMarker({ x: spot.x, y: spot.y, valid: true });
+      if (debug && showTarget) renderer.setPlaceMarker({ x: spot.x, y: spot.y, valid: true });
     }
     const fetched = jackFetch;
     await Promise.all([sleep(debug && params.has('jphold') ? 1e8 : 2000), fetched && fetched.ready]); // ?debug&jackplace=ai&jphold keeps the marker up for screenshots
@@ -1987,18 +1931,19 @@ function boot() {
     match = { ...match, jack: { x: j.x, y: j.y, dead: j.dead } };
     headView(j);
     const first = match.players.filter((p) => p.team === match.jackTeam && p.isHuman).length ? `You and ${PERSONALITIES[partner].name} play` : `${TEAM_NAMES[match.jackTeam]} play`;
-    say2(`Jack placed at ${Math.hypot(j.x - court.circle.x, j.y - court.circle.y).toFixed(1)} m. ${first} first.`);
+    say2(`Jack placed at ${jackGap(j, match.geometry).toFixed(1)} m. ${first} first.`);
     later(startPlay, 1400);
   }
   // ?debug&jackplace[=ai]: skip the throw and fail the jack, so the placement shows at once
   function forceInvalidJack(team) {
+    if (!debug) return;
     const spot = { x: +params.get('jx') || 2, y: +params.get('jy') || 5.2 };
     removeJack();
     world.add(createBody('jack', { team: -1, x: spot.x, y: spot.y }));
     renderer.sync(world);
     match = apply(match, { type: 'jackThrown', team, jack: spot });
     jackFailed(spot, '');
-    if (params.has('yellow')) { // ?debug&jackplace&yellow: set the jack down at once; the first rest counts as a yellow card
+    if (debug && params.has('yellow')) { // ?debug&jackplace&yellow: set the jack down at once; the first rest counts as a yellow card
       cancelFetch(); jackFetch = null; placeJack({ x: +params.get('yx') || 2, y: +params.get('yy') || 8.5 });
       for (let g = 0; flying && !world.settled() && g < 240 * C.hardCapSeconds; g++) world.step();
       if (!world.settled()) world.forceRest();
@@ -2042,6 +1987,10 @@ function boot() {
     }
     const prevHold = holdingTeam(match.jack, match.boules);
     match = apply(match, { type: 'throwSettled', jack: snap.jack, boules: snap.boules });
+    { // F76: the rules judged a jack knocked to less than 3 m from the circle dead: show it dead too (fetch and ring follow the dead-jack flow)
+      const jb = jackBody();
+      if (match.jack && match.jack.dead && jb && !jb.dead) placeDeadBall(world, jb, jb.x, jb.y);
+    }
     if (match.phase === 'meneEnd' || match.phase === 'gameOver') {
       cancelFetch();
       endOfMene(note);
@@ -2115,15 +2064,15 @@ function boot() {
       const live = world.bodies.filter((b) => b.kind === 'boule' && !b.dead);
       const near = [0, 1].map((t) => live.filter((b) => b.team === t)
         .reduce((m, b) => Math.min(m, Math.hypot(b.x - j.x, b.y - j.y)), Infinity));
-      if (jackOut && r.inHand) note = deadJackText(r.inHand, TEAM_NAMES); // F13: from the boules in hand when it went dead
+      if (jackOut && r.inHand) note = deadJackText(r.inHand, TEAM_NAMES, r.jackReason); // F13: from the boules in hand when it went dead
       else if (!live.length) note = 'No live boules on the court: mène void.';
-      else if (Math.abs(near[0] - near[1]) <= 0.002) note = 'The closest boules of each team are the same distance from the cochonnet: mène void.';
+      else if (Math.abs(near[0] - near[1]) <= TIE_EPS) note = 'The closest boules of each team are the same distance from the cochonnet: mène void.';
       else { note = 'Mène void.'; console.warn('[void mène] no reason found: please report this with the details below'); }
       console.info('[void mène]', { jackDead: !!(j && j.dead), jackAt: j && { x: +j.x.toFixed(3), y: +j.y.toFixed(3) },
         liveBoules: live.length, closest: near.map((d) => (Number.isFinite(d) ? +d.toFixed(4) : null)),
         matchJack: match.jack, inHand: match.players.map((p) => `${p.id}:${p.boulesLeft}`).join(' ') });
     }
-    else if (jackOut && r.inHand) note = deadJackText(r.inHand, TEAM_NAMES); // F13: dead jack, one team holds boules
+    else if (jackOut && r.inHand) note = deadJackText(r.inHand, TEAM_NAMES, r.jackReason); // F13: dead jack, one team holds boules
     else if (!jackOut && !r.void && r.measured && r.measured.length) {
       // report the winning boule's gap, the figure on its measuring label
       const win = world.bodies.find((b) => b.id === r.measured[0].id);
@@ -2133,7 +2082,7 @@ function boot() {
     refreshHud(null);
     // F56: in a slow mène the outcome view and the card wait for the click (the sim clock is held); the ring, jack return, gathering and
     // collecting then start from nextMene (startMeneEndWork). Otherwise (quick, instant, game over) they start now.
-    const hold = slow() && match.phase === 'meneEnd' && !(instant && !params.has('meneend'));
+    const hold = slow() && match.phase === 'meneEnd' && !(instant && !(debug && params.has('meneend')));
     const winTeam = r.void ? null : r.team, workTok = token;
     meneEndWork = () => {
       if (workTok !== token || !match || (match.phase !== 'meneEnd' && match.phase !== 'gameOver')) return;
@@ -2172,14 +2121,14 @@ function boot() {
       const card = root.querySelector('.pt-overlay.pt-mene-end .pt-card');
       // F62: measured from the DOM now and on every resize: the top score bar, the card, and the right-hand icon cluster
       const vis = (n) => { const r = n.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(n).visibility !== 'hidden' ? rel(r) : null; };
-      const bars = [...root.querySelectorAll('.pt-board, .pc-bar')].map(vis).filter(Boolean);
+      const bars = [...root.querySelectorAll('.pt-board')].map(vis).filter(Boolean);
       const cr = card ? rel(card.getBoundingClientRect()) : null;
-      const icons = [...root.querySelectorAll('button, .pc-corner')].filter((n) => !(card && card.contains(n)) && !n.closest('.pc-menu, .pt-overlay')).map(vis).filter(Boolean);
+      const icons = [...root.querySelectorAll('button, .pc-corner')].filter((n) => !(card && card.contains(n)) && !n.closest('.pt-overlay, .pt-paused')).map(vis).filter(Boolean);
       const free = freeViewRect({ W: cv.width, H: cv.height, bars, card: cr, icons });
       return { free, card: cr };
     });
     if (hold) holdSim = true, clock.pause(); // F56: the camera is on the outcome view and the card is up: the sim waits for the click
-    if (instant && !params.has('meneend')) later(() => nextMene(), 0);
+    if (instant && !(debug && params.has('meneend'))) later(() => nextMene(), 0);
   }
 
   // F56: the score card and Next mène show as soon as the outcome view is up and the sim clock pauses (holdSim: no sepia, no pause card;
@@ -2376,7 +2325,6 @@ function boot() {
   // later), physics, characters, camera transitions and audio; the scene goes sepia with a free orbit camera, and the
   // game widgets (not the page's paused bar) go sepia and inert. ?debug&paused holds off until the human's turn.
   let pauseHold = debug && params.has('paused');
-  if (debug && params.has('menu')) setTimeout(() => setMenu(true), 2500); // ?debug&play&humanturn&menu: screenshot with the options menu open
   const isPaused = () => !pauseHold && (!playing || userPaused) && !!match;
   let pausedNow = false, tossPhase = 'off', pausedTok = 0;
   function syncPause() {
@@ -2388,6 +2336,7 @@ function boot() {
     if (p) { clock.pause(); pausedTok = token; tossPhase = toss.getPhase() === 'toss' ? 'aim' : toss.getPhase(); toss.setPhase('off'); } else { if (!holdSim) clock.resume(); toss.setPhase(pausedTok === token ? tossPhase : 'off'); } // a New game while paused leaves the toss off
     audio.setPaused(p);
     renderer.setPaused(p);
+    if (!p && quickPending && settings.mode === 'quick') applyQuick();
   }
 
   // Fixed timestep loop (?debug&timerframes drives it from timers, for headless screenshots under virtual time)
@@ -2431,12 +2380,14 @@ function boot() {
     syncGv(pausedNow ? 0 : dt);
     { // F19: the floatplane keeps game time (none while paused or between games) and feeds its engine to the ambience
       const fp = renderer.floatplane;
-      // F37: random planes are scheduled in slow mode only (quick mode: none). The demo buttons trigger directly, in either mode.
+      // F37: random planes are scheduled in slow mode only (quick mode: none).
       fp.schedule(match && !pausedNow && playing ? dt : 0, match, reduceMotion() || settings.mode !== 'slow');
       const en = fp.engine;
       audio.setAmbientState({ busy: !!(pending || flying), slow: settings.mode !== 'quick' });
+      renderer.butterflies.busy = !!(pending || flying); // F81
       audio.setEngine(en.on && !pausedNow, en.level, en.pan, en.rev, en.dist);
     }
+    renderer.setDaylight(goldenParam !== null ? goldenParam : reduceMotion() ? REDUCED_PROGRESS : golden.step(match, pausedNow || !playing ? 0 : dt)); // F71
     renderer.render(pausedNow ? 0 : dt);
     nextFrame(frame);
   }
@@ -2483,6 +2434,8 @@ function boot() {
     const jb = createBody('jack', { team: -1, x: 2.3, y: 9.2 }); jb.z = jb.r; world.add(jb);
     const lay = { small: [[0, 0.11, 0.1], [1, -0.4, 0.3], [1, 0.5, -0.5], [0, -0.7, -0.4]],
       big: [[0, 0.1, 0.08], [0, -0.12, 0.12], [0, 0.02, -0.18], [0, 0.22, -0.1], [0, -0.26, -0.05], [1, 0.0, 0.62], [1, -0.7, -0.3]],
+      far: [[0, 0.11, 0.1], [1, -0.4, 0.3], [1, 0.5, -0.5], [0, -0.7, -0.4], [0, 4, 3], [1, -5, -4], [0, 2, -6], [1, -3, 6]], // F82: scattered far-off boules must not shrink the view
+      wide: [[0, 0.5, 0.3], [0, -0.9, 0.2], [1, 1.4, -0.6], [0, 0.3, -1.0]],
       close: [[0, 0.16, 0.0], [1, -0.16 - 0.007, 0], [0, 0.6, 0.5], [1, -0.5, -0.6]] }[params.get('mescenario')] || [];
     for (const [t, dx, dy] of lay) { const b = createBody('boule', { team: t, x: 2.3 + dx, y: 9.2 + dy }); b.z = b.r; world.add(b); }
     renderer.sync(world);

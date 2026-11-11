@@ -528,7 +528,7 @@ export function createAudio(opts = {}) {
     syncAmb();
   }
 
-  // F12: audition ('bird' | 'breeze' | 'plane' | 'floatplane' | 'accordion' | 'cicada' | 'bell') ignores mute.
+  // F12: audition ('bird' | 'breeze' | 'plane' | 'floatplane' | 'cicada' | 'bell') ignores mute.
   function playAmbient(name) { unlock(); if (amb) amb.audition(name); }
   // F19: the floatplane's engine, fed every frame by the game (follows mute; silent while paused)
   function setEngine(on, level, pan, rev, dist) { if (amb && amb.engine && !held) amb.engine(on, level, pan, rev, dist); }

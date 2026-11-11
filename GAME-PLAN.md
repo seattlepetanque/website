@@ -77,8 +77,8 @@ API: `terrain.sample(x, y) → { h, nx, ny, nz, friction, loose }`, `terrain.sto
 ## 5. Rules (doublette)
 
 - 2 players × 3 boules per team (6 per team), to 13 (7-point quick option).
-- Coin toss for the first jack, then the mène winner throws it. Jack valid at 6–10 m from the circle and ≥ 1 m from boundaries, otherwise rethrow / hand-over.
-- The team not holding the point throws. If one team is out of boules, the other plays its remaining boules. Equidistant: the team that threw last plays again.
+- Coin toss for the first jack, then the mène winner throws it. Jack valid at 6–10 m from the circle's inner edge to the jack's near edge (edge to edge), with the jack's edge more than 0.5 m before the end string and any part inside the side strings; otherwise hand-over. A settled jack less than 3 m from the circle (same measure) is dead (Art. 9.3). The ring may sit against a side string; the front keeps 10.53 m (a full 10 m jack plus its end margin).
+- The team not holding the point throws. If one team is out of boules, the other plays its remaining boules. Equidistant: the team that threw last plays again. F74 (Art. 16): if the first boule goes out, the opponent plays next and the teams alternate while no boule has stayed in play (`match.stayed`); if boules stayed and a shot then clears the ground, the last thrower plays again (Art. 29).
 - Dead jack: void mène if both teams have boules in hand; otherwise the team with boules scores them.
 - In your team, you pick who throws next; your partner suggests.
 - Mène end: overhead camera, measuring lines, point announcement, "Next mène".
