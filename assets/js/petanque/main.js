@@ -1417,8 +1417,9 @@ function boot() {
     const ch = cast.get(id), r = reachOf(ch), from = { x: court.circle.x, y: court.circle.y };
     const job = { id, tok: t, cancelled: false, scripted: false, obstacles: () => obstaclesExcept(null) };
     await sleep(900); // the throw's follow-through and the first look at the result
-    for (let n = 0; n < 80 && fetchJob && t === token; n++) await sleep(100); // let a fetch finish first
-    if (jackTask) await jackTask; // F10: the jack goes back in bounds before the ring is brought
+    // Only the carrier's OWN fetch is waited for. Another player's fetch (a dead boule) and the F10 dead-jack walk (startJackReturn picks
+    // someone other than ringWho(), and ringDest() comes from the rules, not from where the jack is put down) run in parallel with the ring.
+    for (let n = 0; n < 80 && fetchJob && fetchJob.id === id && t === token; n++) await sleep(100);
     if (ringDrop(t)) return;
     if (inCircle === id) inCircle = null;
     ch.setHolding(false); ch.setHeldBoules(null); ch.setStance('watch'); shadow(id, true);
