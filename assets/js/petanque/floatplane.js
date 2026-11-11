@@ -183,8 +183,7 @@ export function createFloatplane({ cx = 2, z = 0 } = {}) {
 
   const eng = { on: false, level: 0, pan: 0, rev: 0, dist: 0 };
   const fp = {
-    group, engine: eng, active: false, kind: '', t: 0, pos: root.position, debugFrame: false, onAir: false, flight: 0, // flight counts up per trigger (F38)
-    get opacity() { return opac; },
+    group, engine: eng, active: false, kind: '', t: 0, pos: root.position, debugFrame: false, onAir: false,
   };
   const K = [0, 0, 0, 0]; // sampled keys
   let mirror = 1, x = 0, y = 0, alt = 0, psi = 0, psiPrev = 0, pitch = 0, roll = 0, speed = 0, climb = 0, revs = 0, spinA = 0, emitAcc = 0, foamAcc = 0, bob = 0;
@@ -200,7 +199,7 @@ export function createFloatplane({ cx = 2, z = 0 } = {}) {
 
   function trigger(kind, mir) {
     if (!PLANE[kind]) return false;
-    fp.kind = kind; fp.active = true; fp.t = 0; fp.flight++;
+    fp.kind = kind; fp.active = true; fp.t = 0;
     mirror = mir === undefined ? (Math.random() < 0.5 ? -1 : 1) : mir;
     const s = startOf(kind);
     x = cx + mirror * s.x; y = s.y; alt = s.z;

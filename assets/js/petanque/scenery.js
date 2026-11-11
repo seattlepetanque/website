@@ -3,6 +3,7 @@
 import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
 import { mulberry32 } from './rng.js';
+import { createSailFleet, SAIL } from './sailboats.js';
 
 const TAU = Math.PI * 2;
 const deg = (d) => d * Math.PI / 180;
@@ -796,4 +797,88 @@ export function makeLake(cx, z) {
   mesh.frustumCulled = false;
   mesh.renderOrder = -1; // under the spray and the plane (also transparent)
   return { mesh, update(dt) { uniforms.uTime.value += dt; } };
+}
+
+// ---- Sailboats (F64) ------------------------------------------------------------------------------------
+// A few faceted low-poly sailboats on the lake. Wander logic is the pure fleet in sailboats.js; here: one merged,
+// vertex-coloured mesh per boat (hull + mast + one or two sails), bobbed and heeled each frame without allocating.
+// Scale is slightly exaggerated (hull 7 m, mast 9 m) so they read 40-150 m away.
+const HULLS = ['#f1ece0', '#2f5d8a', '#a8322d', '#d8c9a0', '#2d4a3e'];
+const SAILS = ['#f6f1e4', '#f6f1e4', '#efe6cf', '#f6f1e4', '#d23b30', '#2f6fc0'];
+
+function buildBoat(kind, rand) {
+  const pos = [], col = [];
+  const tri = (a, b, c, hex, shade = 1) => {
+    const k = new THREE.Color(hex).multiplyScalar(shade);
+    pos.push(...a, ...b, ...c); for (let i = 0; i < 3; i++) col.push(k.r, k.g, k.b);
+  };
+  const hull = HULLS[kind % HULLS.length], deck = '#8a6a44';
+  // hull: bow, stern corners, deck-level beam points, a keel line below the water
+  const bow = [3.6, 0, 0.9], sL = [-3.4, 1.15, 0.8], sR = [-3.4, -1.15, 0.8], mL = [0.6, 1.4, 0.8], mR = [0.6, -1.4, 0.8];
+  const kb = [2.4, 0, -0.1], ks = [-3.0, 0, 0.0], km = [0.4, 0, -0.55];
+  tri(bow, mL, mR, deck); tri(mL, sL, sR, deck, 0.95); tri(mL, sR, mR, deck, 0.95);
+  tri(bow, kb, mL, hull, 0.95); tri(bow, mR, kb, hull, 0.8); tri(kb, km, mL, hull, 0.85); tri(kb, mR, km, hull, 0.7);
+  tri(km, sL, mL, hull, 0.9); tri(km, mR, sR, hull, 0.65); tri(km, ks, sL, hull, 0.8); tri(km, sR, ks, hull, 0.6); tri(ks, sR, sL, hull, 0.7);
+  // mast (thin faceted spike) and boom
+  const m0 = [0.3, 0, 0.8], m1 = [0.3, 0.12, 0.8], m2 = [0.3, 0, 9.6];
+  tri(m0, m1, m2, '#d9d4c8');
+  const sail = SAILS[Math.floor(rand() * SAILS.length)], jib = rand() < 0.7;
+  const belly = 0.45;
+  // mainsail: two facets with a bellied middle seam, double-sided via both windings
+  const mt = [0.2, 0, 9.0], mf = [0.2, 0, 1.6], me = [-3.0, 0, 1.6], mm = [-1.0, belly, 4.2];
+  const sailTris = [[mf, me, mm], [mf, mm, mt]];
+  if (jib) {
+    const jt = [0.45, 0, 8.2], jf = [3.4, 0, 1.3], jb = [0.45, 0, 1.3], jm = [1.2, belly * 0.8, 3.6];
+    sailTris.push([jb, jf, jm], [jb, jm, jt]);
+  }
+  sailTris.forEach(([a, b, c], i) => { tri(a, b, c, sail, i % 2 ? 1 : 0.93); });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// Returns { group, update(dt, reduced, plane, groundZ) }. cx: court centre x; z: the lake's water height; seed varies each game.
+export function makeSailboats(cx, z, seed) {
+  if (seed === undefined) seed = (typeof location !== 'undefined' && +new URLSearchParams(location.search).get('seed')) || (Date.now() % 100000);
+  const rand = mulberry32(seed * 31 + 5);
+  const count = 3 + Math.floor(rand() * 3);
+  const fleet = createSailFleet(seed, { cx, count });
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide, fog: true });
+  const group = new THREE.Group();
+  const rigs = fleet.boats.map((b, i) => {
+    const geo = buildBoat(i, rand);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.frustumCulled = false;
+    const outer = new THREE.Group(), inner = new THREE.Group();
+    inner.add(mesh); outer.add(inner); group.add(outer);
+    return { outer, inner, ph: b.phase };
+  });
+  const avoid = { x: 0, y: 0, r: SAIL.avoidR };
+  let t = 0;
+  function place(reduced) {
+    for (let i = 0; i < rigs.length; i++) {
+      const b = fleet.boats[i], r = rigs[i];
+      r.outer.position.set(b.x, b.y, z + 0.05);
+      r.outer.rotation.z = b.heading;
+      const sway = reduced ? 0 : 1;
+      r.inner.rotation.x = -(0.12 + b.speed * 0.03 + b.turnRate * 0.25) * 1 + sway * Math.sin(t * 0.9 + r.ph) * 0.03;
+      r.inner.rotation.y = sway * Math.sin(t * 0.7 + r.ph * 2) * 0.025; // pitch
+      r.inner.position.z = sway * Math.sin(t * 1.3 + r.ph) * 0.12;
+    }
+  }
+  place(false);
+  return {
+    group, fleet,
+    update(dt, reduced, plane, groundZ) {
+      if (!(dt > 0)) return; // paused: frozen
+      const k = reduced ? 0.1 : 1; // reduced motion: a very slow drift, no bob
+      t += dt * k;
+      let av = null;
+      if (plane && plane.active && plane.pos.z < groundZ + 12) { avoid.x = plane.pos.x; avoid.y = plane.pos.y; av = avoid; }
+      fleet.step(dt * k, av);
+      place(reduced);
+    },
+  };
 }
