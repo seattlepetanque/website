@@ -457,6 +457,7 @@ test('F57 wide shot follows the ground height', () => {
 
 // ---- F62: scoring view fit ----
 const SCORE_VIEWPORTS = [
+  { name: '1712x1474', W: 1712, H: 1474, bar: 70, card: 62, icons: [[1672, 70, 1708, 106], [1672, 118, 1708, 154], [1594, 1380, 1710, 1412]] },
   { name: '1200x800', W: 1200, H: 800, bar: 70, card: 62, icons: [[1158, 70, 1194, 106], [1158, 118, 1194, 154], [1082, 706, 1118, 740]] },
   { name: '500x900', W: 500, H: 900, bar: 85, card: 130, icons: [[458, 85, 496, 121], [458, 133, 496, 169], [382, 780, 418, 812]] },
   { name: '844x390', W: 844, H: 390, bar: 50, card: 90, icons: [[800, 50, 836, 86], [800, 94, 836, 130]] },
@@ -494,8 +495,9 @@ test('F62: ring, badges and labels are centred, inside the free rectangle with a
     const xs = pts.map(sx), ys = pts.map(sy);
     const w = Math.max(...xs) - Math.min(...xs), h = Math.max(...ys) - Math.min(...ys);
     const small = Math.min(f.r - f.l, f.b - f.t);
+    assert.ok(Math.max(w / (f.r - f.l), h / (f.b - f.t)) >= 0.85, `${v.name}: F82 fills most of the free rectangle`);
     assert.ok(Math.max(w, h) >= 0.6 * small, `${v.name}: fills at least 60% of the smaller free dimension (${(Math.max(w, h) / small).toFixed(2)})`);
-    assert.ok(w <= (f.r - f.l) * 0.8 + 1e-6 && h <= (f.b - f.t) * 0.8 + 1e-6, `${v.name}: not more than 80%`);
+    assert.ok(w <= (f.r - f.l) * 0.95 + 1e-6 && h <= (f.b - f.t) * 0.95 + 1e-6, `${v.name}: not more than 95%`);
     // centred
     assert.ok(Math.abs((Math.min(...xs) + Math.max(...xs)) / 2 - (f.l + f.r) / 2) < 1e-6);
   }

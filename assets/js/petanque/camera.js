@@ -475,8 +475,8 @@ export function panViewOffset(view, dirX, dirY, dt, lim = VIEW_PAN) {
 
 // ---- F62: the outcome (scoring) view fits ring + badges + labels into the free viewport rectangle ----
 export const SCORING_FIT = Object.freeze({
-  fill: 0.76,      // the content's box fills this share of the free rectangle (the larger of its two ratios)
-  margin: 10,      // px kept clear on every side of the free rectangle
+  fill: 0.92,      // the content's box fills this share of the free rectangle (the larger of its two ratios)
+  margin: 8,       // px kept clear on every side of the free rectangle
   tallCard: 0.22,  // a card taller than this share of the viewport lifts the centre
   lift: 0.06,      // share of the free height the centre is lifted by on a tall card
 });
@@ -506,7 +506,7 @@ export function scoringTargetBox(free, aspect, { cardH = 0, H = 1, fill = SCORIN
   const a = Math.max(0.05, aspect || 1);
   let w = fw * fill, h = w / a;
   if (h > fh * fill) { h = fh * fill; w = h * a; }
-  const lift = cardH > H * SCORING_FIT.tallCard ? SCORING_FIT.lift * fh : 0;
+  const lift = cardH > H * SCORING_FIT.tallCard ? Math.min(SCORING_FIT.lift * fh, Math.max(0, (fh - h) / 2)) : 0; // F82: never lifted out of the margin
   const cx = (free.l + free.r) / 2, cy = (free.t + free.b) / 2 - lift;
   return { l: cx - w / 2, t: cy - h / 2, r: cx + w / 2, b: cy + h / 2 };
 }

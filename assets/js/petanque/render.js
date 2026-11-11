@@ -738,12 +738,14 @@ export function createRenderer(canvas, terrain) {
     clearMeasure();
     const pts = [];
     for (let k = 0; k < 24; k++) pts.push({ x: jack.x + Math.cos(k * Math.PI / 12) * o.radius, y: jack.y + Math.sin(k * Math.PI / 12) * o.radius });
-    for (const q of o.others || []) pts.push({ x: q.x - (q.r || 0.037), y: q.y - (q.r || 0.037) }, { x: q.x + (q.r || 0.037), y: q.y + (q.r || 0.037) });
+    // F82: only the circle, the labelled boules, their badges and labels are framed; other boules (they only keep labels
+    // off them) may lie far outside and must not zoom the view out
+    const K = Math.max(1, Math.min(3, o.radius / 0.45)); // F82: badges and labels grow with a large circle so they read
     scoring.add(groundRing(jack.x, jack.y, 0, o.radius, o.fill, 0.3, 0.014, 2));
     const hw = Math.min(0.009, Math.max(0.0035, o.radius * 0.05)); // E17: a tiny circle gets a thin line, never an inflated one
     scoring.add(groundRing(jack.x, jack.y, o.radius - hw, o.radius + hw, o.edge, 0.95, 0.018, 3)); // centred on the radius
     // E17: each badge sits beside its boule (away from the jack, turned aside if that is taken) so the boule stays visible
-    const BR = 0.075, badges = [];
+    const BR = 0.075 * K, badges = [];
     const taken = [{ x: jack.x, y: jack.y, r: (jack.r || 0.015) + 0.02 }];
     for (const q of o.others || []) taken.push({ x: q.x, y: q.y, r: (q.r || 0.037) + 0.01 });
     for (const it of o.items) {
@@ -760,13 +762,13 @@ export function createRenderer(canvas, terrain) {
       }
       badges.push(best);
       pts.push({ x: best.x - BR, y: best.y - BR }, { x: best.x + BR, y: best.y + BR });
-      const spr = badgeSprite(String(it.n), o.edge, '#fff');
+      const spr = badgeSprite(String(it.n), o.edge, '#fff'); spr.scale.multiplyScalar(K);
       spr.position.set(best.x, best.y, terrain.sample(best.x, best.y).h + 0.09);
       scoring.add(spr);
     }
     // E32: a distance label for every scoring boule and the rival, as screen-aligned boxes kept off each other,
     // the badges, the jack and every boule (D07's avoidance, in box form so it holds from a top-down view)
-    const LW = 0.25, LH = 0.085, jr = jack.r || 0.015;
+    const LW = 0.25 * K, LH = 0.085 * K, jr = jack.r || 0.015;
     const hits = [{ x: jack.x, y: jack.y, r: jr + 0.01 }];
     for (const q of o.others || []) hits.push({ x: q.x, y: q.y, r: (q.r || 0.037) + 0.005 });
     for (const q of badges) hits.push({ x: q.x, y: q.y, r: BR }); // badge
@@ -798,7 +800,7 @@ export function createRenderer(canvas, terrain) {
       }
       boxes.push({ x: pick.x, y: pick.y });
       pts.push({ x: pick.x - LW / 2, y: pick.y - LH / 2 }, { x: pick.x + LW / 2, y: pick.y + LH / 2 });
-      const spr = labelSprite(text, '#fff', bg, border);
+      const spr = labelSprite(text, '#fff', bg, border); spr.scale.multiplyScalar(K);
       spr.position.set(pick.x, pick.y, terrain.sample(pick.x, pick.y).h + 0.1);
       scoring.add(spr);
     };
