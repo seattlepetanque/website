@@ -305,7 +305,7 @@ function boot() {
     for (const [label, name, p] of SOUNDS) {
       mkBtn(panel, label, 'pc-sound').addEventListener('click', () => { audio.unlock(); audio.play(name, p); });
     }
-    for (const [label, name] of [['Ambience: bird', 'bird'], ['Ambience: breeze swell', 'breeze'], ['Ambience: airplane (25 s)', 'plane'], ['Ambience: floatplane engine (10 s)', 'floatplane']]) {
+    for (const [label, name] of [['Ambience: bird', 'bird'], ['Ambience: breeze swell', 'breeze'], ['Ambience: airplane (25 s)', 'plane'], ['Ambience: floatplane engine (10 s)', 'floatplane'], ['Ambience: musette accordion (7-10 s)', 'accordion'], ['Ambience: church bell (4 strikes)', 'bell'], ['Ambience: cicada + cricket (12 s)', 'cicada']]) {
       mkBtn(panel, label, 'pc-sound').addEventListener('click', () => audio.playAmbient(name));
     }
     drawer.append(panel);
@@ -2443,6 +2443,7 @@ function boot() {
       // F37: random planes are scheduled in slow mode only (quick mode: none). The demo buttons trigger directly, in either mode.
       fp.schedule(match && !pausedNow && playing ? dt : 0, match, reduceMotion() || settings.mode !== 'slow');
       const en = fp.engine;
+      audio.setAmbientState({ busy: !!(pending || flying), slow: settings.mode !== 'quick' });
       audio.setEngine(en.on && !pausedNow, en.level, en.pan, en.rev, en.dist);
     }
     renderer.render(pausedNow ? 0 : dt);

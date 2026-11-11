@@ -529,11 +529,14 @@ export function createAudio(opts = {}) {
     syncAmb();
   }
 
-  // F12: Ambience on/off (main.js remembers it in settings); audition ('bird' | 'breeze' | 'plane') ignores both.
+  // F12: Ambience on/off (main.js remembers it in settings); audition ('bird' | 'breeze' | 'plane' | 'floatplane' | 'accordion' | 'cicada' | 'bell') ignores both.
   function setAmbience(on) { ambOn = !!on; syncAmb(); }
   function playAmbient(name) { unlock(); if (amb) amb.audition(name); }
   // F19: the floatplane's engine, fed every frame by the game (follows the Ambience toggle and mute; silent while paused)
   function setEngine(on, level, pan, rev, dist) { if (amb && amb.engine && !held) amb.engine(on, level, pan, rev, dist); }
+
+  // F66: busy = a human aim/throw moment (no rare tonal events start), slow = slow mode
+  function setAmbientState(st) { if (amb && amb.setState) amb.setState(st); }
 
   function isMuted() {
     return muted;
@@ -553,5 +556,5 @@ export function createAudio(opts = {}) {
     return btn;
   }
 
-  return { unlock, setPaused, handleEvents, update, accent, fanfare, play, setMuted, isMuted, setAmbience, playAmbient, setEngine, createMuteButton };
+  return { unlock, setPaused, handleEvents, update, accent, fanfare, play, setMuted, isMuted, setAmbience, playAmbient, setEngine, setAmbientState, createMuteButton };
 }
