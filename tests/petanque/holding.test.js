@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from '../../assets/js/vendor/three.module.js';
 import { C } from '../../assets/js/petanque/constants.js';
+import { jackStyle } from '../../assets/js/petanque/terrain.js';
 import {
   createCharacter, stancePose, throwPose, releaseTime, solveSkeleton, handBasis, releaseOffset, mirrorPose,
 } from '../../assets/js/petanque/character.js';
@@ -110,7 +111,7 @@ test('E23: a jack throw holds the orange cochonnet, not a boule, and it leaves a
   assert.equal(balls(ch).length, 0, 'no boule in the hand for a jack throw');
   const jacks = visible(ch, C.jack.r);
   assert.equal(jacks.length, 1);
-  assert.equal(jacks[0].material.color.getHexString(), 'ff7a00');
+  assert.equal(jacks[0].material.color.getHexString(), jackStyle().color.slice(1));
   let inHand = null;
   await run(ch, ch.playThrow({ loft: 30 * DEG, onRelease: () => { inHand = visible(ch, C.jack.r).length; } }));
   assert.equal(inHand, 0, 'the cochonnet has left the hand at release');

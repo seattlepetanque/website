@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PERSONALITIES, specFor, pickStance } from '../../assets/js/petanque/personalities.js';
+import { PERSONALITIES, specFor, pickStance, stanceFor, STAND_BEYOND } from '../../assets/js/petanque/personalities.js';
 import { releaseOffset } from '../../assets/js/petanque/character.js';
 import { mulberry32 } from '../../assets/js/petanque/rng.js';
 
@@ -68,4 +68,28 @@ test('setStance picks the throwing pose, so the launch matches the stance used f
     const d = Math.hypot(hand.x - (2 + off.x), hand.y - (1 + off.y), hand.z - off.z);
     assert.ok(d < 0.03, `${picked}: release ${d} m from the preview`);
   }
+});
+
+test('F33: nobody crouches beyond 7.5 m; at 7.5 m or less the personality stance applies unchanged', () => {
+  assert.equal(STAND_BEYOND, 7.5);
+  for (const id of ['you', 'pierre', 'marcel', 'odette']) {
+    const spec = specFor(id);
+    for (const r of [0, 0.3, 0.7, 0.99]) {
+      assert.equal(stanceFor(spec, 7.51, () => r), 'stand');
+      assert.equal(stanceFor(spec, 12, () => r), 'stand');
+      assert.equal(stanceFor(spec, 7.5, () => r), pickStance(spec, () => r)); // boundary: still the personality's
+      assert.equal(stanceFor(spec, 6, () => r), pickStance(spec, () => r));
+      assert.equal(stanceFor(spec, undefined, () => r), pickStance(spec, () => r)); // distance not known yet
+    }
+  }
+  assert.equal(stanceFor(specFor('marcel'), 7.5, () => 0), 'crouch');
+  assert.equal(stanceFor(specFor('marcel'), 7.6, () => 0), 'stand');
+  // beyond the limit no random draw is spent; below it Pierre still crouches about half the time
+  let draws = 0;
+  stanceFor(specFor('pierre'), 9, () => { draws++; return 0; });
+  assert.equal(draws, 0);
+  const rand = mulberry32(5);
+  let crouches = 0;
+  for (let i = 0; i < 2000; i++) if (stanceFor(specFor('pierre'), 5, rand) === 'crouch') crouches++;
+  assert.ok(Math.abs(crouches / 2000 - 0.5) < 0.05);
 });

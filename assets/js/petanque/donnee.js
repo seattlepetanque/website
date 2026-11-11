@@ -10,9 +10,10 @@ export const LOFT_MIN = 8 * Math.PI / 180;
 export const LOFT_MAX = 75 * Math.PI / 180;
 const DEG = Math.PI / 180;
 
-// Style names: below 20 deg roulette, 20-45 demi-portée, above 45 plombée, tir when snapped to a target
+// Style names by loft: below 20 deg roulette, 20-45 demi-portée, above 45 plombée. `snapped` is ignored (F35: the throw is
+// always named by its loft; the AI's internal 'tir' label for shots at a boule is set in ai.js).
 export function styleForLoft(loft, snapped = false) {
-  if (snapped) return 'tir';
+  void snapped;
   if (loft < 20 * DEG) return 'roulette';
   if (loft <= 45 * DEG) return 'demi-portee';
   return 'plombee';
@@ -174,12 +175,13 @@ export function solveLaunch({ from = court.throwFrom, landing, loft, terrain }) 
 export const SKILL = Object.freeze({
   human: Object.freeze({ lat: 0.012, long: 0.03, loft: 1.5 * DEG, maxSpeed: 11.6 }),
   marcel: Object.freeze({ lat: 0.011, long: 0.022, loft: 1.2 * DEG, maxSpeed: 11.3 }), // pointeur: tight long, weaker arm
-  odette: Object.freeze({ lat: 0.008, long: 0.027, loft: 1.4 * DEG, maxSpeed: 12.4 }), // tireur: tight lateral, strong
-  pierre: Object.freeze({ lat: 0.009, long: 0.031, loft: 1.6 * DEG, maxSpeed: 12.2 }), // tireur-ish, a bit looser, strong
+  odette: Object.freeze({ lat: 0.008, long: 0.028, loft: 1.4 * DEG, maxSpeed: 12.4 }), // tireur: tight lateral, strong; F23: clearly weaker pointer than Marcel
+  pierre: Object.freeze({ lat: 0.0088, long: 0.0255, loft: 1.4 * DEG, maxSpeed: 12.2 }), // F23: well-rounded, shoots a touch below Odette and points a touch below Marcel
 });
 // The one difficulty scaling: multiplies an AI's lat/long/loft sigmas. D02 set 2.3 / 1.35 / 0.65; D22's balance runs
 // against the scripted pointer added x0.85 / x1.4 / x2.0 on top (tactics.js), folded in here: 1.955 / 1.89 / 1.3.
-export const difficultyScale = { easy: 1.95, medium: 1.9, hard: 1.3 }; // plain object: tests pin the D02 values (see ai.test.js)
+// F23 re-measured with a stronger Pierre (win rate of the scripted pointer + Pierre): 3.0 / 1.6 / 1.3.
+export const difficultyScale = { easy: 3.0, medium: 1.6, hard: 1.3 }; // F23 (was 1.95 / 1.9 / 1.3) // plain object: tests pin the D02 values (see ai.test.js)
 const LONG_GROWTH = 1.85; // longitudinal sigma at LOFT_MAX relative to LOFT_MIN
 const LAT_GROWTH = 1.25; // lateral sigma at LOFT_MAX relative to LOFT_MIN
 // Near-max throws are less accurate: both sigmas are multiplied by 1 + ENERGY_K * max(0, energyFrac - ENERGY_KNEE)^2

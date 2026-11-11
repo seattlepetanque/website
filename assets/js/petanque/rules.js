@@ -15,14 +15,25 @@ const TIE_EPS = 0.001; // equidistant within 1 mm
 const BOULES_PER_PLAYER = 3;
 const EPS = 1e-9;
 
-export function defaultPlayers() {
+// F45: the human picks a partner from the three characters; the other two are the opponents. Each keeps their own
+// role (Marcel points; Pierre and Odette shoot); the human takes the role the partner does not.
+export const PARTNER_IDS = Object.freeze(['pierre', 'marcel', 'odette']);
+export const CHARACTER_ROLE = Object.freeze({ pierre: 'tireur', marcel: 'pointeur', odette: 'tireur' });
+const CHARACTER_NAME = Object.freeze({ pierre: 'Pierre', marcel: 'Marcel', odette: 'Odette' });
+export const validPartner = (id) => (PARTNER_IDS.includes(id) ? id : 'pierre');
+export const opponentIds = (partner = 'pierre') => PARTNER_IDS.filter((id) => id !== validPartner(partner));
+// 'You & Pierre', 'Marcel & Odette' (opponents in the fixed Pierre, Marcel, Odette order)
+export const teamNamesFor = (partner = 'pierre') =>
+  ['You & ' + CHARACTER_NAME[validPartner(partner)], opponentIds(partner).map((id) => CHARACTER_NAME[id]).join(' & ')];
+
+export function defaultPlayers(partner = 'pierre') {
+  const part = validPartner(partner);
   const mk = (id, name, team, isHuman, role) =>
     ({ id, name, team, isHuman, boulesLeft: BOULES_PER_PLAYER, role });
   return [
-    mk('you', 'You', 0, true, 'pointeur'),
-    mk('pierre', 'Pierre', 0, false, 'tireur'),
-    mk('marcel', 'Marcel', 1, false, 'pointeur'),
-    mk('odette', 'Odette', 1, false, 'tireur'),
+    mk('you', 'You', 0, true, CHARACTER_ROLE[part] === 'pointeur' ? 'tireur' : 'pointeur'),
+    mk(part, CHARACTER_NAME[part], 0, false, CHARACTER_ROLE[part]),
+    ...opponentIds(part).map((id) => mk(id, CHARACTER_NAME[id], 1, false, CHARACTER_ROLE[id])),
   ];
 }
 
@@ -53,6 +64,13 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 // y = 0), ready for E10's flipping direction. One rule for a thrown and a placed jack.
 export const JACK_R = 0.015;
 export const JACK_END_MARGIN = 0.5;
+// F06: every displayed distance is surface to surface. gapM: metres from a's edge to b's edge (negative = touching or overlapping).
+// fmtCm: one decimal, "18.3 cm" (metres from 1 m up, "1.8 m").
+export const gapM = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) - (a.r ?? 0) - (b.r ?? 0);
+export function fmtCm(m) {
+  const v = Math.max(0, m);
+  return v < 1 ? `${(v * 100).toFixed(1)} cm` : `${v.toFixed(1)} m`;
+}
 const endGap = (jack, g) => ((g.dir ?? 1) < 0 ? jack.y : g.length - jack.y); // distance in front of the end string
 export function jackValid(jack, geometry = DEFAULT_GEOMETRY) {
   const g = { ...DEFAULT_GEOMETRY, ...geometry };
@@ -138,21 +156,34 @@ export function nextTeam(match) {
   return 1 - hold;
 }
 
+// The sentence for a dead cochonnet, from the boules in hand [team0, team1] when it went dead.
+// Both teams holding boules or neither: void. Only one team: that team scores them.
+export function deadJackText(inHand, teamNames = teamNamesFor('pierre')) {
+  const [h0, h1] = inHand;
+  if (h0 > 0 && h1 > 0) return 'The cochonnet went out: both teams still have boules, so the mène is void.';
+  if (h0 === 0 && h1 === 0) return 'The cochonnet went out and neither team has boules left, so the mène is void.';
+  const team = h0 > 0 ? 0 : 1;
+  return `The cochonnet went out with only ${teamNames[team]} holding boules: they score ${inHand[team]}.`;
+}
+
 function endMene(match, jack, boules) {
   let result;
   if (jack.dead) {
     // Dead jack: void if both teams still hold boules, else the team with boules scores them.
+    // inHand is the count at the moment the jack died (kept on the result for the message, deadJackText).
     const h0 = boulesInHand(match, 0);
     const h1 = boulesInHand(match, 1);
-    if (h0 > 0 && h1 > 0) result = { void: true };
-    else if (h0 > 0) result = { team: 0, points: h0, measured: [] };
-    else if (h1 > 0) result = { team: 1, points: h1, measured: [] };
-    else result = { void: true };
+    const inHand = [h0, h1];
+    if (h0 > 0 && h1 > 0) result = { void: true, inHand };
+    else if (h0 > 0) result = { team: 0, points: h0, measured: [], inHand };
+    else if (h1 > 0) result = { team: 1, points: h1, measured: [], inHand };
+    else result = { void: true, inHand };
   } else {
     result = meneResult(jack, boules);
   }
   const scores = match.scores.slice();
-  if (!result.void) scores[result.team] += result.points;
+  // F31: a team's score never exceeds the target (12 + 3 is stored and shown as 13).
+  if (!result.void) scores[result.team] = Math.min(match.target, scores[result.team] + result.points);
   const over = scores.findIndex((s) => s >= match.target) >= 0;
   const winner = over ? (scores[0] >= scores[1] ? 0 : 1) : null;
   return { ...match, jack, boules, scores, result, inFlight: null,
@@ -174,6 +205,7 @@ export function apply(match, event) {
     case 'jackThrown': {
       if (match.phase !== 'jack') return match;
       const jack = { x: event.jack.x, y: event.jack.y, dead: !!event.jack.dead };
+      if (jack.dead && event.jack.spot) jack.spot = { x: event.jack.spot.x, y: event.jack.spot.y }; // F10: last in-bounds spot
       if (!jackValid(jack, match.geometry)) {
         // Invalid: the other team places the jack by hand; the thrower's team still plays first.
         return { ...match, phase: 'jackPlace', jackTeam: event.team, placingTeam: 1 - event.team, jack: null };
@@ -211,7 +243,7 @@ export function apply(match, event) {
       if (match.phase !== 'meneEnd') return match;
       const r = match.result;
       const g = match.geometry; // E10: the next mène starts from a circle around the last jack, played the other way
-      const nc = nextCircle(match.jack, g.dir ?? 1, { width: g.width, length: g.length });
+      const nc = nextCircle(match.jack && match.jack.dead && match.jack.spot ? match.jack.spot : match.jack, g.dir ?? 1, { width: g.width, length: g.length });
       return {
         ...match,
         geometry: { ...g, circle: { x: nc.circle.x, y: nc.circle.y }, dir: nc.dir },

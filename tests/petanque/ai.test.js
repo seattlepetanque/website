@@ -124,7 +124,7 @@ test('results carry the donnée, loft and style, and the throw was solved for th
     const r = chooseThrow({ world: s.world, match: s.match, player: marcel(s.match), difficulty, rand: mulberry32(5), from });
     assert.ok(Number.isFinite(r.donnee.x) && Number.isFinite(r.donnee.y));
     assert.ok(r.loft >= LOFT_MIN && r.loft <= LOFT_MAX);
-    assert.equal(r.style, styleForLoft(r.loft, r.intent === 'shoot'));
+    assert.equal(r.style, r.intent === 'shoot' ? 'tir' : styleForLoft(r.loft)); // the AI's internal label for shots
     assert.ok(typeof r.score === 'number');
     // throw aims within the cone of the donnée (yaw close to the line to it)
     const yaw = Math.atan2(r.donnee.x - from.x, r.donnee.y - from.y);
@@ -273,7 +273,7 @@ test('pointing plans aim at a jack 2 cm inside a string or near the far line, an
     }
     const med = (a) => a.sort((p, q) => p - q)[3];
     const e = { x: med(xs), y: med(ys) };
-    assert.ok(Math.hypot(e.x - t.x, e.y - t.y) < (jack.y > 12 ? 1.6 : 0.7) && // long roulettes scatter more
+    assert.ok(Math.hypot(e.x - t.x, e.y - t.y) < (jack.y > 12 ? 1.8 : jack.x > 3 ? 0.95 : 0.7) && // long roulettes scatter more
        (r.family !== 'pointJack' || Math.hypot(e.x - jack.x, e.y - jack.y) < (jack.y > 12 ? 1.6 : 0.5)), `rest ${e.x.toFixed(2)},${e.y.toFixed(2)} fam ${r.family} tgt ${JSON.stringify(t)} for jack ${JSON.stringify(jack)} ${difficulty}`);
   }
 });

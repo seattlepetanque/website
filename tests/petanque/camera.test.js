@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { frameMoving, cameraFromFrame, CAM, frameObserver, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS } from '../../assets/js/petanque/camera.js';
+import { frameMoving, cameraFromFrame, CAM, frameObserver, walkSubject, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS, broadcastGoal, frameBroadcast, BC } from '../../assets/js/petanque/camera.js';
 import { createBody } from '../../assets/js/petanque/physics.js';
 
 const OPTS = { aspect: 1.6, fov: 50, dt: 1 / 60 };
@@ -287,4 +287,147 @@ test('TV: dt 0 freezes the shot; reduced motion keeps the crane static', () => {
   const z0 = tvGoal({ ...f, t: 0 }, { ...s, reduced: true }).pos.z, z1 = tvGoal({ ...f, t: 5 }, { ...s, reduced: true }).pos.z;
   assert.equal(z0, z1);
   assert.ok(tvGoal({ ...f, t: 5 }, s).pos.z > tvGoal({ ...f, t: 0 }, s).pos.z + 1, 'the crane rises');
+});
+
+// ---- F01: sports-broadcast shots ----
+import { reactionChoice, afterStop, hoverMs, DIRECTOR, createDirector } from '../../assets/js/petanque/director.js';
+
+function inViewPts(g, p, o) {
+  const { pos, tgt } = g;
+  const fx = tgt.x - pos.x, fy = tgt.y - pos.y, fz = tgt.z - pos.z, fl = Math.hypot(fx, fy, fz);
+  const F = [fx / fl, fy / fl, fz / fl];
+  let R = [F[1], -F[0], 0]; const rl = Math.hypot(R[0], R[1]); R = [R[0] / rl, R[1] / rl, 0];
+  const U = [R[1] * F[2] - R[2] * F[1], R[2] * F[0] - R[0] * F[2], R[0] * F[1] - R[1] * F[0]];
+  const d = [p.x - pos.x, p.y - pos.y, p.z - pos.z];
+  const dep = d[0] * F[0] + d[1] * F[1] + d[2] * F[2];
+  if (dep <= 0) return false;
+  const vT = Math.tan(o.fov * Math.PI / 360);
+  return Math.abs((d[0] * R[0] + d[1] * R[1]) / (dep * vT * o.aspect)) <= 1 && Math.abs((d[0] * U[0] + d[1] * U[1] + d[2] * U[2]) / (dep * vT)) <= 1;
+}
+const hills = (x, y) => 0.03 * Math.sin(x) + 0.05 * Math.cos(y / 2);
+
+for (const dir of [1, -1]) for (const [aspect, fov] of [[1.6, 50], [0.5, 62]]) {
+  test(`broadcast person shots keep the whole person in frame, above ground (dir ${dir}, aspect ${aspect})`, () => {
+    const o = { aspect, fov };
+    for (const kind of ['prep', 'throw', 'reaction']) for (const t of [0, 2, 10]) {
+      const sub = { x: 2, y: dir > 0 ? 1 : 14 }, face = dir > 0 ? 0 : Math.PI;
+      const g = broadcastGoal(kind, { t, side: 1 }, { subject: sub, face, dir, groundAt: hills, ...o });
+      for (const z of [0.05, 0.9, 1.7]) assert.ok(inViewPts(g, { ...sub, z: hills(sub.x, sub.y) + z }, o), `${kind} t=${t} z=${z}`);
+      assert.ok(g.pos.z >= hills(g.pos.x, g.pos.y) + BC.minZ - 1e-9);
+      assert.ok((g.pos.y - sub.y) * dir > 0, 'the camera is in front of the player, toward the court');
+    }
+  });
+}
+
+for (const dir of [1, -1]) test(`broadcast flight shot frames the cochonnet, then the boule as it lands (dir ${dir})`, () => {
+  const o = { aspect: 1.6, fov: 50 };
+  const jy = dir > 0 ? 9 : 6, jack = body('jack', 2, jy, 0, 0, { state: 'resting' });
+  const st = { t: 0, anchor: { x: jack.x, y: jack.y } };
+  for (const dd of [12, 8, 5, 2, 0.5]) {
+    const b = body('boule', 2.2, jy - dir * dd, 0, dir * 4, { state: 'airborne', z: dd > 3 ? 1.5 : 0.2 });
+    const g = broadcastGoal('flight', st, { body: b, jack, dir, groundAt: hills, ...o });
+    assert.ok(inViewPts(g, { x: jack.x, y: jack.y, z: 0.1 }, o), `jack in frame, boule ${dd} m out`);
+    if (dd <= BC.flight.pullIn) assert.ok(inViewPts(g, { x: b.x, y: b.y, z: b.z }, o), `boule in frame at ${dd} m`);
+    assert.ok((g.pos.y - jack.y) * dir > 0, 'camera beyond the jack, away from the thrower');
+    assert.ok(g.pos.z >= hills(g.pos.x, g.pos.y) + BC.minZ - 1e-9);
+  }
+});
+
+test('frameBroadcast: a cut snaps, moves are smooth and capped, pause holds, reduced motion pans slower', () => {
+  const sub = { x: 2, y: 1 }, s = { subject: sub, face: 0, dir: 1, groundAt: hills, aspect: 1.6, fov: 50 };
+  const a = frameBroadcast('prep', { ...s, dt: 1 / 60 }, null);
+  assert.deepEqual(frameBroadcast('prep', { ...s, dt: 0 }, a), a);
+  const moved = { ...s, subject: { x: 2, y: 3 } };
+  let n = a, r = a, maxStep = 0, maxR = 0;
+  for (let i = 0; i < 30; i++) {
+    const n2 = frameBroadcast('prep', { ...moved, dt: 1 / 60 }, n);
+    maxStep = Math.max(maxStep, Math.hypot(n2.tgt.x - n.tgt.x, n2.tgt.y - n.tgt.y)); n = n2;
+    const r2 = frameBroadcast('prep', { ...moved, dt: 1 / 60, reduced: true }, r);
+    maxR = Math.max(maxR, Math.hypot(r2.tgt.x - r.tgt.x, r2.tgt.y - r.tgt.y)); r = r2;
+  }
+  assert.ok(maxStep <= BC.person.tgt.max / 60 + 1e-9);
+  assert.ok(maxR < maxStep, 'reduced motion pans slower');
+  const red = frameBroadcast('prep', { ...s, dt: 1 / 60, reduced: true }, null);
+  assert.equal(broadcastGoal('prep', { t: 0 }, { ...s, reduced: true }).pos.x, broadcastGoal('prep', { t: 9 }, { ...s, reduced: true }).pos.x, 'no push-in when reduced');
+  assert.ok(red.pos);
+});
+
+test('cameraStyle: broadcast works in both modes, the human turn keeps the game cameras', () => {
+  assert.equal(cameraStyle({ slow: true, override: 'broadcast' }), 'broadcast');
+  assert.equal(cameraStyle({ slow: false, override: 'broadcast' }), 'broadcast');
+  assert.equal(cameraStyle({ slow: true, human: true, override: 'broadcast' }), 'game');
+  assert.equal(cameraStyle({ slow: true }), 'observer', 'the default is unchanged');
+});
+
+const PL = [{ id: 'you', team: 0 }, { id: 'pierre', team: 0 }, { id: 'marcel', team: 1 }, { id: 'odette', team: 1 }];
+test('director: the reaction follows the outcome', () => {
+  const was = { owner: 'you', team: 0 };
+  assert.equal(reactionChoice({ mood: 'watch', was, prevHold: null, players: PL, pick: 0.3 }), null);
+  assert.equal(reactionChoice({ mood: 'dismay', was, prevHold: 1, players: PL, pick: 0.9 }).id, 'you');
+  assert.equal(reactionChoice({ mood: 'celebrate', was, prevHold: null, players: PL, pick: 0.2 }).role, 'thrower');
+  assert.equal(reactionChoice({ mood: 'celebrate', was, prevHold: null, players: PL, pick: 0.8 }).id, 'pierre');
+  const taken = reactionChoice({ mood: 'celebrate', was, prevHold: 1, players: PL, pick: 0.2 });
+  assert.equal(taken.role, 'opponent'); assert.equal(taken.mood, 'dismay');
+  assert.ok(['marcel', 'odette'].includes(taken.id));
+});
+
+test('director: hover is 1 to 2 s, no reaction cut under reduced motion, pause freezes the schedule', () => {
+  for (const p of [0, 0.5, 1]) { const h = hoverMs(p); assert.ok(h >= 1000 && h <= 2000); }
+  const out = { mood: 'dismay', was: { owner: 'you', team: 0 }, prevHold: 1, players: PL };
+  assert.equal(afterStop({ reduced: true, ...out }).reaction, null);
+  assert.equal(afterStop({ reduced: true, ...out }).nextTurn, DIRECTOR.baseDelay);
+  assert.ok(afterStop({ reduced: false, ...out }).nextTurn > DIRECTOR.baseDelay);
+  const q = []; const shots = [];
+  const d = createDirector({ later: (fn, ms) => q.push([fn, ms]), show: (s) => shots.push(s.kind), reduced: () => false });
+  d.prep('you', 0); d.throwShot('you', 0); d.release({}); const next = d.afterStop(out);
+  assert.deepEqual(shots, ['prep', 'throw', 'flight']);
+  assert.equal(q.length, 1, 'the reaction waits on the game clock (nothing runs until the clock ticks)');
+  q[0][0](); assert.equal(shots[3], 'reaction'); assert.ok(next > 2000);
+  const d2 = createDirector({ later: (fn) => q.push([fn]), show: (s) => shots.push(s.kind) });
+  d2.afterStop(out); d2.cancel(); const n = shots.length; q[q.length - 1][0](); assert.equal(shots.length, n, 'a cancelled shot never fires');
+});
+
+test('F48: view offsets are clamped to the allowed pan region, never wrapped', async () => {
+  const { clampViewOffset, panViewOffset, VIEW_PAN } = await import('../../assets/js/petanque/camera.js');
+  assert.deepEqual(clampViewOffset(0.2, 0.1), { yaw: 0.2, pitch: 0.1 });
+  assert.equal(clampViewOffset(10, 0).yaw, VIEW_PAN.maxYaw);
+  assert.equal(clampViewOffset(-10, 0).yaw, -VIEW_PAN.maxYaw);
+  assert.equal(clampViewOffset(0, 5).pitch, VIEW_PAN.maxPitch);
+  assert.equal(clampViewOffset(0, -5).pitch, -VIEW_PAN.maxPitch);
+  assert.deepEqual(clampViewOffset(NaN, undefined), { yaw: 0, pitch: 0 });
+});
+
+test('F48: holding a direction pans at a steady rate and stops at the edge', async () => {
+  const { panViewOffset, VIEW_PAN } = await import('../../assets/js/petanque/camera.js');
+  let v = { yaw: 0, pitch: 0 };
+  v = panViewOffset(v, 1, 0, 0.1);
+  assert.ok(Math.abs(v.yaw - VIEW_PAN.yawRate * 0.1) < 1e-9 && v.pitch === 0);
+  v = panViewOffset(v, -1, 0, 0.1);
+  assert.ok(Math.abs(v.yaw) < 1e-9);
+  for (let i = 0; i < 400; i++) v = panViewOffset(v, 1, 1, 1 / 60); // right and down for 6+ s
+  assert.equal(v.yaw, VIEW_PAN.maxYaw);
+  assert.equal(v.pitch, VIEW_PAN.maxPitch); // down looks down: positive pitch
+});
+
+test('F39: walkSubject leads the walker toward the goal and settles on the goal', () => {
+  const far = walkSubject({ x: 0, y: 0 }, { x: 0, y: 10 }, 3);
+  assert.deepEqual(far, [{ x: 0, y: 0 }, { x: 0, y: 3 }]);
+  const near = walkSubject({ x: 1, y: 9 }, { x: 0, y: 10 }, 3);
+  assert.deepEqual(near[1], { x: 0, y: 10 });
+  const out = [{ x: 9, y: 9 }, { x: 9, y: 9 }];
+  assert.equal(walkSubject({ x: 2, y: 2 }, { x: 2, y: 2 }, 3, out), out);
+  assert.deepEqual(out, [{ x: 2, y: 2 }, { x: 2, y: 2 }]);
+});
+
+test('F39: the observer follows a walker smoothly (no jumps) toward the circle', () => {
+  const ground = () => 0, goal = { x: 6, y: 20 };
+  let pos = { x: 1, y: 2 }, f = null, prev = null, maxStep = 0;
+  for (let i = 0; i < 60 * 9; i++) {
+    pos = { x: pos.x + (goal.x - pos.x) * 0.004, y: Math.min(goal.y, pos.y + 2.4 / 60) };
+    f = frameObserver(walkSubject(pos, goal), { dt: 1 / 60, aspect: 1.6, fov: 50, groundAt: ground }, f);
+    if (prev) maxStep = Math.max(maxStep, Math.hypot(f.pos.x - prev.pos.x, f.pos.y - prev.pos.y, f.pos.z - prev.pos.z));
+    prev = f;
+  }
+  assert.ok(maxStep < OBS.dolly.max / 60 + 1e-6, 'camera moves at most walking pace: ' + maxStep);
+  assert.ok(Math.abs(f.center.y - 20) < 3, 'ends framing the circle area');
 });

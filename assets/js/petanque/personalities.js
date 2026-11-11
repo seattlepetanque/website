@@ -10,7 +10,7 @@ export const PERSONALITIES = {
       height: 1.76, build: 'average', stance: 'stand', // the human always stands to throw
       colors: { shirt: '#2fa3a0', trousers: '#23396b', skin: '#d9a37c' },
     },
-    quirks: { idle: ['shift', 'lookaround'], celebrate: 'cheer', dismay: 'shrug' },
+    quirks: { idle: ['shift', 'lookaround', 'checkboules', 'wipeboule', 'shade', 'shrug', 'chat'], hold: ['sides'], celebrate: 'cheer', dismay: 'shrug' },
     bio: 'the one with the boules',
   },
   pierre: {
@@ -19,8 +19,9 @@ export const PERSONALITIES = {
       height: 1.82, build: 'average', stance: 'stand', stances: ['crouch', 'stand'], // picked per throw (pickStance)
       colors: { shirt: '#f2c230', trousers: '#23396b', skin: '#b98258', scarf: '#d8322c' }, // yellow shirt, red neckerchief
     },
-    quirks: { idle: ['bounce', 'fidget', 'practice'], celebrate: 'jump', dismay: 'head' },
-    bio: 'your partner, young, keen, never short of confidence, and he loves a shot',
+    quirks: { idle: ['bounce', 'fidget', 'practice', 'toss', 'checkboules', 'shade', 'chat'], hold: ['fidget', 'sides', 'fidget'], celebrate: 'jump', dismay: 'head' },
+    bio: 'young, keen, never short of confidence, and he loves a shot',
+    tag: 'keen young shooter',
   },
   marcel: {
     id: 'marcel', name: 'Marcel', model: 'marcel', skill: 'marcel', team: 1,
@@ -28,8 +29,9 @@ export const PERSONALITIES = {
       height: 1.68, build: 'stout', stance: 'crouch',
       colors: { shirt: '#7d8f5a', trousers: '#8a5a2b', skin: '#cf9a72', hat: '#3f3a34' }, // olive shirt; ?figures=mesh keeps the model's own colours
     },
-    quirks: { hat: 'cap', idle: ['hips', 'headshake', 'wipebrow'], celebrate: 'proud', dismay: 'wave' },
+    quirks: { hat: 'cap', idle: ['hips', 'headshake', 'wipebrow', 'wipeboule', 'checkboules', 'shade', 'shrug', 'chat'], hold: ['akimbo', 'akimbo', 'sides'], celebrate: 'proud', dismay: 'wave' },
     bio: 'has pointed at this terrain since 1974 and will tell you about it',
+    tag: 'patient old pointer',
   },
   odette: {
     id: 'odette', name: 'Odette', model: 'odette', skill: 'odette', team: 1,
@@ -37,8 +39,9 @@ export const PERSONALITIES = {
       height: 1.74, build: 'slim', stance: 'stand', hand: 'left',
       colors: { shirt: '#e9e1d2', trousers: '#9c6a34', skin: '#efc6a4', hat: '#e9d9a0' },
     },
-    quirks: { hat: 'sunhat', idle: ['fold', 'checkwatch', 'tilt'], celebrate: 'clap', dismay: 'sigh' },
+    quirks: { hat: 'sunhat', idle: ['fold', 'checkwatch', 'tilt', 'checkboules', 'shade', 'shrug', 'chat'], hold: ['sides', 'fold', 'sides'], celebrate: 'clap', dismay: 'sigh' },
     bio: 'retired schoolteacher, a very sharp tireur, and she will correct your grammar',
+    tag: 'sharp left-handed tireur',
   },
 };
 export const CAST_IDS = ['you', 'pierre', 'marcel', 'odette'];
@@ -55,6 +58,16 @@ export function pickStance(spec, rand) {
   const options = spec.stances && spec.stances.length ? spec.stances : [spec.stance];
   if (options.length === 1) return options[0];
   return options[Math.min(options.length - 1, Math.floor(rand() * options.length))];
+}
+
+// F33: nobody crouches for a throw longer than this (metres, circle centre to the planned landing spot / target)
+export const STAND_BEYOND = 7.5;
+
+// The stance for one throw given its distance: standing for everyone beyond STAND_BEYOND (no draw from `rand`),
+// else the personality's pickStance. Pass an undefined/NaN distance when the target is not known yet.
+export function stanceFor(spec, distance, rand) {
+  if (Number.isFinite(distance) && distance > STAND_BEYOND) return 'stand';
+  return pickStance(spec, rand);
 }
 
 // ---------- commentary pools ----------
@@ -83,7 +96,7 @@ export const LINES = {
         'Move that one, and ours count.', 'Out goes that boule, and ours come in.',
       ],
       'removePoints': [
-        'Odette, take that one away.', 'They hold too much. That one must go.',
+        '{mate}, take that one away.', 'They hold too much. That one must go.',
       ],
       'protectOwn': [
         'Too near our own boule. I point.', 'I will not knock our own boule.',
@@ -111,6 +124,27 @@ export const LINES = {
       ],
       'noReply': [
         'They have none left. Points, points.', 'Nobody answers. I add points.',
+      ],
+      'promote': [
+        'I give mine a little push. Doucement.', 'A tap on our boule, and it moves up.', 'A gentle push, only if the line is clean.',
+      ],
+      'block': [
+        'A door, in front of the jack. Let them try.', 'A blocker in front, and the roller stops.', 'I close the road to the jack.',
+      ],
+      'cover': [
+        'Behind the cochonnet, like a goalkeeper.', 'A boule behind, if they hit the jack.', 'Behind the jack, to be safe.',
+      ],
+      'spread': [
+        'Apart, so one shot cannot take two.', 'Not too close together. Patience.', 'Spaced out, they cannot take two.',
+      ],
+      'drop': [
+        'I put it at my feet. I do not touch what is good.', 'It stays short. The head is perfect.', 'A little drop. I touch nothing.',
+      ],
+      'farJack': [
+        'Too far to shoot. I point.', 'Far, far away. A point is wiser.', 'The cochonnet is too far for a shot.',
+      ],
+      'easyShot': [
+        'Close and clear. I shoot.', 'An easy one. I take it.', 'Close enough. Why not shoot?',
       ],
     },
     spotPoint: [
@@ -154,7 +188,7 @@ export const LINES = {
       'We shall see about that.', 'Careful. I take my time, then I take the point.',
     ],
     ownScores: [
-      'You see? A point is a point.', 'Bravo, bravo.', 'That is how we do it in Provence.', 'Allez, Odette! Same again.',
+      'You see? A point is a point.', 'Bravo, bravo.', 'That is how we do it in Provence.', 'Allez, {mate}! Same again.',
     ],
     meneWon: [
       'Voilà. Slow and steady.', 'That is the mène, as I said it would be.', 'Bravo. Time for a little pastis? Later.',
@@ -218,6 +252,27 @@ export const LINES = {
       'noReply': [
         'They have none left. Points, then.', 'No reply possible. I add points.',
       ],
+      'promote': [
+        'I tap ours closer, no risk to theirs.', 'A push on our boule. Elementary.', 'Our boule goes forward, theirs stay put.',
+      ],
+      'block': [
+        "I close the lane. They'll have to lob it.", 'A blocker on the line. They must lob.', 'The lane is closed. Observe.',
+      ],
+      'cover': [
+        'A boule behind: if they shoot the jack, we keep it.', 'Behind the jack, in case they shoot it.', 'A safety behind the jack.',
+      ],
+      'spread': [
+        'Not too close together. They hit one, not both.', 'Spacing, if you please.', 'One target at a time for them.',
+      ],
+      'drop': [
+        'A drop. Nothing to gain, so nothing to lose.', 'I place it short. There is nothing to improve.', 'A quiet little drop.',
+      ],
+      'farJack': [
+        'Too far for a clean shot. I point.', 'Too long a way. I point.', 'A shot from here is a gamble. I point.',
+      ],
+      'easyShot': [
+        'A clean shot. That one is mine.', 'Clear and close. I shoot.', 'The shot is on. Observe.',
+      ],
     },
     spotPoint: [
       'I shall place it precisely.', 'A measured throw. As it should be.', 'Observe the technique.',
@@ -260,7 +315,7 @@ export const LINES = {
       'I see. Allez, we adjust.', 'Hm. Noted.',
     ],
     ownScores: [
-      'Bravo, Marcel. See? It is not difficult.', 'Good. The point is ours.', 'A correct result.', 'Well done. Continue.',
+      'Bravo, {mate}. See? It is not difficult.', 'Good. The point is ours.', 'A correct result.', 'Well done. Continue.',
     ],
     meneWon: [
       'The mène is ours, as calculated.', 'Bravo. Next, please.', 'Quod erat demonstrandum.',
@@ -324,6 +379,27 @@ export const LINES = {
       'noReply': [
         'They are out. Points, points, points!', 'Nobody can answer. Add points.',
       ],
+      'promote': [
+        'Ha! I push our boule in. Watch this.', 'A tap on our own boule, and zoom!', 'I give ours a nudge. Allez!',
+      ],
+      'block': [
+        'I park one in front. Nobody rolls through.', 'A blocker! Let them find a way round.', 'One in front of the jack, like a wall.',
+      ],
+      'cover': [
+        'I put one behind, just in case.', 'One behind the jack. Safe!', 'Behind the jack, in case somebody shoots.',
+      ],
+      'spread': [
+        'Spread them, no easy double.', 'Not too close. No double for them.', 'Spaced out, so no double.',
+      ],
+      'drop': [
+        '...I drop it. Yes. Even I can read this.', 'A drop. Me. Do not tell anyone.', 'I drop it short. For once.',
+      ],
+      'farJack': [
+        'It is a long way... all right, I point.', 'So far! Fine, I point.', 'Too far for a shot. I point.',
+      ],
+      'easyShot': [
+        'Boom. Easy one.', 'Close and clear. Boom!', 'Easy. I shoot it.',
+      ],
     },
     suggest: {
       'takePoint': [
@@ -370,6 +446,27 @@ export const LINES = {
       ],
       'noReply': [
         'They are out. Just add points.', 'Nobody can answer. Points.',
+      ],
+      'promote': [
+        "Tap our own boule on, it'll be a point even if you miss", 'Nudge our boule closer, a miss still leaves a point',
+      ],
+      'block': [
+        'Put one in front of the jack and stop their rolling', 'A blocker in front of the jack, stop their roller',
+      ],
+      'cover': [
+        'Behind the jack, in case they go for it', 'Put one behind the jack, to keep the point safe',
+      ],
+      'spread': [
+        'Keep ours apart, no easy double for them', 'Not beside our boule, one throw could take both',
+      ],
+      'drop': [
+        'Just drop it short. Nothing to gain here.', 'Drop it short, no need to risk the head',
+      ],
+      'farJack': [
+        "It's a long way. Point it.", 'Too far from here, point it',
+      ],
+      'easyShot': [
+        'Close and clear, shoot it!', 'That one is an easy shot, take it',
       ],
     },
     who: {
@@ -474,10 +571,83 @@ export const LINES = {
   },
 };
 
+// F45: any of the three can be your partner, so Marcel and Odette also advise (same keys as Pierre's `suggest` and `who`)
+LINES.marcel.suggest = {
+  takePoint: ['Their boule is {gap} off the jack. Point it, doucement.', 'Point it, {gap} is all it takes. Patience.'],
+  holdPoint: ['We are in front. Add a little, softly.', 'We lead. A gentle one more.'],
+  downOnBoules: ['They have {n} more boules than us. Point, my friend.', 'We are short of boules. Patience, point.'],
+  upOnBoules: ['We have the boules. A shot, if you wish.', 'More boules than them. Why not a shot?'],
+  bringInBoules: ['Knock that one out and our {n} count.', 'Hit that one and ours come in.'],
+  removePoints: ['They hold {n}. Take the closest away.', 'They hold {n}. That first one must go.'],
+  protectOwn: ['Our own boule is too near. Point, gently.', 'Do not knock our own boule. Point.'],
+  lastBoule: ['The last boule. No heroics.', 'Last one. Safe.'],
+  closeOut: ['Only {n} to win. No gambling now.', 'So close. A safe point wins it.'],
+  voidMene: ['We are losing {n}. Knock the jack out and begin again.', 'Pff. Out with the cochonnet, we start again.'],
+  jackScoreTrick: ['They have no boules. Knock the jack out and ours count.', 'Nothing left for them. Jack out, ours count.'],
+  blockFront: ['A blocker in front of the jack. Stop the roller.', 'Put one in front, doucement.'],
+  safetyBehind: ['Cover the jack from behind, just in case.', 'Behind the jack. One never knows.'],
+  coverJack: ['The jack is near the line. Cover it from behind.', 'Behind the jack, it is near the line.'],
+  noReply: ['They are out. Just add points.', 'Nobody can answer. Points, at leisure.'],
+  promote: ['Tap our own boule on. A point even if you miss.', 'Nudge ours closer. A miss still leaves a point.'],
+  block: ['Put one in front of the jack and stop their rolling.', 'A blocker in front of the jack.'],
+  cover: ['Behind the jack, in case they go for it.', 'One behind the jack keeps the point safe.'],
+  spread: ['Keep ours apart. No easy double for them.', 'Not beside our boule, one throw takes both.'],
+  drop: ['Drop it short. Nothing to gain here.', 'Short, and no risk to the head.'],
+  farJack: ['It is a long way. Point it.', 'Too far for fancy things. Point.'],
+  easyShot: ['Close and clear. Shoot it.', 'That one is an easy shot. Take it.'],
+};
+LINES.marcel.who = {
+  youPoint: ['You point this one, I will take the next.', 'You point. I will follow.'],
+  youPointAlone: ['You point this one.', 'Your turn to point.'],
+  youShoot: ['You shoot this one. Young arms.', 'Go on, you shoot.'],
+  iShoot: ['I will shoot this one. Oh là là.', 'Let me take this shot, an old man can try.'],
+  iPoint: ['Let me point this one.', 'I will point this one, then you.'],
+  only: ['Mine to throw.', 'Only my boules are left.'],
+};
+LINES.odette.suggest = {
+  takePoint: ['Their boule is {gap} off the jack. Point it, precisely.', 'Point it. {gap} is all it takes.'],
+  holdPoint: ['We lead. Add one, with care.', 'We are in front. Keep pointing.'],
+  downOnBoules: ['They have {n} more boules than us. Point.', 'We are short of boules. Point, if you please.'],
+  upOnBoules: ['We hold the boules. You may shoot.', 'We have the boules. Shoot if it is sound.'],
+  bringInBoules: ['Knock that boule out and our {n} count.', 'Hit that one, and ours count.'],
+  removePoints: ['They hold {n}. Shoot the closest.', 'They hold {n}. The first one must go.'],
+  protectOwn: ['Our own boule is too close. Point.', 'Our boule is in the way. Point, and keep it safe.'],
+  lastBoule: ['The last boule. Play it safe.', 'Last one. No theatrics.'],
+  closeOut: ['Only {n} to win. Do not gamble.', 'So close. A safe point.'],
+  voidMene: ['We are losing {n}. Shoot the jack and void it.', 'Knock the jack out. We begin again.'],
+  jackScoreTrick: ['They are out of boules. Knock the jack out and ours score.', 'Nothing left for them. Jack out, ours count.'],
+  blockFront: ['A blocker in front of the jack, to stop the roller.', 'Put one in front of the jack.'],
+  safetyBehind: ['Cover the jack from behind.', 'Behind the jack, as a precaution.'],
+  coverJack: ['The jack is near the line. Cover it from behind.', 'Behind the jack. It is near the line.'],
+  noReply: ['They are out. Simply add points.', 'Nobody can answer. Points.'],
+  promote: ['Tap our own boule on. A point even if you miss.', 'Nudge ours closer. A miss still leaves a point.'],
+  block: ['Put one in front of the jack and stop their rolling.', 'A blocker in front of the jack.'],
+  cover: ['Behind the jack, in case they go for it.', 'One behind the jack keeps the point safe.'],
+  spread: ['Keep ours apart. No easy double for them.', 'Not beside our boule. One throw could take both.'],
+  drop: ['Drop it short. Nothing to gain here.', 'Short, with no risk to the head.'],
+  farJack: ['It is a long way. Point it.', 'Too far for anything fancy. Point.'],
+  easyShot: ['Close and clear. Shoot it.', 'An easy shot. Take it.'],
+};
+LINES.odette.who = {
+  youPoint: ['You point this one, I will take the next.', 'You point. I shall shoot afterwards.'],
+  youPointAlone: ['You point this one.', 'Your turn to point.'],
+  youShoot: ['You shoot this one.', 'Go on, you shoot.'],
+  iShoot: ['I will shoot this one.', 'Allow me this shot.'],
+  iPoint: ['Let me point this one.', 'I will point this one, then you.'],
+  only: ['Mine to throw.', 'Only my boules are left.'],
+};
+
 // Commentary picker: one random line per (speaker, event), never the same twice in a row. `rand` is a 0..1
 // generator (seeded in the game and in tests). A missing pool gives null.
-export function createCommentary(rand) {
+export function createCommentary(rand, { partner = 'pierre' } = {}) {
   const last = new Map();
+  let partnerId = partner;
+  // {mate}: the speaker's own teammate: your partner's mate is you, an opponent's is the other opponent
+  const mateOf = (id) => {
+    if (id === partnerId) return 'my friend';
+    const other = ['pierre', 'marcel', 'odette'].find((c) => c !== partnerId && c !== id);
+    return id === 'you' || !other ? 'my friend' : PERSONALITIES[other].name;
+  };
   function line(id, event, vars = {}) {
     const pool = LINES[id] && event.split('.').reduce((o, k) => (o ? o[k] : undefined), LINES[id]);
     if (!pool || !pool.length) return null;
@@ -485,14 +655,15 @@ export function createCommentary(rand) {
     let i = Math.floor(rand() * pool.length) % pool.length;
     if (pool.length > 1 && i === last.get(key)) i = (i + 1 + Math.floor(rand() * (pool.length - 1))) % pool.length;
     last.set(key, i);
-    return pool[i].replace(/\{(\w+)\}/g, (m, k) => (vars[k] !== undefined ? vars[k] : m));
+    const all = { mate: mateOf(id), partner: PERSONALITIES[partnerId].name, ...vars };
+    return pool[i].replace(/\{(\w+)\}/g, (m, k) => (all[k] !== undefined ? all[k] : m));
   }
   // speaker-prefixed form for the status line: Name: "line"
   function say(id, event, vars) {
     const l = line(id, event, vars);
     return l ? `${PERSONALITIES[id].name}: “${l}”` : '';
   }
-  return { line, say };
+  return { line, say, setPartner(id) { if (PERSONALITIES[id] && id !== 'you') partnerId = id; }, get partner() { return partnerId; } };
 }
 
 // E09: Pierre's chooser suggestion is ONE line built from ONE decision: who throws plus what they do (intent).
@@ -500,11 +671,12 @@ export function createCommentary(rand) {
 export const REASON_ACTION = Object.freeze({
   takePoint: 'point', holdPoint: 'point', downOnBoules: 'point', protectOwn: 'point', lastBoule: 'point',
   closeOut: 'point', blockFront: 'point', safetyBehind: 'point', coverJack: 'point', noReply: 'point',
-  upOnBoules: 'shoot', bringInBoules: 'shoot', removePoints: 'shoot', voidMene: 'shoot', jackScoreTrick: 'shoot',
+  promote: 'point', block: 'point', cover: 'point', spread: 'point', drop: 'point', farJack: 'point', // F04: block / cover also stand for the old codes (aliases)
+  upOnBoules: 'shoot', bringInBoules: 'shoot', removePoints: 'shoot', voidMene: 'shoot', jackScoreTrick: 'shoot', easyShot: 'shoot',
 });
 
 // Which who.<kind> line fits: the thrower (human or Pierre), whether they are alone, and the action
-export function whoKind({ intent, thrower, pierre, pierreHasBoules, teamSize }) {
+export function whoKind({ intent, thrower, partner, pierre = partner, partnerHasBoules, pierreHasBoules = partnerHasBoules, teamSize }) {
   const shoot = intent === 'shoot';
   if (thrower.isHuman) return shoot ? 'youShoot' : pierreHasBoules ? 'youPoint' : 'youPointAlone';
   if (thrower.id === pierre.id && teamSize === 1) return 'only';
@@ -513,10 +685,10 @@ export function whoKind({ intent, thrower, pierre, pierreHasBoules, teamSize }) 
 
 // talk: createCommentary(). { intent: 'point'|'shoot', code: tactics reason, kind: whoKind(), vars: template vars, fact }
 // Returns 'Pierre: “<who> <reason> <fact>”' (a single quoted line, no second speaker prefix).
-export function composeSuggestion(talk, { intent, code, kind, vars = {}, fact = '' }) {
-  const who = talk.line('pierre', 'who.' + kind) || '';
+export function composeSuggestion(talk, { intent, code, kind, vars = {}, fact = '', speaker = 'pierre' }) {
+  const who = talk.line(speaker, 'who.' + kind) || '';
   const c = REASON_ACTION[code] === intent ? code : null; // a reason for the other action would contradict
-  const reason = (c && talk.line('pierre', 'suggest.' + c, vars)) || '';
+  const reason = (c && talk.line(speaker, 'suggest.' + c, vars)) || '';
   const body = [who, reason, intent === 'shoot' ? fact : ''].filter(Boolean).join(' ').trim();
-  return body ? `${PERSONALITIES.pierre.name}: “${body}”` : '';
+  return body ? `${PERSONALITIES[speaker].name}: “${body}”` : '';
 }

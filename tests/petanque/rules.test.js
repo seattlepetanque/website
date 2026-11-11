@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createMatch, apply, nextTeam, meneResult, holdingTeam, jackValid, jackFault, jackPlaceValid, jackPlaceFault, playersWithBoules,
+  createMatch, apply, nextTeam, meneResult, holdingTeam, jackValid, jackFault, jackPlaceValid, jackPlaceFault, playersWithBoules, deadJackText,
 } from '../../assets/js/petanque/rules.js';
 
 const jackAt = { x: 2, y: 8 };
@@ -177,6 +177,40 @@ test('dead jack: void if both have boules, else holder scores its boules', () =>
   assert.equal(dead2.result.team, 0);
 });
 
+test('deadJackText names the case from the boules in hand when the jack went dead', () => {
+  const names = ['You & Pierre', 'Marcel & Odette'];
+  assert.equal(deadJackText([5, 6], names), 'The cochonnet went out: both teams still have boules, so the mène is void.');
+  assert.equal(deadJackText([0, 0], names), 'The cochonnet went out and neither team has boules left, so the mène is void.');
+  assert.equal(deadJackText([0, 2], names), 'The cochonnet went out with only Marcel & Odette holding boules: they score 2.');
+  assert.equal(deadJackText([3, 0], names), 'The cochonnet went out with only You & Pierre holding boules: they score 3.');
+});
+
+test('dead jack records the boules in hand at the moment it died', () => {
+  // only team 0 has boules: the holder scores its 5 in hand, and the result keeps that count
+  let m = started({});
+  m = apply(m, { type: 'bouleThrown', playerId: 'you' });
+  m = { ...m, players: m.players.map((p) => (p.team === 1 ? { ...p, boulesLeft: 0 } : p)) };
+  const dead = apply(m, { type: 'throwSettled', jack: { x: 9, y: 9, dead: true }, boules: [] });
+  assert.deepEqual(dead.result.inHand, [5, 0]);
+  assert.equal(dead.result.points, 5);
+  assert.equal(deadJackText(dead.result.inHand, ['You & Pierre', 'Marcel & Odette']),
+    'The cochonnet went out with only You & Pierre holding boules: they score 5.');
+
+  // both teams hold boules: void, counts kept
+  let both = apply(started({}), { type: 'bouleThrown', playerId: 'you' });
+  both = apply(both, { type: 'throwSettled', jack: { x: 9, y: 9, dead: true }, boules: [] });
+  assert.ok(both.result.void);
+  assert.deepEqual(both.result.inHand, [5, 6]);
+
+  // the last boule in play went dead: neither team has boules, void, counts kept as zero
+  let last = started({});
+  last = { ...last, players: last.players.map((p) => ({ ...p, boulesLeft: p.id === 'you' ? 1 : 0 })) };
+  last = apply(last, { type: 'bouleThrown', playerId: 'you' });
+  last = apply(last, { type: 'throwSettled', jack: { x: 9, y: 9, dead: true }, boules: [] });
+  assert.ok(last.result.void);
+  assert.deepEqual(last.result.inHand, [0, 0]);
+});
+
 test('match ends at target', () => {
   let m = started({ target: 2 });
   m = playOut(m, [b('a', 0, 2, 8.1), b('b', 0, 2, 8.2), b('c', 1, 2, 8.5)]);
@@ -191,7 +225,7 @@ test('7-point game ends at 7', () => {
   m = playOut(m, [b('a', 1, 2, 8.1), b('b', 1, 2, 8.2), b('c', 0, 2, 8.5)]);
   assert.equal(m.phase, 'gameOver');
   assert.equal(m.winner, 1);
-  assert.deepEqual(m.scores, [5, 8]);
+  assert.deepEqual(m.scores, [5, 7]); // F31: capped at the target
 });
 
 test('dead boules relocated beyond the far line are not counted or measured', () => {
@@ -314,4 +348,42 @@ test('E08: far and short faults carry the measured distance; a dead jack that ro
   assert.equal(back.reason, 'out');
   assert.equal(back.back, true);
   assert.equal(jackFault({ x: 2, y: 15.3, dead: true }).back, undefined);
+});
+
+// --- F31: stored scores are capped at the target; the winner is still the team that reaches it ---
+
+test('F31: 12 + 3 is stored as 13, and the team that reached the target wins', () => {
+  let m = started({});
+  m = { ...m, scores: [12, 0] };
+  m = playOut(m, [b('a', 0, 2, 8.1), b('b', 0, 2, 8.2), b('c', 0, 2, 8.3), b('o', 1, 2, 9)]);
+  assert.equal(m.phase, 'gameOver');
+  assert.equal(m.winner, 0);
+  assert.deepEqual(m.scores, [13, 0]);
+  assert.equal(m.result.points, 3);
+});
+
+test('F31: in a 7-point game 6 + 6 is stored as 7', () => {
+  let m = started({ target: 7 });
+  m = { ...m, scores: [6, 2] };
+  m = playOut(m, [b('a', 0, 2, 8.1), b('b', 0, 2, 8.2), b('c', 0, 2, 8.3), b('o', 1, 2, 9)]);
+  assert.equal(m.phase, 'gameOver');
+  assert.equal(m.winner, 0);
+  assert.deepEqual(m.scores, [7, 2]);
+});
+
+test('F31: ordinary scoring below the target is unchanged', () => {
+  let m = started({});
+  m = { ...m, scores: [4, 5] };
+  m = playOut(m, [b('a', 1, 2, 8.1), b('b', 1, 2, 8.2), b('c', 0, 2, 8.5)]);
+  assert.equal(m.phase, 'meneEnd');
+  assert.deepEqual(m.scores, [4, 7]);
+  assert.equal(m.winner, null);
+});
+
+test('F31: E15 early end still fires with a capped score', () => {
+  const m = e15Setup([12, 0], 0);
+  const r = throwBoule(m, 'you', jackAt, [b('a', 0, 2, 8.1), b('a2', 0, 2, 8.2), b('a3', 0, 2, 8.3), b('o', 1, 2, 9)]);
+  assert.equal(r.phase, 'gameOver');
+  assert.equal(r.winner, 0);
+  assert.deepEqual(r.scores, [13, 0]);
 });

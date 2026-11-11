@@ -1,5 +1,6 @@
-// Gravel terrain from one seed: macro heightfield, looseness map, stones, divots.
-// sample() returns { h, nx, ny, nz, friction, loose }; friction is the rolling
+// Gravel terrain from one seed: macro heightfield (slopes), firmness map, stones, divots.
+// sample() returns { h, nx, ny, nz, friction, loose, firm }; loose is 0 (hard pack) .. 1 (soft gravel),
+// firm = 1 - loose (F05 names the map firmness in the UI); friction is the rolling
 // resistance coefficient (mu_r). A stone's h is the z of its centre.
 import { C } from './constants.js';
 import { mulberry32, makeNoise2D } from './rng.js';
@@ -49,7 +50,30 @@ function poisson(rand, x0, y0, x1, y1, minD, limit, ok) {
   return pts;
 }
 
+// F52: which gravel this court has, a pure function of the seed (50/50 grey or sand) so the look is stable through a
+// game and reproducible with ?seed=. `force` ('grey' | 'sand') overrides it (the ?gravel= debug flag).
+export function pickGravel(seed, force) {
+  if (force === 'grey' || force === 'sand') return force;
+  return mulberry32((seed ^ 0x6772617) >>> 0)() < 0.5 ? 'grey' : 'sand';
+}
+
+// The jack's look per gravel: orange on grey, bright red on sand (contrast).
+export const JACK_STYLE = {
+  grey: { color: '#ff7a00', emissive: '#4a1e00' },
+  sand: { color: '#ff1d12', emissive: '#4a0500' },
+};
+
+let activeGravel = 'sand';
+export function currentGravel() { return activeGravel; }
+export function jackStyle() { return JACK_STYLE[activeGravel]; }
+
+function debugGravel() {
+  try { return typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug') ? new URLSearchParams(location.search).get('gravel') : null; } catch (e) { return null; }
+}
+
 export function createTerrain(seed, opts = {}) {
+  const gravel = pickGravel(seed, opts.gravel || debugGravel());
+  activeGravel = gravel;
   const rand = mulberry32(seed);
   const pad = C.terrainPad, step = C.gridStep;
   const X0 = -pad, Y0 = -pad;
@@ -81,6 +105,25 @@ export function createTerrain(seed, opts = {}) {
       fric[k] = C.rollResistPacked + (C.rollResistLoose - C.rollResistPacked) * l;
     }
   }
+  // F05: rescale the macro field so the steepest local gradient near the court is the configured slope
+  const deg = clamp(opts.slopeMaxDeg !== undefined ? opts.slopeMaxDeg : C.slopeMaxDeg, C.slopeMinDeg, C.slopeLimitDeg);
+  const target = Math.tan((deg * Math.PI) / 180);
+  let gmax = 0;
+  const reach = 0.5; // include a margin around the court, where the timbers are
+  for (let j = 0; j < gh - 1; j++) {
+    for (let i = 0; i < gw - 1; i++) {
+      const x = X0 + (i + 0.5) * step, y = Y0 + (j + 0.5) * step;
+      if (x < -reach || x > C.terrainW + reach || y < -reach || y > C.terrainL + reach) continue;
+      const k = j * gw + i;
+      const gx = (base[k + 1] - base[k] + base[k + gw + 1] - base[k + gw]) / (2 * step);
+      const gy = (base[k + gw] - base[k] + base[k + gw + 1] - base[k + 1]) / (2 * step);
+      gmax = Math.max(gmax, Math.hypot(gx, gy));
+    }
+  }
+  if (gmax > 1e-9) {
+    const sc = target / gmax;
+    for (let k = 0; k < base.length; k++) base[k] = clamp(base[k] * sc, -C.maxHeight, C.maxHeight);
+  }
   const divots = new Float32Array(gw * gh); // depth (positive = lower ground)
 
   const jf = C.jitterFreq, ja = C.jitterAmp, je = 0.004;
@@ -110,9 +153,10 @@ export function createTerrain(seed, opts = {}) {
           loosen[k + gw] * (1 - tx) * ty + loosen[k + gw + 1] * tx * ty;
         const f = fric[k] * (1 - tx) * (1 - ty) + fric[k + 1] * tx * (1 - ty) +
           fric[k + gw] * (1 - tx) * ty + fric[k + gw + 1] * tx * ty;
-        return { h, nx: -gx * inv, ny: -gy * inv, nz: inv, friction: f, loose: l };
+        return { h, nx: -gx * inv, ny: -gy * inv, nz: inv, friction: f, loose: l, firm: 1 - l };
       },
       stonesNear,
+      gravel,
       visibleStones,
       heightGrid,
       addDivot,

@@ -2,6 +2,7 @@
 // World is z-up, metres. The character faces +y at yaw 0; positive yaw turns toward +x.
 // The pose math below is pure (no three.js) so it can be tested in Node.
 import { C } from './constants.js';
+import { jackStyle } from './terrain.js';
 
 const { sin, cos, sqrt, atan2, min, max, abs, PI } = Math;
 const BLEND = 0.25; // s, stance-to-stance blend
@@ -262,9 +263,65 @@ export function stancePose(stance, t, ctx = {}) {
       p.armL.p = 0.05 + 0.01 * b; p.armR.p = 0.05 + 0.01 * b;
     }
   }
+  const standing = stance === 'watch' || stance === 'idle';
+  if (standing) {
+    microMotion(p, t, ctx, stance);
+    if (ctx.hold) holdArms(p, t, ctx);
+  }
   p.ry = footprintShift(p);
-  if ((stance === 'watch' || stance === 'idle') && (ctx.quirks || ctx.forceQuirk)) return withQuirk(p, t, ctx);
+  if (standing && (ctx.quirks || ctx.forceQuirk)) return withQuirk(p, t, ctx);
   return p;
+}
+
+// ---------- F20: layered micro-motion, relaxed holds, idle gestures (pure) ----------
+const hash = (a, b = 0) => { const x = sin(a * 127.1 + b * 311.7) * 43758.5453; return x - Math.floor(x); };
+// Breathing, a slow weight shift, small head movements and an occasional small step, all added to a watch/idle pose.
+// ctx.offset desynchronises characters; ctx.reduced scales it down (and drops the step).
+function microMotion(p, t, ctx, stance) {
+  const o = ctx.offset || 0, k = ctx.reduced ? 0.4 : 1;
+  const b = sin(t * 1.9 + o);
+  p.spine += 0.012 * b * k; p.pitch += 0.007 * b * k;
+  const ws = 0.6 * sin(t * 0.31 + o) + 0.4 * sin(t * 0.53 + o * 2);
+  p.px += 0.007 * ws * k; p.twist += 0.014 * ws * k; p.pz -= 0.003 * abs(ws) * k;
+  p.neck += 0.025 * sin(t * 0.9 + o) * k;
+  if (stance === 'watch') p.headYaw += (ctx.look ? 0.04 * sin(t * 1.3 + o * 3) : 0.3 * sin(t * 0.37 + o) * (0.5 + 0.5 * sin(t * 0.13 + o))) * k;
+  if (ctx.steps && !ctx.reduced) { // (ctx.steps: real characters only, so pose tests stay grounded) a small shuffle every STEP seconds: one foot lifts, shifts a little and lands back
+    const tt = t + o * 2.7, i = Math.floor(tt / STEP), s = (tt - i * STEP - 2 - hash(i, o) * 8) / 0.9;
+    if (s >= 0 && s < 1) {
+      const f = i % 2 ? p.footL : p.footR;
+      f.x += (i % 2 ? -1 : 1) * 0.035 * (hash(i, o + 1) - 0.3) * sin(PI * s); f.y += 0.03 * (hash(i, o + 2) - 0.5) * sin(PI * s);
+      f.z += 0.02 * sin(PI * s);
+    }
+  }
+}
+const STEP = 17;
+
+// Relaxed holds while standing about. Styles: 'sides' arms hanging, boules cupped at the hips; 'akimbo' empty hands on the hips;
+// 'fold' arms loosely folded; 'fidget' hanging arms that never quite settle.
+const SIDE_ARM = { p: 0.1, ab: 0.1, p2: 0.8, ab2: -0.12 };
+const FOLD = { L: { p: 0.5, ab: 0.1, p2: 1.75, ab2: -1.0 }, R: { p: 0.55, ab: 0.1, p2: 1.5, ab2: -1.0 } };
+const HANG = { p: 0.06, ab: 0.12, p2: 0.3, ab2: 0.12 };
+export function holdArm(style, held, t, side, o = 0) {
+  const ph = side === 'L' ? 0 : 1.7;
+  if (style === 'akimbo') return held ? { ...SIDE_ARM } : { ...HIPS.armL };
+  if (style === 'fold') return { ...FOLD[side] };
+  if (style === 'fidget') {
+    const a = held ? { ...SIDE_ARM } : { ...HANG };
+    a.p += 0.07 * sin(t * 2.3 + ph + o); a.p2 += 0.2 * sin(t * 3.1 + ph * 2 + o); a.ab2 += 0.1 * sin(t * 2.1 + ph);
+    return a;
+  }
+  return held ? { ...SIDE_ARM, p2: SIDE_ARM.p2 + 0.03 * sin(t * 1.3 + ph + o) } : { ...HANG };
+}
+const HOLD_SLOT = 13;
+export function holdArmsAt(styles, held, t, side, o = 0) {
+  const list = styles && styles.length ? styles : ['sides'];
+  const tt = t + o * 3, i = Math.floor(tt / HOLD_SLOT), pick = (n) => list[Math.floor(hash(n, o + 5) * list.length)];
+  const cur = holdArm(pick(i), held, t, side, o);
+  const w = (tt - i * HOLD_SLOT) / 1.2;
+  return w >= 1 ? cur : blendPoses(holdArm(pick(i - 1), held, t, side, o), cur, w);
+}
+function holdArms(p, t, ctx) {
+  for (const s of ['L', 'R']) p['arm' + s] = holdArmsAt(ctx.hold.styles, !!ctx.hold.held[s], t, s, ctx.offset || 0);
 }
 
 // ---------- personality: idle quirks and reaction styles (pure) ----------
@@ -305,26 +362,72 @@ export const QUIRKS = {
   shift: { dur: 3, fn: (p, u) => { p.px += 0.035 * sin(u * 2); p.twist += 0.06 * sin(u * 2); p.footR.x += 0.015; } },
   lookaround: { dur: 3, fn: (p, u) => { p.headYaw += 0.55 * sin(u * 1.8); p.neck += 0.03; } },
 };
+const pulse = (u, dur) => sin(PI * clamp(u / dur, 0, 1));
+const dk = (c) => 'arm' + ((c && c.dom) || 'R'), ok = (c) => 'arm' + ((c && c.dom) === 'L' ? 'R' : 'L');
+// F20 gestures (c: { dom, off } the dominant and other hand letters; the hands may be holding boules)
+const FRONT = (u, a = 0) => ({ p: 0.78 + 0.04 * sin(u * 2 + a), ab: 0.14, p2: 1.5, ab2: -0.12 });
+Object.assign(QUIRKS, {
+  checkboules: { dur: 3.6, fn: (p, u, c) => { // look down at what is in the hands, turning them over a little
+    p[dk(c)] = FRONT(u); p[ok(c)] = FRONT(u, 1.5);
+    p[dk(c)].p2 += 0.08 * sin(u * 5); p[ok(c)].p2 += 0.08 * sin(u * 4.2 + 1);
+    p.neck += 0.5 * pulse(u, 3.6); p.spine += 0.05; p.headYaw += 0.12 * sin(u * 1.5);
+  } },
+  wipeboule: { dur: 3, fn: (p, u, c) => { // rub a boule on the trouser leg
+    p[dk(c)] = { p: 0.3, ab: 0.08, p2: 0.62 + 0.3 * sin(u * 8), ab2: 0.05 };
+    p.spine += 0.08; p.neck += 0.4 * pulse(u, 3); p.pitch += 0.03;
+  } },
+  shade: { dur: 3.4, fn: (p, u, c) => { // a flat hand over the eyes, peering toward the head
+    const k = min(1, pulse(u, 3.4) / 0.9);
+    p[dk(c)] = { p: 1.3, ab: 0.35, p2: 2.95, ab2: -0.45 }; p.neck -= 0.08 * k;
+    p.headYaw += 0.1 * k; p.spine -= 0.03;
+  } },
+  shrug: { dur: 2.4, fn: (p, u) => { // both palms up and out, a small lift and drop
+    const e = pulse(u, 2.4), a = { p: 0.4, ab: 0.45 + 0.2 * e, p2: 0.85, ab2: 0.8 + 0.15 * e };
+    p.armL = { ...a }; p.armR = { ...a }; p.neck += 0.1 * e; p.pz -= 0.006 * e; p.headYaw += 0.15 * sin(u * 2.5);
+  } },
+  chat: { dur: 4, fn: (p, u, c) => { // talking with the hand to a teammate beside us
+    const side = (c && c.dom) === 'L' ? -1 : 1;
+    p[dk(c)] = { p: 0.85, ab: 0.3, p2: 1.45 + 0.35 * sin(u * 5.3), ab2: 0.02 + 0.2 * sin(u * 2.9) };
+    p.headYaw += 0.5 * side * pulse(u, 4); p.twist += 0.1 * side * pulse(u, 4); p.neck += 0.04 * sin(u * 3);
+  } },
+  toss: { dur: 3.6, fn: (p, u, c) => { // Pierre tosses a boule from hand to hand (tossBall places it)
+    p[dk(c)] = { ...FRONT(u), ab: 0.22 }; p[ok(c)] = { ...FRONT(u, 1), ab: 0.22 };
+    const f = u / 0.9 % 1, i = Math.floor(u / 0.9); // the hand that just caught dips a little
+    (i % 2 ? p[dk(c)] : p[ok(c)]).p += 0.06 * sin(PI * f);
+    p.neck += 0.2; p.headYaw += 0.1 * sin(u * 3.5);
+  } },
+});
+// Where the tossed boule is at u seconds in: k 0 at the dominant hand, 1 at the other, arc metres of lift
+export function tossBall(u) {
+  const c = u / 0.9, i = Math.floor(c), f = c - i;
+  return { k: i % 2 ? 1 - f : f, arc: 0.22 * sin(PI * f) };
+}
 const BLEND_IN = 0.45;
-// Which quirk (if any) is active at time t for a character: a slot every SLOT seconds, a quirk in each, with a rest first
-const SLOT = 7.5;
+// Which quirk (if any) is active at time t for a character: one slot every SLOT seconds, each with a hashed start, a quirk and sometimes
+// nothing, so the gestures come at irregular intervals and differ between characters (offset)
+const SLOT = 8.5;
 export function quirkAt(list, t, offset = 0) {
   if (!list || !list.length) return null;
-  const tt = t + offset, i = Math.floor(tt / SLOT), u = tt - i * SLOT - 1.2;
-  const name = list[(i * 5 + 3 + Math.floor(offset)) % list.length], dur = QUIRKS[name].dur;
+  const tt = t + offset, i = Math.floor(tt / SLOT);
+  if (hash(i, offset + 9) < 0.25) return null;
+  const name = list[Math.floor(hash(i, offset + 3) * list.length)], dur = QUIRKS[name].dur;
+  const u = tt - i * SLOT - 0.5 - hash(i, offset) * max(0, SLOT - dur - 1);
   if (u < 0 || u > dur) return null;
   return { name, u, w: clamp(min(u, dur - u) / BLEND_IN, 0, 1) };
 }
+// The active gesture at time t for a ctx ({ quirks, forceQuirk, offset, reduced, canToss }), or null
+export function activeQuirk(t, ctx) {
+  if (ctx.forceQuirk) return { name: ctx.forceQuirk, u: t, w: 1 };
+  const a = quirkAt(ctx.quirks && ctx.quirks.idle, t, ctx.offset || 0);
+  if (!a || (a.name === 'toss' && (ctx.reduced || !ctx.canToss))) return null;
+  return ctx.reduced ? { ...a, w: a.w * 0.5 } : a;
+}
 function withQuirk(p, t, ctx) {
-  let name, u, w = 1;
-  if (ctx.forceQuirk) { name = ctx.forceQuirk; u = t; } else {
-    const a = quirkAt(ctx.quirks && ctx.quirks.idle, t, ctx.offset || 0);
-    if (!a) return p;
-    ({ name, u, w } = a);
-  }
+  const a = activeQuirk(t, ctx);
+  if (!a) return p;
   const q = clonePose(p);
-  QUIRKS[name].fn(q, u);
-  return blendPoses(p, q, w);
+  QUIRKS[a.name].fn(q, a.u, ctx);
+  return blendPoses(p, q, a.w);
 }
 
 // Celebrate / dismay variants by personality (the default 'cheer' and 'head' live in stancePose)
@@ -354,18 +457,45 @@ function reactionPose(p, kind, style, t) {
 export const CARRY_ARM = { p: 0.55, ab: 0.2, p2: 1.45, ab2: 0.15 };
 
 // Walking gait at the given phase (radians, one full cycle = two steps). opts.lift scales the foot lift (stepping over
-// a timber raises it to a high step), opts.carry holds the right arm steady with a ball at the waist.
+// a timber raises it to a high step). opts.stride stretches the stride (brisk walks, see walkTo). Arms (F26): opts.arms
+// 'swing' (default: each arm swings opposite its leg) or 'fold' (folded across the chest); opts.amp scales the swing;
+// opts.held = { R, L } marks hands holding boules (a smaller swing, the boules ride the palm); opts.carry holds the
+// right arm with a ball or ring at the waist, swinging a little.
 export function walkPose(phase, opts = {}) {
-  const p = basePose(), A = 0.18, s = sin(phase), c = cos(phase), lift = opts.lift || 1;
+  const p = basePose(), k = opts.stride || 1, A = 0.18 * k, s = sin(phase), c = cos(phase), lift = opts.lift || 1;
   p.footL.y = A * s; p.footR.y = -A * s;
   p.footL.z = 0.035 * lift * max(0, c); p.footR.z = 0.035 * lift * max(0, -c);
   p.pz = 0.505 - 0.012 * abs(c); p.px = 0.012 * s; p.twist = 0.1 * s; p.spine = -0.1 * s * 0.6 + 0.04;
-  p.armL = arm(-0.45 * s + 0.1, 0.08, 0.3); p.armR = arm(0.45 * s + 0.1, 0.08, 0.3);
-  if (opts.carry) { p.armR = { ...CARRY_ARM }; p.twist = 0.1 * s * 0.5; }
+  walkArms(p, s, opts);
+  if (opts.carry) p.twist = 0.1 * s * 0.5;
   p.pitch = 0.05; p.neck = -0.04; p.headYaw = 0;
   p.ry = 0.0425; // the gait's footprint is centred here at every phase
   return p;
 }
+// F26: the walking arms. A free arm swings about its shoulder from hanging, the elbow bent a little more on the forward
+// swing; a hand holding boules swings less and its forearm rests a little forward (the boules ride the palm, E16);
+// a folded pair stays folded (FOLD); a carried ball or ring keeps the right arm at the waist with a small swing.
+const WALK_SWING = 0.45, WALK_HOLD_SWING = 0.2; // rad, each way from hanging
+function walkArms(p, s, o) {
+  const amp = o.amp || 1;
+  const arm1 = (key, sg) => { // sg: +1 right, -1 left (the leg opposite the arm steps forward when s > 0 for the left)
+    if (key === 'R' && o.carry) return { p: CARRY_ARM.p + 0.12 * s, ab: CARRY_ARM.ab, p2: CARRY_ARM.p2 + 0.12 * s, ab2: CARRY_ARM.ab2 };
+    if (o.arms === 'fold') return { ...FOLD[key] };
+    const held = !!(o.held && o.held[key]);
+    if (held) return arm(0.1 + sg * WALK_HOLD_SWING * amp * s, 0.12, 0.55);
+    return arm(0.1 + sg * WALK_SWING * amp * s, 0.08, 0.3);
+  };
+  p.armL = arm1('L', -1); p.armR = arm1('R', 1);
+}
+// F26: the walking style for one walk: a personality's tendency to fold its arms and how big its swing is, varied from walk
+// to walk by a hash of the walk's number (so no two walks look the same). who: the personality id (lower case).
+const WALK_TENDENCY = { odette: { fold: 0.7, amp: 0.85 }, marcel: { fold: 0.25, amp: 0.55 }, pierre: { fold: 0.05, amp: 1.15 } };
+export function walkStyle(who, seed, n) {
+  const t = WALK_TENDENCY[who] || { fold: 0.3, amp: 1 };
+  return { arms: hash(n, seed + 17) < t.fold ? 'fold' : 'swing', amp: t.amp * (0.85 + 0.3 * hash(n, seed + 23)) };
+}
+// F26: a walk's stride stretch: a brisk walk takes longer strides (capped so the feet stay in reach of the hips)
+export const walkStride = (speed) => min(1.3, sqrt(max(0.5, speed) / WALK_SPEED));
 
 // Bending to the ground (pick up or set down): u = 0 standing, 1 knees bent, back leaning forward, right hand at ground
 // level a little ahead of the feet. opts.carry keeps the right arm at the waist when standing (a ball in hand).
@@ -398,6 +528,39 @@ export function bendDepth(t) {
   if (t < BEND_DOWN + BEND_BEAT) return 1;
   return 1 - ease((t - BEND_DOWN - BEND_BEAT) / BEND_UP);
 }
+// F28: the kick, a gentle nudge with the side of the right foot (a left-hander is mirrored): weight onto the left leg, right foot
+// back (wind-up), a short low sweep forward through the boule (contact), follow-through, recover. t is seconds from the start,
+// 0..KICK_TIME. opts.carry keeps the right arm at the waist (the ring is in the hand).
+export const KICK_WIND = 0.22, KICK_SWING = 0.12, KICK_FOLLOW = 0.26, KICK_RECOVER = 0.25;
+export const KICK_TIME = KICK_WIND + KICK_SWING + KICK_FOLLOW + KICK_RECOVER; // about 0.85 s
+export const KICK_CONTACT = KICK_WIND + KICK_SWING * 0.6;
+const KICK_FOOT_Y = 0.24; // fraction of height the foot reaches ahead at the end of the swing
+export function kickPose(t, opts = {}) {
+  const p = basePose();
+  const wind = ease(t / KICK_WIND);
+  const sw = ease((t - KICK_WIND) / KICK_SWING);
+  const rec = ease((t - KICK_WIND - KICK_SWING - KICK_FOLLOW) / KICK_RECOVER);
+  const w = wind * (1 - sw); // wind-up weight, gone once the foot swings through
+  const out = sw * (1 - rec); // foot forward
+  p.footR = { x: 0.085, y: -0.22 * w + KICK_FOOT_Y * out + 0.03 * ease((t - KICK_WIND) / (KICK_SWING + KICK_FOLLOW)) * out, z: 0.03 * w + 0.016 * out, yaw: 0.15 };
+  p.footL = { x: -0.085, y: 0.02 * (wind - rec * wind), z: 0, yaw: -0.15 };
+  const k = wind * (1 - rec); // body engaged: weight on the left leg, a little lean forward
+  p.pz = 0.505 - 0.015 * k; p.px = -0.03 * k;
+  p.pitch = 0.05 + 0.12 * k;
+  p.twist = 0.12 * w - 0.2 * out; // the hips turn back for the wind-up and through toward the target
+  p.spine = 0.04 * k; p.neck = -0.1 * k;
+  const bal = k * 0.25; // arms out a little for balance
+  p.armL = arm(0.1, 0.1 + bal, 0.3);
+  p.armR = opts.carry ? { ...CARRY_ARM } : arm(0.1, 0.1 + bal, 0.3);
+  p.ry = footprintShift({ footL: p.footL, footR: p.footL }); // the planted left foot stays where the character stands
+  return p;
+}
+// Where the kicking foot is at the contact frame, in root space (x right, y ahead, z up): a kicker stands so this lands on the boule
+export function kickReach(H = 1.75, hand = 'right') {
+  const p = kickPose(KICK_CONTACT);
+  return solveSkeleton(hand === 'left' ? mirrorPose(p) : p, H).joints['foot' + (hand === 'left' ? 'L' : 'R')];
+}
+
 // Arm angle (shoulder swing) at the moment of release for a given loft (radians)
 export function releaseArmAngle(loft) {
   const lo = 8 * PI / 180, hi = 75 * PI / 180;
@@ -548,6 +711,7 @@ export function createCharacter(THREE, spec = {}) {
   const L = boneLengths(H);
   let quirkOffset = 0; // desynchronises the idle quirks of different characters
   for (const ch of String(spec.name || '')) quirkOffset += ch.charCodeAt(0) * 0.37;
+  let walks = 0; // F26: the number of walks so far (each walk's arm style is hashed from it)
 
   const root = new THREE.Group();
   root.name = spec.name || 'character';
@@ -589,11 +753,22 @@ export function createCharacter(THREE, spec = {}) {
   const shoulderBar = addMesh(new THREE.CapsuleGeometry(rs(0.04), L.shoulderHalf * 2, 4, 10), mShirt);
   const hipBar = addMesh(new THREE.CapsuleGeometry(rs(0.06), L.hipHalf * 2, 4, 10), mTrousers);
   caps.push({ me: shoulderBar, a: 'shoulderL', b: 'shoulderR' }, { me: hipBar, a: 'hipL', b: 'hipR' });
-  // hands: a flat mitten (unit sphere scaled: across, along the forearm, thin through the palm) so palm up or down reads
+  // F20 hands: a flattened palm, a short thumb angled out and three finger capsules that curl toward the palm side (more when
+  // a boule is held). The group's frame is the hand basis: x across the palm toward the inside (so the thumb is at -x for
+  // either hand), y along the forearm, z away from the palm side. Everything is cheap and mirrors for free.
   const hands = ['L', 'R'].map(() => {
-    const m = addMesh(new THREE.SphereGeometry(1, 10, 8), mSkin);
-    m.scale.set(H * 0.019, H * 0.027, H * 0.007);
-    return m;
+    const g = new THREE.Group(); stickG.add(g);
+    const palm = addMesh(new THREE.BoxGeometry(H * 0.044, H * 0.045, H * 0.014), mSkin, g);
+    const knuckle = new THREE.Group(); knuckle.position.y = H * 0.0225; g.add(knuckle);
+    const fr = H * 0.0075;
+    for (const i of [-1, 0, 1]) {
+      const f = addMesh(new THREE.CapsuleGeometry(fr, H * (i === 0 ? 0.032 : 0.026), 3, 6), mSkin, knuckle);
+      f.position.set(i * fr * 2, H * (i === 0 ? 0.0235 : 0.021), 0);
+    }
+    const thumb = addMesh(new THREE.CapsuleGeometry(H * 0.0072, H * 0.018, 3, 6), mSkin, g);
+    thumb.position.set(-H * 0.0285, H * 0.002, -H * 0.005); thumb.rotation.set(-0.3, 0, 0.5);
+    void palm;
+    return { g, knuckle };
   });
   const feetMeshes = ['L', 'R'].map(() => addMesh(new THREE.CapsuleGeometry(rLimb(0.028), L.foot + L.heel - 2 * rLimb(0.028), 4, 8), mShoe));
 
@@ -645,10 +820,10 @@ export function createCharacter(THREE, spec = {}) {
   mats.push(holdMesh.material);
   holdMesh.castShadow = true; holdMesh.visible = false;
   root.add(holdMesh);
-  // E23: the cochonnet in the dominant hand for a jack throw: the live jack's orange (render.js jackMat), jack radius
+  // E23: the cochonnet in the dominant hand for a jack throw: the live jack's colour (terrain.js JACK_STYLE, render.js jackMat), jack radius
   const jackHeld = new THREE.Mesh(
     geo(new THREE.SphereGeometry(C.jack.r, 14, 10)),
-    new THREE.MeshStandardMaterial({ color: '#ff7a00', metalness: 0, roughness: 0.45, emissive: '#4a1e00' }),
+    new THREE.MeshStandardMaterial({ color: jackStyle().color, metalness: 0, roughness: 0.45, emissive: jackStyle().emissive }),
   );
   mats.push(jackHeld.material);
   jackHeld.castShadow = true; jackHeld.visible = false;
@@ -666,7 +841,7 @@ export function createCharacter(THREE, spec = {}) {
   const st = {
     t: 0, yaw: 0, stance: 'idle', mode: 'stance', blend: 1, snap: null, out: null,
     look: null, lookSm: { yaw: 0, pitch: 0 }, holding: false,
-    walk: null, throwing: null, bending: null, carry: false, solved: null, frame: null, forceQuirk: null,
+    walk: null, throwing: null, bending: null, kicking: null, carry: false, solved: null, frame: null, forceQuirk: null,
   };
   let vis = null; // skinned-mesh visual: { scene, s, name, bones, hatG, mHat }
   const V = THREE;
@@ -674,30 +849,41 @@ export function createCharacter(THREE, spec = {}) {
   const m4 = new V.Matrix4();
   headG.matrixAutoUpdate = false;
 
+  // F20: what the idle system needs to know: the quirk lists, hold styles, which hands hold boules, reduced motion
+  const reduced = () => reducedMotion === null ? (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) : reducedMotion;
+  let reducedMotion = null;
+  function idleCtx(react) {
+    return {
+      look: st.lookSm, quirks, react, forceQuirk: st.forceQuirk, offset: quirkOffset, reduced: reduced(), dom: HK, steps: true,
+      canToss: holdMesh.visible && !(held && held.other > 0),
+      hold: held ? { styles: quirks.hold, held: { [HK]: held.dominant > 0, [OFF_HK]: held.other > 0 } } : null,
+    };
+  }
   function currentTarget() {
     const sw = (p) => (hand === 'left' ? armSwap(p) : p);
-    if (st.mode === 'walk') return sw(walkPose(st.walk.phase, { lift: st.walk.lift, carry: st.carry }));
+    if (st.mode === 'walk') { // the hands holding boules are named in right/left terms (the walk is authored for a right-hander)
+      const w = st.walk, dom = !!held && held.dominant > 0, oth = !!held && held.other > 0;
+      const holds = hand === 'left' ? { R: oth, L: dom } : { R: dom, L: oth };
+      return sw(walkPose(w.phase, { lift: w.lift, carry: st.carry, stride: w.stride, arms: w.style.arms, amp: w.style.amp, held: holds }));
+    }
     if (st.mode === 'bend') {
       const b = st.bending;
       return sw(bendPose(bendDepth(b.t), { carry: b.kind === 'pickup' ? b.acted : !b.acted }));
+    }
+    if (st.mode === 'kick') { // F28: authored for a right-hander, mirrored for a left-hander
+      const kp = kickPose(st.kicking.t, { carry: st.carry });
+      return hand === 'left' ? mirrorPose(kp) : kp;
     }
     if (st.mode === 'throw') {
       const p = throwPose(st.throwing.t, stancePose(stanceKind, st.t, {}), stanceKind);
       return hand === 'left' ? mirrorPose(p) : p;
     }
     const react = st.stance === 'celebrate' ? quirks.celebrate : st.stance === 'dismay' ? quirks.dismay : undefined;
-    const sp = stancePose(st.stance, st.t, { look: st.lookSm, quirks, react, forceQuirk: st.forceQuirk, offset: quirkOffset });
+    const sp = stancePose(st.stance, st.t, idleCtx(react));
     // the throwing stances and the hand-over are one-handed: mirror them for a left-hander (the rest is symmetric)
     if (hand === 'left' && ['aim', 'crouch', 'stand', 'give'].includes(st.stance)) mirrorPose(sp);
-    if (st.carry && (st.stance === 'watch' || st.stance === 'idle')) sp[armKey] = { ...CARRY_ARM };
+    if (st.carry && !held && (st.stance === 'watch' || st.stance === 'idle')) sp[armKey] = { ...CARRY_ARM };
     return sp;
-  }
-  // Hands that hold boules keep their arms at the waist, palm up, while walking or waiting
-  function heldArms(p) {
-    if (!held || !(st.mode === 'walk' || (st.mode === 'stance' && (st.stance === 'watch' || st.stance === 'idle')))) return p;
-    if (held.dominant > 0) p['arm' + HK] = { ...CARRY_ARM };
-    if (held.other > 0) p['arm' + OFF_HK] = { ...CARRY_ARM };
-    return p;
   }
   function refreshHeld() {
     holdMesh.visible = held ? held.dominant > 0 : st.holding === 'boule';
@@ -706,7 +892,7 @@ export function createCharacter(THREE, spec = {}) {
     offMeshes[1].visible = !!held && held.other > 1;
   }
   function evalPose() {
-    const target = heldArms(currentTarget());
+    const target = currentTarget();
     st.out = st.blend < 1 && st.snap ? blendPoses(st.snap, target, st.blend) : target;
     st.solved = solveSkeleton(st.out, H);
     st.frame = vis ? meshFrame(st.solved, st.out, H, vis.s) : null;
@@ -728,6 +914,13 @@ export function createCharacter(THREE, spec = {}) {
   const ballLocal = (k) => heldBallAt(st.out, st.solved, k, handAt(k));
   function placeHeld() {
     holdMesh.position.set(...ballLocal(HK));
+    if (st.mode === 'stance' && st.blend >= 1 && (st.stance === 'watch' || st.stance === 'idle') && holdMesh.visible) {
+      const a = activeQuirk(st.t, idleCtx());
+      if (a && a.name === 'toss') { // Pierre's toss: the boule arcs between the hands
+        const { k, arc } = tossBall(a.u), d = ballLocal(HK), o = ballLocal(OFF_HK);
+        holdMesh.position.set(lerp(d[0], o[0], k), lerp(d[1], o[1], k), lerp(d[2], o[2], k) + arc);
+      }
+    }
     jackHeld.position.set(...ballLocal(HK)); // same centre as a boule: the release point is unchanged
     if (!held || held.other < 1) return;
     const c = ballLocal(OFF_HK);
@@ -738,10 +931,13 @@ export function createCharacter(THREE, spec = {}) {
   function placeHands() {
     ['L', 'R'].forEach((n, i) => {
       const b = handBasis(st.out, st.solved, n), j = st.solved.joints['hand' + n];
-      const p = add(sub(add(j, mul(add(b.n, b.n0), BALL_D / 2)), mul(b.n, BALL_D)), mul(b.d, -H * 0.012)); // the palm under the boule's place
+      const p = add(sub(add(j, mul(add(b.n, b.n0), BALL_D / 2)), mul(b.n, BALL_D)), mul(b.d, -H * 0.02)); // the palm under the boule's place, wrist side
       const z = cross(b.lat, b.d);
-      hands[i].position.set(...p);
-      hands[i].quaternion.setFromRotationMatrix(m4.makeBasis(va.set(...b.lat), vb.set(...b.d), vd.set(...z)));
+      const holds = held ? (n === HK ? held.dominant > 0 : held.other > 0) : (n === HK && st.holding === 'boule');
+      const g = hands[i].g;
+      g.position.set(...sub(p, mul(b.n, H * 0.008)));
+      g.quaternion.setFromRotationMatrix(m4.makeBasis(va.set(...b.lat), vb.set(...b.d), vd.set(...z)));
+      hands[i].knuckle.rotation.x = -(holds ? 0.75 : 0.3);
     });
   }
 
@@ -758,6 +954,11 @@ export function createCharacter(THREE, spec = {}) {
     st.lookSm.pitch += (tp - st.lookSm.pitch) * k;
   }
 
+  function endKick() { // F28
+    const k = st.kicking; st.kicking = null;
+    switchMode('stance');
+    if (k) k.done();
+  }
   function endBend() {
     const b = st.bending; st.bending = null;
     st.carry = b.kind === 'pickup';
@@ -795,6 +996,19 @@ export function createCharacter(THREE, spec = {}) {
           setYaw(goal);
           if (w.stage === 'turn1') { if (w.dist > 0.02) w.stage = 'go'; else if (w.via.length) nextLeg(w); else w.stage = 'turn2'; } else w.stage = 'done';
         } else setYaw(st.yaw + Math.sign(dy) * step);
+      } else if (w.stage === 'go' && st.steer && w.lift <= 1) {
+        // F14: a crowd-steered step ({ vx, vy } scaled 0..1 from crowd.js): head along it, never past the leg's end
+        const sv = st.steer, m = sqrt(sv.vx * sv.vx + sv.vy * sv.vy);
+        const lx = w.leg.x - root.position.x, ly = w.leg.y - root.position.y, left = sqrt(lx * lx + ly * ly);
+        if (m > 1e-6) w.heading = atan2(sv.vx, sv.vy);
+        const step = min(w.speed * dt * m, left);
+        const dh = atan2(sin(w.heading - st.yaw), cos(w.heading - st.yaw));
+        if (abs(dh) > 1e-6) setYaw(abs(dh) <= TURN_RATE * dt ? w.heading : st.yaw + Math.sign(dh) * TURN_RATE * dt);
+        if (m > 1e-6) { root.position.x += sin(w.heading) * step; root.position.y += cos(w.heading) * step; w.phase += step / (4 * 0.18 * H * w.stride) * 2 * PI; }
+        if (left - step < 0.02) {
+          root.position.x = w.leg.x; root.position.y = w.leg.y;
+          if (w.via.length) nextLeg(w); else w.stage = 'turn2';
+        }
       } else if (w.stage === 'go') {
         const step = min(w.speed * dt, w.dist - w.moved);
         w.moved += step;
@@ -802,7 +1016,7 @@ export function createCharacter(THREE, spec = {}) {
         const dh = atan2(sin(w.heading - st.yaw), cos(w.heading - st.yaw));
         if (abs(dh) > 1e-6) setYaw(abs(dh) <= TURN_RATE * dt ? w.heading : st.yaw + Math.sign(dh) * TURN_RATE * dt);
         root.position.x += sin(w.heading) * step; root.position.y += cos(w.heading) * step;
-        w.phase += w.speed * dt / (4 * 0.18 * H) * 2 * PI;
+        w.phase += w.speed * dt / (4 * 0.18 * H * w.stride) * 2 * PI;
         if (w.dist - w.moved < 1e-6) {
           root.position.x = w.leg.x; root.position.y = w.leg.y;
           if (w.via.length) nextLeg(w); else w.stage = 'turn2';
@@ -821,6 +1035,14 @@ export function createCharacter(THREE, spec = {}) {
         if (b.onAct) { const f = b.onAct; b.onAct = null; evalPose(); applyMeshes(); f(handWorldPosition()); }
       }
       if (b.t >= BEND_TIME) endBend();
+    } else if (st.mode === 'kick') { // F28: onContact (the kicking foot's world position) fires once at KICK_CONTACT
+      const k = st.kicking;
+      k.t += dt;
+      if (!k.contacted && k.t >= KICK_CONTACT) {
+        k.contacted = true;
+        if (k.onContact) { const f = k.onContact; k.onContact = null; evalPose(); applyMeshes(); f(toWorld(st.solved.joints['foot' + HK])); }
+      }
+      if (k.t >= KICK_TIME) endKick();
     } else if (st.mode === 'throw') {
       const th = st.throwing;
       th.t += dt;
@@ -942,6 +1164,7 @@ export function createCharacter(THREE, spec = {}) {
     }
     updateLook(dt);
     step(dt);
+    st.steer = null; // F14: set again each frame by the caller
     evalPose();
     applyMeshes();
   }
@@ -951,7 +1174,7 @@ export function createCharacter(THREE, spec = {}) {
     const valid = ['idle', 'aim', 'crouch', 'stand', 'watch', 'celebrate', 'dismay', 'give'];
     if (!valid.includes(name)) throw new Error('unknown stance ' + name);
     if (st.mode === 'throw') cancelThrow();
-    if (st.mode === 'bend') endBend();
+    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
     if (name === 'crouch' || name === 'stand') stanceKind = name;
     st.stance = name;
     if (st.mode === 'stance') switchMode('stance');
@@ -963,7 +1186,7 @@ export function createCharacter(THREE, spec = {}) {
   }
   function walkTo(target) {
     if (st.mode === 'throw') cancelThrow();
-    if (st.mode === 'bend') endBend();
+    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
     if (st.walk) st.walk.resolve();
     return new Promise((resolve) => {
       // target.via: waypoints [{x, y, lift}] walked first without stopping (lift > 1: stepping over something)
@@ -975,9 +1198,11 @@ export function createCharacter(THREE, spec = {}) {
       const fx = target.x - (via.length ? via[via.length - 1].x : first.x), fy = target.y - (via.length ? via[via.length - 1].y : first.y);
       const ty = target.yaw === undefined ? (via.length || first !== target ? atan2(fx, fy) : heading) : target.yaw;
       if (first !== target) via.push({ x: target.x, y: target.y, lift: target.lift });
+      const speed = target.speed || WALK_SPEED;
       st.walk = {
         target: { x: target.x, y: target.y, yaw: ty }, leg: { x: first.x, y: first.y }, via, dist, moved: 0, heading, phase: 0, stage: 'turn1',
-        resolve, speed: target.speed || WALK_SPEED, lift: first.lift || target.lift || 1,
+        resolve, speed, lift: first.lift || target.lift || 1,
+        stride: walkStride(speed), style: walkStyle(String(spec.personality || spec.name || '').toLowerCase(), quirkOffset, walks++),
       };
       switchMode('walk');
     });
@@ -986,23 +1211,38 @@ export function createCharacter(THREE, spec = {}) {
   // 'putdown': it is let go at BEND_ACT (onAct runs once, with the hand's world position), the hand is empty afterwards.
   function playBend({ kind = 'pickup', onAct } = {}) {
     if (st.mode === 'throw') cancelThrow();
-    if (st.mode === 'bend') endBend();
+    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
     if (st.walk) { const w = st.walk; st.walk = null; w.resolve(); }
     return new Promise((resolve) => {
       st.bending = { t: 0, kind, acted: false, onAct, done: resolve };
       switchMode('bend');
     });
   }
+  // F28: a gentle kick with the side of the dominant foot (see kickPose); resolves when the character is upright again
+  function playKick({ onContact } = {}) {
+    if (st.mode === 'throw') cancelThrow();
+    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
+    if (st.walk) { const w = st.walk; st.walk = null; w.resolve(); }
+    return new Promise((resolve) => {
+      st.kicking = { t: 0, contacted: false, onContact, done: resolve };
+      switchMode('kick');
+    });
+  }
+  // F14: for this frame only, a walk's 'go' stage follows { vx, vy } (crowd.js steer) instead of its straight leg
+  function setSteer(v) { st.steer = v || null; }
+  // the point the walk is heading for now ({ x, y }), or null when not walking a straight stretch
+  function walkLeg() { return st.mode === 'walk' && st.walk && st.walk.stage === 'go' && st.walk.lift <= 1 ? { x: st.walk.leg.x, y: st.walk.leg.y } : null; }
   function setCarrying(on) { st.carry = !!on; }
   function playThrow({ loft = 0.5, onRelease } = {}) {
     if (st.mode === 'throw') cancelThrow();
-    if (st.mode === 'bend') endBend();
+    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
     if (st.walk) { const w = st.walk; st.walk = null; w.resolve(); }
     return new Promise((resolve) => {
       st.throwing = { t: 0, tRel: releaseTime(loft), released: false, onRelease, done: resolve, loft };
       switchMode('throw');
     });
   }
+  function setReducedMotion(on) { reducedMotion = on === null || on === undefined ? null : !!on; }
   function forceQuirk(name) { st.forceQuirk = name || null; st.t = 0; } // debug: hold one idle quirk
   // E23: setHolding('jack') shows the cochonnet in the dominant hand; setHolding(true | 'boule', colour) a boule (the
   // team's look: colour sets the single boule's material); false hides both. A release clears it (step()).
@@ -1029,7 +1269,7 @@ export function createCharacter(THREE, spec = {}) {
   function setPlacement(x, y, yaw = st.yaw) {
     // a teleport ends any walk in progress, else the walk would carry on and snap the figure to its old goal
     if (st.mode === 'throw') cancelThrow();
-    if (st.mode === 'bend') endBend();
+    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
     if (st.walk) { const w = st.walk; st.walk = null; switchMode('stance'); w.resolve(); }
     root.position.set(x, y, root.position.z); setYaw(yaw);
   }
@@ -1086,7 +1326,7 @@ export function createCharacter(THREE, spec = {}) {
   function dispose() {
     if (st.walk) { const w = st.walk; st.walk = null; w.resolve(); }
     if (st.throwing) cancelThrow();
-    if (st.mode === 'bend') endBend();
+    if (st.mode === 'bend') endBend(); else if (st.mode === 'kick') endKick();
     if (vis) {
       vis.model.traverse((o) => {
         if (!o.isMesh) return;
@@ -1103,8 +1343,9 @@ export function createCharacter(THREE, spec = {}) {
   evalPose();
   applyMeshes();
   return {
-    root, update, setStance, walkTo, playThrow, playBend, setCarrying, handWorldPosition, dispose,
-    lookAt, setHolding, setHeldBoules, shiftBoule, setPlacement, attachModel, forceQuirk, fadeTo, setOpacity,
+    root, update, setStance, walkTo, playThrow, playBend, playKick, setCarrying, handWorldPosition, dispose,
+    setTrousers: (c) => mTrousers.color.set(c), // F45: team colour of the trousers
+    lookAt, setHolding, setHeldBoules, shiftBoule, setPlacement, setSteer, walkLeg, attachModel, forceQuirk, setReducedMotion, fadeTo, setOpacity,
     hand, // 'right' | 'left': the dominant (throwing, carrying) hand
     get isMesh() { return !!vis; },
     get yaw() { return st.yaw; },

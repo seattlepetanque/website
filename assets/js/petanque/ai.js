@@ -9,7 +9,7 @@ import { mulberry32 } from './rng.js';
 import { createBody, launch, createWorld, simulate } from './physics.js';
 import { jackValid, jackPlaceValid, DEFAULT_GEOMETRY, JACK_END_MARGIN } from './rules.js';
 import { coneFor, executeThrow, solveLaunch, styleForLoft, releaseFrom, fitToBudget, feltTerrain, roughness as roughnessOf, ROUGH_LOFT_FULL, ROUGH_LOFT_NONE } from './donnee.js';
-import { DEFAULT_CFG, DIFFICULTY, readSituation, plan, evalEnd, explain, skillOfPlayer, whoThrows } from './tactics.js';
+import { DEFAULT_CFG, DIFFICULTY, PROMOTE_DRAW, readSituation, plan, evalEnd, explain, skillOfPlayer, whoThrows, dropMargin } from './tactics.js';
 export { ROUGH_LOFT_FULL, ROUGH_LOFT_NONE };
 export { whoThrows };
 
@@ -21,6 +21,7 @@ export const AI = {
   lofts: { ...DEFAULT_CFG.lofts },
   // (personality now lives in tactics.js profiles; stylePref is only a test hook: extra prior per player and style)
   stylePref: {},
+  ablate: {}, // measure-tactics.js ablations: { noPromote, noDefense, noDrop, noMargin }
   noise: 0.08, // total width of the random +- added to a candidate's score (x3 on Easy) so equal-looking choices vary
   timeGuard: true, // stop simulating at timeGuardMs of compute (yields between candidates do not count) and return the best so far
   timeGuardMs: { easy: 40, medium: 40, hard: 90 },
@@ -185,8 +186,22 @@ function makeClock(limit) {
 
 const cfgOf = () => ({
   lofts: AI.lofts, tirShort: AI.tirShort, tirShortClose: AI.tirShortClose, tirHighShort: AI.tirHighShort,
-  gateHit: AI.gateHit, stylePref: AI.stylePref,
+  gateHit: AI.gateHit, stylePref: AI.stylePref, ...AI.ablate,
 });
+
+// F27: what the partner said he would do. A suggestion (advice decision) records the family, intent and target for the
+// court as it stands; the partner's own turn in the same, unchanged situation plays that same plan (re-planning only the
+// execution: his own skill, release point). Any change to the court, hands or difficulty makes the key differ, so a stale
+// suggestion is never followed. One slot per team; consumed on use.
+const adviceMemo = new Map();
+const r2 = (v) => Math.round(v * 100);
+export function situationKey({ match, bodies, player, difficulty }) {
+  const bs = bodies.filter((b) => !b.dead).map((b) => `${b.kind[0]}${b.team ?? ''}:${r2(b.x)},${r2(b.y)}`).sort().join(';');
+  const hands = match && match.players ? match.players.map((p) => `${p.id}${p.boulesLeft}`).join(',') : '';
+  return `${player.team}|${difficulty}|${hands}|${bs}`;
+}
+export const forgetAdvice = () => adviceMemo.clear();
+export const peekAdvice = (team) => adviceMemo.get(team) || null;
 
 function* decide({ world, match, player, difficulty = 'medium', rand, from = FROM, advice = false }) {
   const dk = DIFFICULTY[difficulty] ? difficulty : 'medium';
@@ -196,6 +211,9 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
   const perceived = world.terrain.perceived();
   const rough = perceived !== world.terrain;
   const sit = readSituation({ match, bodies: world.bodies, player, difficulty, advice });
+  if (AI.ablate.noDefense) sit.params = { ...sit.params, shield: false, wS: 0, wS2: 0 };
+  const errRoll = rand(); // the tactical-error draw (below); also the source of Easy's promotion draw, so the random stream is unchanged
+  if (sit.diff.promote === 'draw' && !advice) sit.promoteDraw = (errRoll * 977.31) % 1 < PROMOTE_DRAW; // Easy: promotion is admitted in a quarter of the decisions
   const clock = makeClock(AI.timeGuardMs[dk] ?? 40);
   const finish = (donnee, loft, intent, label, score, snapped, labelKey, fallback = false) => {
     const rel = releaseFrom(from, loft);
@@ -203,7 +221,7 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
     const throwParams = throwThrough({ from: rel, donnee: fit.landing, loft, skill, terrain: world.terrain, rand, energyFrac: fit.energyFrac });
     // info: for ?debug&ailog and the measure scripts (what the plan wanted, how far the budget pulled it in, a fallback pick)
     return {
-      throwParams, from: rel, intent, label, labelKey, score, donnee: fit.landing, loft, style: styleForLoft(loft, snapped), energyFrac: fit.energyFrac,
+      throwParams, from: rel, intent, label, labelKey, score, donnee: fit.landing, loft, style: snapped ? 'tir' : styleForLoft(loft), energyFrac: fit.energyFrac,
       who: player.id,
       info: { wanted: donnee, clampedBy: dist2(donnee, fit.landing), fallback, budgetClamped: fit.clamped },
     };
@@ -215,10 +233,32 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
     return out;
   };
   const planned = plan(sit, cfgOf());
+  const memoKey = situationKey({ match, bodies: world.bodies, player, difficulty });
+  let follow = null; // F27: the plan the partner suggested for this very court
+  if (advice) {
+    adviceMemo.delete(team);
+    if (planned.cands.length) adviceMemo.set(team, { key: memoKey, pending: true });
+  } else {
+    const m = adviceMemo.get(team);
+    if (m && m.key === memoKey && m.plan) { follow = m.plan; adviceMemo.delete(team); }
+  }
+  if (follow) {
+    const same = (c) => c.family === follow.family && (follow.intent === 'point' || !follow.target || dist2(c.target, follow.target) < 0.2);
+    const kept = planned.cands.filter(same);
+    // his own profile may not admit the very same family: keep the intent (and the style) at least
+    const byIntent = kept.length ? kept : planned.cands.filter((c) => c.intent === follow.intent && c.tag === follow.tag).length
+      ? planned.cands.filter((c) => c.intent === follow.intent && c.tag === follow.tag) : planned.cands.filter((c) => c.intent === follow.intent);
+    if (byIntent.length && follow.family !== 'drop') { planned.cands = byIntent; planned.drop = null; }
+    else follow = null;
+  }
+  let bareWorld = null; // the court emptied: promotions are aimed as if the boule they push were not there
+  const bare = { clone: (t, r) => { if (!bareWorld) { bareWorld = world.clone(t, r); bareWorld.bodies.length = 0; } return bareWorld.clone(t, r); } };
   if (!planned.cands.length) return lob(); // no jack to aim at: just lob towards the middle of the lane
 
   // The donnée a candidate aims at: short of the jack so the roll carries to it (refined), or just short of a target boule
   const donneeFor = (k, view, fk, srand) => {
+    if (k.landing) return { ...k.landing }; // drop: the donnée is the landing spot itself (a dead drop)
+    if (k.restAt) return pointDonnee(bare, 'boule', fk, k.restAt, k.loft, view, srand); // promote: a point aimed just past the boule, refined with nothing in the way
     if (k.intent === 'shoot') {
       const dx = k.target.x - from.x, dy = k.target.y - from.y, d = Math.hypot(dx, dy) || 1;
       return { x: k.target.x - dx / d * k.shortBy, y: k.target.y - dy / d * k.shortBy };
@@ -228,6 +268,7 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
   const finishCand = (k, donnee, score, isFallback, why, extra) => {
     const out = finish(donnee, k.loft, k.intent, makeLabel(player, k), score, k.intent === 'shoot', labelKeyFor(k), isFallback);
     out.info.target = k.target; out.info.tag = k.tag; out.info.cands = planned.cands.length;
+    out.info.promoteAdmitted = planned.cands.some((c) => c.family === 'promote'); // 12.12.7 case 29: how often Easy's draw lets a promotion in
     out.family = k.family;
     out.why = why;
     out.reason = why;
@@ -236,7 +277,7 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
   };
 
   // A tactical error (12.7): with probability eps the AI drops its principles and plays the other kind of throw
-  if (rand() < sit.diff.eps) {
+  if (!follow && errRoll < sit.diff.eps) {
     const loose = plan(sit, cfgOf(), { loose: true }).cands.filter((c) => c.family !== 'shootJack');
     const normal = planned.cands[0].intent;
     let pool = loose.filter((c) => c.intent !== normal);
@@ -268,8 +309,17 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
         ? w.bodies.find((x) => x.kind === (st.k.tag === 'jack' ? 'jack' : 'boule') && !x.dead && Math.hypot(x.x - st.k.target.x, x.y - st.k.target.y) < 0.02)
         : null;
       const vx = victim ? victim.x : 0, vy = victim ? victim.y : 0;
+      const promoted = st.k.family === 'promote' ? w.bodies.find((x) => x.kind === 'boule' && !x.dead && Math.hypot(x.x - st.k.target.x, x.y - st.k.target.y) < 0.02) : null;
+      const jackBody = promoted ? w.bodies.find((x) => x.kind === 'jack') : null;
+      const jx0 = jackBody ? jackBody.x : 0, jy0 = jackBody ? jackBody.y : 0;
       w.add(b);
       simulate(w, AI.maxSimSeconds);
+      if (b.dead) st.dead++;
+      if (promoted) {
+        // 12.12.2 early cut-offs: the jack moved, the shooter ended far from the boule
+        if (jackBody.dead || Math.hypot(jackBody.x - jx0, jackBody.y - jy0) > 0.15) st.jackMoved++;
+        if (b.dead || Math.hypot(b.x - st.k.target.x, b.y - st.k.target.y) > 0.4) st.farFromB++;
+      }
       if (victim && (victim.dead || Math.hypot(victim.x - vx, victim.y - vy) > AI.hitMove)) st.hits++;
       const v = evalEnd(w.bodies, sit);
       st.vs.push(v);
@@ -298,10 +348,12 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
       if (!fallback) fallback = { k, donnee: fit.landing, score: -9 };
       continue;
     }
-    const st = { k, donnee, fk, view, srand, energyFrac: fit.energyFrac, vs: [], hits: 0 };
+    const st = { k, donnee, fk, view, srand, energyFrac: fit.energyFrac, vs: [], hits: 0, dead: 0, jackMoved: 0, farFromB: 0 };
     runSims(st, n1);
     // early cut: a shot whose first sims never move the target
     if (k.intent === 'shoot' && st.hits === 0) continue;
+    // early cut: a promotion that moves the jack in all of its first sims (unless a carom was meant) or never ends near the boule
+    if (k.family === 'promote' && ((st.jackMoved === st.vs.length && !k.carom) || st.farFromB === st.vs.length)) continue;
     states.push(st);
     clock.pause(); yield; clock.resume();
   }
@@ -342,6 +394,25 @@ function* decide({ world, match, player, difficulty = 'medium', rand, from = FRO
     const out = finishCand(fallback.k, fallback.donnee, fallback.score, true, { code: 'takePoint' }, {});
     return out;
   }
+  // the drop (12.12.4, Hard): a dead drop wins when the best real throw is not worth the risk to the head
+  if (planned.drop) {
+    const dr = planned.drop, k = dr.cand;
+    const fk = releaseFrom(from, k.loft), view = felt(perceived, k.loft, rough), srand = mulberry32(seedFrom(rand));
+    const donnee = clampDonnee(donneeFor(k, view, fk, srand));
+    const fit = fitToBudget({ from: fk, landing: donnee, loft: k.loft, skill, terrain: view });
+    if (!fit.clamped) {
+      const st = { k, donnee, fk, view, srand, energyFrac: fit.energyFrac, vs: [], hits: 0, dead: 0, jackMoved: 0, farFromB: 0 };
+      runSims(st, 2);
+      const vDrop = (st.vs[0] + st.vs[1]) / 2;
+      const bestReal = scored.length ? Math.max(...scored.map((x) => scoreOf(x.st) - x.st.k.prior)) : -Infinity;
+      if (st.dead === 0 && bestReal < vDrop + dropMargin(dr.kind, sit)) {
+        const run = scored[0] ? scored[0].st.k : null;
+        const out = finishCand(k, donnee, vDrop, false, explain(k, run, sit), { dropCase: dr.kind });
+        out.info.sims = states.reduce((n, x) => n + x.vs.length, 0) + 2;
+        return out;
+      }
+    }
+  }
   const win = scored[0], run = scored.find((s) => s.st.k.family !== scored[0].st.k.family) || scored[1];
   const why = explain(win.st.k, run ? run.st.k : null, sit);
   const other = scored.find((s) => s.st.k.intent !== win.st.k.intent);
@@ -369,18 +440,26 @@ function labelKeyFor(k) {
   return { event: 'spotShoot', target: k.tag === 'jack' ? 'jack' : 'boule' };
 }
 
+// the advice decision's result becomes the plan his own turn follows (a mistake or a fallback is not a plan)
+function remember(args, out) {
+  if (!args.advice || !out || !out.family || out.mistake || (out.info && out.info.fallback)) { if (args.advice) adviceMemo.delete(args.player.team); return out; }
+  const m = adviceMemo.get(args.player.team);
+  if (m && m.pending) { m.pending = false; m.plan = { family: out.family, intent: out.intent, tag: out.info && out.info.tag, target: out.info && out.info.target ? { ...out.info.target } : null }; }
+  return out;
+}
+
 export function chooseThrow(args) {
   const g = decide(args);
   let r;
   while (!(r = g.next()).done);
-  return r.value;
+  return remember(args, r.value);
 }
 
 export async function chooseThrowAsync(args) {
   const g = decide(args);
   let r;
   while (!(r = g.next()).done) await new Promise((res) => setTimeout(res, 0));
-  return r.value;
+  return remember(args, r.value);
 }
 
 // --- Jack throw ---------------------------------------------------------------------------

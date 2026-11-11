@@ -31,7 +31,7 @@ test('styleForLoft names the styles', () => {
   assert.equal(styleForLoft(12 * DEG), 'roulette');
   assert.equal(styleForLoft(35 * DEG), 'demi-portee');
   assert.equal(styleForLoft(60 * DEG), 'plombee');
-  assert.equal(styleForLoft(60 * DEG, true), 'tir');
+  assert.equal(styleForLoft(60 * DEG, true), 'plombee'); // F35: snapped throws are still named by loft
   assert.ok(LOFT_MIN < LOFT_MAX);
 });
 

@@ -1,4 +1,4 @@
-// The 17 scenarios of GAME-PLAN 12.8 as fixed court states, shared by tactics.test.js and measure-ai.js.
+// The scenarios of GAME-PLAN 12.8 (1-17) and 12.12.7 (18-29) as fixed court states, shared by tactics.test.js and measure-ai.js.
 // Coordinates: jack J = (2, 8), the thrower at the circle (2, 1); "ahead" means smaller y. A boule is given as an
 // offset from J, `us` / `them` are relative to the thrower's team; `hand` lists boules left per player in team
 // order (team 0: you, pierre; team 1: marcel, odette).
@@ -53,6 +53,18 @@ export const scenarios = [
   { id: 11, name: 'score 11-4, we hold 2 and they have none; we 2 left', thrower: 'odette', score: [11, 4], us: { hand: [1, 1], boules: [[0.1, 0], [-0.3, 0]] }, them: { hand: [0, 0] } },
   { id: 12, name: 'jack 0.5 m from the string, theirs 0.30, ours 0.60; they have a tireur', thrower: 'odette', jack: { x: 3.5, y: 8 }, us: { hand: [1, 1], boules: [[0, 0.6]] }, them: { hand: [1, 1], boules: [] }, them_boules: [[0, -0.3]] },
   { id: 13, name: 'theirs 0.50 beside the jack, they have a pointeur, BA +1', thrower: 'pierre', us: { hand: [1, 2] }, them: { hand: [1, 1] }, them_boules: [[0.5, 0]] },
+  // 12.12.7 (F04): promotion, defence, the drop, the far and easy shots
+  { id: 18, name: 'ours at 0.65 in line, theirs 0.36 beside the jack; we 2, they 3', thrower: 'pierre', us: { hand: [1, 1], boules: [[0, -0.65]] }, them: { hand: [2, 1], boules: [[0.35, 0.1]] } },
+  { id: 19, name: 'case 18 with their boule 0.2 m off the push line, beside our boule', thrower: 'pierre', us: { hand: [1, 1], boules: [[0, -0.65]] }, them: { hand: [2, 1], boules: [[0.2, -0.45]] } },
+  { id: 20, name: 'ours 1.2 m short in line, theirs none; 3 v 3', thrower: 'pierre', us: { hand: [2, 1], boules: [[0, -1.2]] }, them: { hand: [2, 1] } },
+  { id: 21, name: 'ours 0.3 short of the jack, our second boule 0.35 past it (a carom)', thrower: 'pierre', us: { hand: [1, 1], boules: [[0, -0.3], [0, 0.35]] }, them: { hand: [1, 1], boules: [[-0.3, 0.1]] } },
+  { id: 22, name: 'ours at 0.14; they have 3 boules and a pointeur, we 1', thrower: 'marcel', us: { hand: [1, 0], boules: [[0.1, -0.1]] }, them: { hand: [2, 1] } },
+  { id: 23, name: 'jack 0.9 m from the string, ours 0.25; they have a tireur with 2 boules, we 1', thrower: 'marcel', jack: { x: 3.1, y: 9.0 }, us: { hand: [1, 0], boules: [[-0.25, 0]] }, them: { hand: [0, 2] } },
+  { id: 24, name: 'our boules 0.1 and 0.16 from the jack, tight; they have a tireur, 2 boules; we 1', thrower: 'marcel', us: { hand: [1, 0], boules: [[0, 0.1], [0.05, 0.15]] }, them: { hand: [0, 2] } },
+  { id: 25, name: 'ours 0.15, 0.20, 0.25 round the jack 0.6 m from the string; no boules for them; we 1', thrower: 'odette', jack: { x: 3.4, y: 9.2 }, us: { hand: [0, 1], boules: [[0.15, 0], [-0.1, 0.17], [0, -0.25]] }, them: { hand: [0, 0] } },
+  { id: 26, name: 'case 25 but they have 2 boules', thrower: 'odette', jack: { x: 3.4, y: 9.2 }, us: { hand: [0, 1], boules: [[0.15, 0], [-0.1, 0.17], [0, -0.25]] }, them: { hand: [1, 1] } },
+  { id: 27, name: 'jack 12 m out, theirs 0.12 m from it', thrower: 'pierre', jack: { x: 2, y: 13 }, us: { hand: [1, 1] }, them: { hand: [1, 1], boules: [[0.12, 0]] } },
+  { id: 28, name: 'jack 6.5 m out, theirs 0.12 m from it', thrower: 'pierre', jack: { x: 2, y: 7.5 }, us: { hand: [1, 1] }, them: { hand: [1, 1], boules: [[0.12, 0]] } },
 ];
 // them_boules is sugar for them.boules
 for (const s of scenarios) { if (s.them_boules) { s.them = { ...s.them, boules: s.them_boules }; delete s.them_boules; } }

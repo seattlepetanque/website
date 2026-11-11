@@ -1,12 +1,15 @@
 // three.js renderer for the pétanque game. World axes: x across, y along, z up.
+import { stripGeometry } from './strip.js';
 import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
+import { jackStyle } from './terrain.js';
 import { court } from './court.js';
 import { JACK_END_MARGIN } from './rules.js';
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
-import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV } from './camera.js';
-import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeSkyPanorama, skyColor, SKY_HAZE, isPhone } from './scenery.js';
+import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, framePlane } from './camera.js';
+import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeSkyPanorama, makeLake, skyColor, SKY_HAZE, isPhone } from './scenery.js';
+import { createFloatplane } from './floatplane.js'; // F19
 
 const TRANSITION = 0.6; // seconds for camera moves
 
@@ -17,15 +20,15 @@ function makeCanvas(w, h) {
 }
 
 // Speckled gravel detail texture, tileable enough at this scale
-function gravelTexture() {
+function gravelTexture(grey) {
   const S = 512, cv = makeCanvas(S, S), g = cv.getContext('2d');
   const rand = mulberry32(7);
-  g.fillStyle = '#b9a98a';
+  g.fillStyle = grey ? '#aab6cc' : '#b9a98a';
   g.fillRect(0, 0, S, S);
-  for (let i = 0; i < 9000; i++) {
+  for (let i = 0; i < (grey ? 14000 : 9000); i++) { // F16: the grey court gets more, bluer speckle (it read as asphalt)
     const x = rand() * S, y = rand() * S, r = 0.6 + rand() * 2.6;
     const l = 45 + rand() * 45;
-    g.fillStyle = `hsl(${28 + rand() * 14}, ${12 + rand() * 22}%, ${l}%)`;
+    g.fillStyle = grey ? `hsl(${208 + rand() * 24}, ${8 + rand() * 16}%, ${Math.min(94, l + 4)}%)` : `hsl(${28 + rand() * 14}, ${12 + rand() * 22}%, ${l}%)`;
     // draw wrapped so the tile has no seams
     for (const ox of [-S, 0, S]) for (const oy of [-S, 0, S]) {
       if (x + ox < -4 || x + ox > S + 4 || y + oy < -4 || y + oy > S + 4) continue;
@@ -118,10 +121,10 @@ function makeSky() {
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false, toneMapped: false }));
 }
-function makeEnvMap(renderer) {
+function makeEnvMap(renderer, envFloor) {
   const s = new THREE.Scene();
   s.add(makeSky());
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(150, 16), new THREE.MeshBasicMaterial({ color: '#a8977a' }));
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(150, 16), new THREE.MeshBasicMaterial({ color: envFloor }));
   floor.position.z = -1;
   s.add(floor);
   const bright = new THREE.MeshBasicMaterial({ color: '#fff4dc' });
@@ -156,10 +159,10 @@ export function createRenderer(canvas, terrain) {
   const scene = new THREE.Scene();
   const FOG = new THREE.Color(SKY_HAZE);
   scene.background = FOG;
-  scene.fog = new THREE.Fog(FOG, 30, 170);
+  scene.fog = new THREE.Fog(FOG, 60, 320);
   scene.add(makeSky());
   scene.add(makeSkyPanorama(C.terrainW / 2, C.terrainL / 2, SKY_HAZE));
-  scene.environment = makeEnvMap(renderer);
+  scene.environment = makeEnvMap(renderer, terrain.gravel === 'grey' ? '#8e939c' : '#a8977a');
 
   const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 300);
   camera.up.set(0, 0, 1);
@@ -169,12 +172,29 @@ export function createRenderer(canvas, terrain) {
   const sun = new THREE.DirectionalLight('#ffe2b8', 3.0);
   const sunOffset = new THREE.Vector3(-5, -7, 6);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(1024, 1024);
+  // The shadow box follows the look target. It is wide enough to take in the trees (within ~15 m of the court) and
+  // their shadows, which fall away from the sun: desktop gets a 2048 map over +-14 m (texels ~1.4 cm), phones keep
+  // a 1024 map over +-10 m. The depth range is 60 m, so the bias is scaled to match the old 25 m setting.
+  const phoneShadows = isPhone(), shadowHalf = phoneShadows ? 10 : 14;
+  sun.shadow.mapSize.set(phoneShadows ? 1024 : 2048, phoneShadows ? 1024 : 2048);
   const sc = sun.shadow.camera;
-  sc.left = -5; sc.right = 5; sc.top = 5; sc.bottom = -5; sc.near = 1; sc.far = 25;
-  sun.shadow.bias = -0.0004;
+  sc.left = -shadowHalf; sc.right = shadowHalf; sc.top = shadowHalf; sc.bottom = -shadowHalf; sc.near = 1; sc.far = 60;
+  sc.updateProjectionMatrix();
+  sun.shadow.bias = -0.00017;
   sun.shadow.normalBias = 0.01;
   scene.add(sun, sun.target);
+  // F40: aim the sun at p, snapped to the shadow map's texel grid in light space. Without this the frustum slides
+  // by sub-texel steps as the camera moves, which crawls the shadow edges (the timbers' flicker).
+  const sunXAxis = new THREE.Vector3(), sunYAxis = new THREE.Vector3(), sunZAxis = sunOffset.clone().normalize();
+  sunXAxis.crossVectors(new THREE.Vector3(0, 1, 0), sunZAxis).normalize();
+  sunYAxis.crossVectors(sunZAxis, sunXAxis).normalize();
+  const sunTexel = (2 * shadowHalf) / sun.shadow.mapSize.x;
+  const aimSun = (p) => {
+    const px = p.dot(sunXAxis), py = p.dot(sunYAxis);
+    const sx = Math.round(px / sunTexel) * sunTexel, sy = Math.round(py / sunTexel) * sunTexel;
+    sun.target.position.copy(p).addScaledVector(sunXAxis, sx - px).addScaledVector(sunYAxis, sy - py);
+    sun.position.copy(sun.target.position).add(sunOffset);
+  };
 
   // Terrain mesh
   const grid = terrain.heightGrid(0.05);
@@ -184,7 +204,8 @@ export function createRenderer(canvas, terrain) {
   let edgeZ = 0; // the grass plane sits just below the lowest terrain point; the mesh eases down to it past the timbers
   for (let k = 0; k < grid.data.length; k++) edgeZ = Math.min(edgeZ, grid.data[k]);
   edgeZ -= 0.004;
-  const earth = new THREE.Color('#8f8365'), packed = new THREE.Color('#e6d9bd'), loose = new THREE.Color('#fff0d2'), tint = new THREE.Color();
+  const grey = terrain.gravel === 'grey';
+  const earth = new THREE.Color(grey ? '#8790a0' : '#8f8365'), packed = new THREE.Color(grey ? '#e0e6f2' : '#e6d9bd'), loose = new THREE.Color(grey ? '#eef2fa' : '#fff0d2'), tint = new THREE.Color();
   for (let j = 0; j < gh; j++) {
     for (let i = 0; i < gw; i++) {
       const k = j * gw + i, x = grid.x0 + i * grid.step, y = grid.y0 + j * grid.step;
@@ -216,7 +237,7 @@ export function createRenderer(canvas, terrain) {
   tgeo.setAttribute('color', new THREE.BufferAttribute(colr, 3));
   tgeo.setIndex(new THREE.BufferAttribute(idx, 1));
   tgeo.computeVertexNormals();
-  const gravel = gravelTexture();
+  const gravel = gravelTexture(grey);
   const terrainMesh = new THREE.Mesh(tgeo, new THREE.MeshStandardMaterial({
     map: gravel, vertexColors: true, roughness: 0.95, metalness: 0, envMapIntensity: 0.4,
   }));
@@ -228,6 +249,10 @@ export function createRenderer(canvas, terrain) {
   // Grass beyond the terrain mesh, out to the horizon (the mesh blends into it past the timbers)
   const ground = makeGrassPlane(grass, C.terrainW / 2, C.terrainL / 2, 600, edgeZ);
   scene.add(ground);
+  const lake = makeLake(C.terrainW / 2, edgeZ); // F19: distant lake (shimmer frozen when paused or under reduced motion)
+  scene.add(lake.mesh);
+  const floatplane = createFloatplane({ cx: C.terrainW / 2, z: edgeZ + 0.05 });
+  scene.add(floatplane.group);
   scene.add(makeTufts(terrain, isPhone()));
   const trees = makeTrees(terrain);
   scene.add(trees);
@@ -280,7 +305,8 @@ export function createRenderer(canvas, terrain) {
       m.compose(pv, q, sv);
       stoneMesh.setMatrixAt(i, m);
       const t = rand();
-      col.setHSL(0.09 + rand() * 0.04, 0.1 + t * 0.25, 0.3 + rand() * 0.3);
+      if (grey) col.setHSL(0.6 + rand() * 0.04, 0.04 + t * 0.1, 0.22 + rand() * 0.25);
+      else col.setHSL(0.09 + rand() * 0.04, 0.1 + t * 0.25, 0.3 + rand() * 0.3);
       stoneMesh.setColorAt(i, col);
     });
     stoneMesh.castShadow = true;
@@ -289,31 +315,50 @@ export function createRenderer(canvas, terrain) {
   }
   // Boundary strings and throwing circle
   const strings = new THREE.Group();
-  const stringMat = new THREE.MeshBasicMaterial({ color: '#ffffff', fog: true });
+  // F34: each string is a thin strip (1.6 cm) draped on the terrain: both edges sampled every ~10 cm and lifted a few mm,
+  // so slopes of up to ±0.2 m never bury it. The offset keeps it clear of the ground at grazing angles.
+  const stringMat = new THREE.MeshBasicMaterial({
+    color: '#ffffff', fog: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+  });
+  const STRING_W = 0.016, STRING_LIFT = 0.004;
   const W = C.terrainW, L = C.terrainL;
   const addString = (x0, y0, x1, y1) => {
-    const len = Math.hypot(x1 - x0, y1 - y0);
-    const m = new THREE.Mesh(new THREE.BoxGeometry(len, 0.012, 0.004), stringMat);
-    m.position.set((x0 + x1) / 2, (y0 + y1) / 2, 0.012);
-    m.rotation.z = Math.atan2(y1 - y0, x1 - x0);
+    const { pos, idx } = stripGeometry(x0, y0, x1, y1, STRING_W, STRING_LIFT, (x, y) => terrain.sample(x, y).h);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    const m = new THREE.Mesh(geo, stringMat);
+    m.frustumCulled = false;
     strings.add(m);
   };
   addString(0, 0, W, 0); addString(W, 0, W, L); addString(W, L, 0, L); addString(0, L, 0, 0);
   scene.add(strings);
   // E10: the circle is a real object (a ring) that can be picked up and carried: syncCourt puts it at the current
   // circle (with a short fade for a quick-mode move), setRingPose holds it elsewhere (in somebody's hand)
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(C.circle.r - 0.012, C.circle.r + 0.012, 64),
-    new THREE.MeshBasicMaterial({ color: '#c0262f', transparent: true }),
-  );
-  const ringHome = () => ring.position.set(court.circle.x, court.circle.y, terrain.sample(court.circle.x, court.circle.y).h + 0.006);
+  const ringGeo = new THREE.RingGeometry(C.circle.r - 0.012, C.circle.r + 0.012, 64);
+  const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: '#c0262f', transparent: true }));
+  // F34: on the court the ring is laid on the terrain (each vertex takes the ground height under it, 6 mm up), so none of
+  // it sinks into a slope; held in somebody's hand it is flat about its own origin
+  let ringDraped = false;
+  const ringHome = () => {
+    const c = court.circle, p = ringGeo.attributes.position;
+    for (let i = 0; i < p.count; i++) p.setZ(i, terrain.sample(c.x + p.getX(i), c.y + p.getY(i)).h + 0.006);
+    p.needsUpdate = true; ringDraped = true;
+    ring.position.set(c.x, c.y, 0); ring.rotation.set(0, 0, 0);
+  };
+  const ringFlat = () => {
+    if (!ringDraped) return;
+    const p = ringGeo.attributes.position;
+    for (let i = 0; i < p.count; i++) p.setZ(i, 0);
+    p.needsUpdate = true; ringDraped = false;
+  };
   ringHome();
   scene.add(ring);
   let ringFade = null; // { t, dur, moved }: fade out, move, fade in
   let ringHeld = false;
   function setRingPose(p) {
     ringHeld = !!p;
-    if (p) { ring.position.set(p.x, p.y, p.z); ring.rotation.set(0, 0, 0); } else ringHome();
+    if (p) { ringFlat(); ring.position.set(p.x, p.y, p.z); ring.rotation.set(0, 0, 0); } else ringHome();
   }
   function tickRing(dt) {
     if (!ringFade) return;
@@ -333,13 +378,11 @@ export function createRenderer(canvas, terrain) {
   // Dead (out of play) bodies: greyed and dulled
   const deadBouleMat = new THREE.MeshStandardMaterial({ color: '#a4a8b0', metalness: 0.45, roughness: 0.5, envMapIntensity: 0.9 });
   const deadJackMat = new THREE.MeshStandardMaterial({ color: '#8a7a5e', metalness: 0, roughness: 0.6 });
-  const jackMat = new THREE.MeshStandardMaterial({ color: '#ff7a00', metalness: 0, roughness: 0.45, emissive: '#4a1e00' }); // bright orange, lit a little from within so it stays vivid in shade
+  const jackMat = new THREE.MeshStandardMaterial({ color: jackStyle().color, metalness: 0, roughness: 0.45, emissive: jackStyle().emissive }); // orange on grey gravel, bright red on sand (F52), lit a little from within so it stays vivid in shade
   const bouleGeo = new THREE.SphereGeometry(1, 40, 24);
   bouleGeo.rotateX(Math.PI / 2); // texture poles along z; any orientation is fine
   const jackGeo = new THREE.SphereGeometry(1, 20, 12);
-  const ringGeo = new THREE.RingGeometry(1.25, 1.7, 32);
-  const ringMats = [new THREE.MeshBasicMaterial({ color: '#2b6fe0', side: THREE.DoubleSide }), new THREE.MeshBasicMaterial({ color: '#e0832b', side: THREE.DoubleSide })];
-  const meshes = new Map(); // id -> { mesh, ring, body, w }
+  const meshes = new Map(); // id -> { mesh, body, fade, ... }
   const tmpQ = new THREE.Quaternion(), tmpV = new THREE.Vector3();
 
   function sync(world) {
@@ -356,19 +399,11 @@ export function createRenderer(canvas, terrain) {
         mesh.receiveShadow = true;
         mesh.quaternion.setFromEuler(new THREE.Euler(Math.random() * 6, Math.random() * 6, Math.random() * 6));
         scene.add(mesh);
-        let ringM = null;
-        if (!jack) {
-          ringM = new THREE.Mesh(ringGeo, ringMats[b.team ? 1 : 0]);
-          ringM.scale.setScalar(b.r);
-          ringM.visible = false;
-          scene.add(ringM);
-        }
-        e = { mesh, ring: ringM, body: b };
+        e = { mesh, body: b };
         meshes.set(b.id, e);
       }
       e.body = b;
       e.mesh.position.set(b.x, b.y, b.z);
-      if (e.ring) e.ring.position.set(b.x, b.y, terrain.sample(b.x, b.y).h + 0.004);
       e.mesh.visible = true; // dead bodies stay visible at their spot beyond the far line, greyed
       const baseMat = b.dead ? (b.kind === 'jack' ? deadJackMat : deadBouleMat) : (b.kind === 'jack' ? (jv.c ? jackBright : jackMat) : bouleMats[b.team ? 1 : 0]);
       if (e.fade) { // D11 reduced motion: a ball fades out and in instead of being carried
@@ -381,7 +416,6 @@ export function createRenderer(canvas, terrain) {
     for (const [id, e] of meshes) {
       if (seen.has(id)) continue;
       scene.remove(e.mesh);
-      if (e.ring) scene.remove(e.ring);
       if (e === jackLive) jackLive = null;
       meshes.delete(id);
     }
@@ -403,13 +437,13 @@ export function createRenderer(canvas, terrain) {
     }
   }
 
-  // Jack finder: at 6-10 m the jack is a few pixels, so a bobbing chevron (constant screen size) floats over it,
-  // and a soft ground halo shows in the head view. ?debug&jackvis=a|b|c|ab|ac|bc|abc|none compares the options.
+  // Jack finder: at 6-10 m the jack is a few pixels, so a bobbing chevron (constant screen size) floats over it.
+  // ?debug&jackvis=a|c|ac|none compares the options (a = chevron, c = bright orange jack).
   const jackVisParam = (() => {
     try { const q = new URLSearchParams(location.search); return q.has('debug') ? q.get('jackvis') : null; } catch (e) { return null; }
   })();
-  const jv = jackVisParam === null ? { a: true, b: false, c: true, headRing: true }
-    : { a: jackVisParam.includes('a'), b: jackVisParam.includes('b'), c: jackVisParam.includes('c'), headRing: false };
+  const jv = jackVisParam === null ? { a: true, c: true }
+    : { a: jackVisParam.includes('a'), c: jackVisParam.includes('c') };
   const jackBright = new THREE.MeshStandardMaterial({ color: '#ff8a1e', metalness: 0, roughness: 0.4, emissive: '#ff6a00', emissiveIntensity: 0.6 });
   const jackChevron = (() => {
     const cv = makeCanvas(64, 96), g = cv.getContext('2d');
@@ -423,18 +457,6 @@ export function createRenderer(canvas, terrain) {
     scene.add(spr);
     return spr;
   })();
-  const jackHalo = (() => {
-    const cv = makeCanvas(128, 128), g = cv.getContext('2d');
-    const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-    gr.addColorStop(0, 'rgba(255,241,194,0)'); gr.addColorStop(0.5, 'rgba(255,241,194,0)');
-    gr.addColorStop(0.68, 'rgba(255,241,194,0.95)'); gr.addColorStop(0.82, 'rgba(255,241,194,0.35)'); gr.addColorStop(1, 'rgba(255,241,194,0)');
-    g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
-    const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, fog: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
-    m.renderOrder = 10; m.visible = false;
-    scene.add(m);
-    return m;
-  })();
   let jackLive = null, jackT = 0;
   // The chevron is only wanted while the human aims a boule (D17): main.js switches it on and off, and it fades over ~0.4 s
   let arrowWant = false, arrowK = 0;
@@ -443,7 +465,7 @@ export function createRenderer(canvas, terrain) {
     jackT += dt;
     arrowK = reduce() ? (arrowWant ? 1 : 0) : Math.max(0, Math.min(1, arrowK + (arrowWant ? dt : -dt) / 0.25));
     const e = jackLive, on = e && !e.body.dead && mode !== 'inspect' && !measure.children.length && !scoring.children.length && !placeMarker.visible;
-    if (!on) { jackChevron.visible = false; jackHalo.visible = false; return; }
+    if (!on) { jackChevron.visible = false; return; }
     const p = e.mesh.position, dist = camera.position.distanceTo(p);
     const k = Math.max(0, Math.min(1, (dist - 1.5) / 1.5)); // fade out inside ~1.5 m, fully on by 3 m
     const ndcH = dist * Math.tan(camera.fov * Math.PI / 360); // metres per unit of NDC height at the jack
@@ -453,14 +475,6 @@ export function createRenderer(canvas, terrain) {
       jackChevron.material.opacity = k * arrowK;
       jackChevron.visible = true;
     } else jackChevron.visible = false;
-    const kh = Math.max(0, Math.min(1, (dist - 0.9) / 0.8)); // the halo is a ground mark, so it can stay closer in
-    if ((jv.b || (jv.headRing && mode === 'head')) && kh > 0) {
-      const gz = terrain.sample(p.x, p.y).h + 0.012;
-      jackHalo.position.set(p.x, p.y, gz);
-      jackHalo.scale.setScalar(Math.max(0.2, ndcH * 0.07));
-      jackHalo.material.opacity = kh * 0.9;
-      jackHalo.visible = true;
-    } else jackHalo.visible = false;
   }
 
   // Divot decals: a pool of soft dark discs just above the ground, reused in a ring
@@ -468,9 +482,10 @@ export function createRenderer(canvas, terrain) {
   const divotTex = (() => {
     const cv = makeCanvas(64, 64), g = cv.getContext('2d');
     const gr = g.createRadialGradient(32, 32, 4, 32, 32, 31);
-    gr.addColorStop(0, 'rgba(60,44,24,0.55)');
-    gr.addColorStop(0.65, 'rgba(60,44,24,0.3)');
-    gr.addColorStop(1, 'rgba(60,44,24,0)');
+    const dc = grey ? '40,46,58' : '60,44,24';
+    gr.addColorStop(0, `rgba(${dc},0.55)`);
+    gr.addColorStop(0.65, `rgba(${dc},0.3)`);
+    gr.addColorStop(1, `rgba(${dc},0)`);
     g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
     return new THREE.CanvasTexture(cv);
   })();
@@ -489,9 +504,12 @@ export function createRenderer(canvas, terrain) {
   let divotNext = 0;
   function addDivot(x, y, r = 0.06) {
     const m = divotMeshes[divotNext++ % DIVOTS];
-    m.position.set(x, y, terrain.sample(x, y).h + 0.004);
+    // F34: lay the disc on the slope (tangent to the ground there) so its whole span stays above it
+    const s = terrain.sample(x, y), up = new THREE.Vector3(0, 0, 1), n = new THREE.Vector3(s.nx || 0, s.ny || 0, s.nz || 1).normalize();
+    m.position.set(x, y, s.h + 0.004);
+    m.quaternion.setFromUnitVectors(up, n);
+    m.rotateZ((x * 977 + y * 331) % 6.283);
     m.scale.setScalar(Math.max(0.03, r * 1.6));
-    m.rotation.z = (x * 977 + y * 331) % 6.283;
     m.visible = true;
   }
   function clearDivots() { for (const m of divotMeshes) m.visible = false; divotNext = 0; }
@@ -615,7 +633,7 @@ export function createRenderer(canvas, terrain) {
   // Measuring tape: lines from the jack to each measured boule, with cm labels
   const measure = new THREE.Group();
   scene.add(measure);
-  const scoring = new THREE.Group(); // D07: the mène-end circle, number badges and rival ring
+  const scoring = new THREE.Group(); // D07: the mène-end circle, number badges and distance labels
   scene.add(scoring);
   function clearMeasure() {
     for (const g of [measure, scoring]) {
@@ -676,13 +694,23 @@ export function createRenderer(canvas, terrain) {
     spr.renderOrder = 6; spr.scale.set(0.15, 0.15, 1);
     return spr;
   }
-  // D07 mène end: soft disc on the jack holding every scoring boule, numbered badges, and the best rival outlined.
-  // o: { radius, fill, edge, items: [{ x, y, n }], rival: { x, y, r, label } | null }
+  // D07 mène end: soft disc on the jack holding every scoring boule, numbered badges and distance labels.
+  // o: { radius, fill, edge, items: [{ x, y, n }], rival: { x, y, r, label } | null } (the rival gets a label only)
+  // F22: showScoring remembers its arguments; fitScoring (below) rebuilds it with the result card as an obstacle
+  let scoringArgs = null, scoringFit = null;
   function showScoring(jack, o) {
+    scoringArgs = { jack, o }; scoringFit = null;
+    return buildScoring(jack, o, null);
+  }
+  // returns { pts: world points (ground) the view must show: circle, boules, badges and label corners }
+  function buildScoring(jack, o, obst) {
     clearMeasure();
+    const pts = [];
+    for (let k = 0; k < 24; k++) pts.push({ x: jack.x + Math.cos(k * Math.PI / 12) * o.radius, y: jack.y + Math.sin(k * Math.PI / 12) * o.radius });
+    for (const q of o.others || []) pts.push({ x: q.x - (q.r || 0.037), y: q.y - (q.r || 0.037) }, { x: q.x + (q.r || 0.037), y: q.y + (q.r || 0.037) });
     scoring.add(groundRing(jack.x, jack.y, 0, o.radius, o.fill, 0.3, 0.014, 2));
     const hw = Math.min(0.009, Math.max(0.0035, o.radius * 0.05)); // E17: a tiny circle gets a thin line, never an inflated one
-    scoring.add(groundRing(jack.x, jack.y, o.radius - hw, o.radius + hw, o.edge, 0.95, 0.018, 3)); // centred on the radius (the rival's centre)
+    scoring.add(groundRing(jack.x, jack.y, o.radius - hw, o.radius + hw, o.edge, 0.95, 0.018, 3)); // centred on the radius
     // E17: each badge sits beside its boule (away from the jack, turned aside if that is taken) so the boule stays visible
     const BR = 0.075, badges = [];
     const taken = [{ x: jack.x, y: jack.y, r: (jack.r || 0.015) + 0.02 }];
@@ -700,6 +728,7 @@ export function createRenderer(canvas, terrain) {
         if (m >= 0 && k === 0) break;
       }
       badges.push(best);
+      pts.push({ x: best.x - BR, y: best.y - BR }, { x: best.x + BR, y: best.y + BR });
       const spr = badgeSprite(String(it.n), o.edge, '#fff');
       spr.position.set(best.x, best.y, terrain.sample(best.x, best.y).h + 0.09);
       scoring.add(spr);
@@ -716,6 +745,7 @@ export function createRenderer(canvas, terrain) {
         const dx = Math.max(Math.abs(cx - q.x) - LW / 2, 0), dy = Math.max(Math.abs(cy - q.y) - LH / 2, 0);
         if (dx * dx + dy * dy < q.r * q.r) return true;
       }
+      if (obst && obst(cx, cy, LW / 2, LH / 2)) return true; // F22: under the result card
       return boxes.some((b) => Math.abs(b.x - cx) < LW + 0.01 && Math.abs(b.y - cy) < LH + 0.01);
     };
     const placeLabel = (b, text, bg, border) => {
@@ -736,17 +766,71 @@ export function createRenderer(canvas, terrain) {
         }
       }
       boxes.push({ x: pick.x, y: pick.y });
+      pts.push({ x: pick.x - LW / 2, y: pick.y - LH / 2 }, { x: pick.x + LW / 2, y: pick.y + LH / 2 });
       const spr = labelSprite(text, '#fff', bg, border);
       spr.position.set(pick.x, pick.y, terrain.sample(pick.x, pick.y).h + 0.1);
       scoring.add(spr);
     };
     for (const it of o.items) if (it.label) placeLabel(it, it.label, o.dark, o.color);
-    if (o.rival) {
-      const rv = o.rival, r = rv.r || 0.037;
-      scoring.add(groundRing(rv.x, rv.y, r + 0.004, r + 0.02, '#e8e8e8', 0.95, 0.018, 3));
-      scoring.add(groundRing(rv.x, rv.y, 0, r + 0.004, '#777777', 0.28, 0.016, 2));
-      if (rv.label) placeLabel(rv, rv.label, 'rgba(110,110,110,0.88)', '#e8e8e8');
+    if (o.rival && o.rival.label) placeLabel(o.rival, o.rival.label, 'rgba(110,110,110,0.88)', '#e8e8e8');
+    return { pts };
+  }
+  // F22: frame the whole scoring view (circle, boules, badges, labels) into the screen region the HUD and the result card
+  // leave free. measure() -> { free: {l,t,r,b}, card: {l,t,r,b} | null } in canvas pixels. A near top-down camera at
+  // elevation el; the target and distance are solved by projecting the content into the free box, and the labels are
+  // re-placed with the card rect as an obstacle. Re-runs on resize.
+  function fitScoring(measure, el = 1.38) {
+    if (!scoringArgs) return;
+    scoringFit = { measure, el };
+    solveScoring(true);
+  }
+  function solveScoring(cut) {
+    const { jack, o } = scoringArgs, { measure, el } = scoringFit;
+    const W = canvas.clientWidth || 1, H = canvas.clientHeight || 1;
+    const m = measure(), fr = m.free || { l: 0, t: 0, r: W, b: H };
+    const pad = Math.max(10, Math.min(W, H) * 0.03);
+    const box = { l: fr.l + pad, t: fr.t + pad, r: fr.r - pad, b: fr.b - pad };
+    const cam = camera.clone(); cam.aspect = W / H; cam.updateProjectionMatrix();
+    const place = (tx, ty, dist) => {
+      const gz = terrain.sample(tx, ty).h;
+      cam.position.set(tx, ty - court.dir * Math.cos(el) * dist, gz + Math.sin(el) * dist);
+      cam.up.set(0, 0, 1); cam.lookAt(tx, ty, gz); cam.updateMatrixWorld(true);
+    };
+    const v = new THREE.Vector3();
+    const px = (x, y) => { v.set(x, y, terrain.sample(x, y).h).project(cam); return { x: (v.x + 1) / 2 * W, y: (1 - v.y) / 2 * H }; };
+    const bounds = (pts) => {
+      let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+      for (const p of pts) { const q = px(p.x, p.y); l = Math.min(l, q.x); r = Math.max(r, q.x); t = Math.min(t, q.y); b = Math.max(b, q.y); }
+      return { l, t, r, b };
+    };
+    const hitsCard = (cx, cy, hw, hh) => {
+      if (!m.card) return false;
+      const c = m.card, g = 8;
+      const xs = [], ys = [];
+      for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { const q = px(cx + sx * hw, cy + sy * hh); xs.push(q.x); ys.push(q.y); }
+      return Math.min(...xs) < c.r + g && Math.max(...xs) > c.l - g && Math.min(...ys) < c.b + g && Math.max(...ys) > c.t - g;
+    };
+    let tx = jack.x, ty = jack.y, dist = 1.4, pts = scoringArgs.pts || [{ x: jack.x, y: jack.y }];
+    for (let pass = 0; pass < 3; pass++) { // labels depend on the camera and the camera on the labels
+      place(tx, ty, dist);
+      pts = buildScoring(jack, o, hitsCard).pts;
+      for (let it = 0; it < 24; it++) {
+        place(tx, ty, dist);
+        const bb = bounds(pts), bw = bb.r - bb.l, bh = bb.b - bb.t;
+        const s = Math.max(bw / (box.r - box.l), bh / (box.b - box.t));
+        const dx = (box.l + box.r) / 2 - (bb.l + bb.r) / 2, dy = (box.t + box.b) / 2 - (bb.t + bb.b) / 2;
+        if (Math.abs(s - 1) < 0.01 && Math.abs(dx) < 1 && Math.abs(dy) < 1) break;
+        // shift the target by the measured screen response of a 0.1 m step in x and y
+        const c0 = px(tx, ty), cx = px(tx + 0.1, ty), cy = px(tx, ty + 0.1);
+        const a = (cx.x - c0.x) / 0.1, b = (cy.x - c0.x) / 0.1, c = (cx.y - c0.y) / 0.1, d = (cy.y - c0.y) / 0.1, det = a * d - b * c || 1e-6;
+        // want the content to move by (dx, dy): move the target the other way
+        tx -= (d * dx - b * dy) / det * 0.8; ty -= (-c * dx + a * dy) / det * 0.8;
+        dist = Math.max(0.9, Math.min(16, dist * (s > 1 ? s : Math.max(s, 0.9)) ** 0.9));
+      }
     }
+    scoringArgs.pts = pts;
+    const fitOpts = { now: true, target: { x: jack.x, y: jack.y }, exact: { x: tx, y: ty, dist }, el };
+    if (cut) setCamera('head', fitOpts); else { opts = fitOpts; computeGoal(0, true); cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt); }
   }
   function labelSprite(text, color, bg, border) {
     const cv = makeCanvas(160, 64), g = cv.getContext('2d');
@@ -769,6 +853,7 @@ export function createRenderer(canvas, terrain) {
   // must stay clear of. The label sits beyond its boule, away from the jack, unless that lands on a neighbour or on
   // the other label, in which case the nearest clear direction round the boule is used.
   function showMeasure(jack, items, others = []) {
+    scoringFit = null; scoringArgs = null;
     clearMeasure();
     const jz = terrain.sample(jack.x, jack.y).h;
     const taken = []; // centres of labels already placed
@@ -1195,14 +1280,34 @@ export function createRenderer(canvas, terrain) {
   let flightFrame = null; // camera.js spring state while the flight camera follows moving bodies
   let obsFrame = null; // E11: camera.js state of the casual-observer camera (kept while it stays in that mode)
 
+  let bcFrame = null; // F01: camera.js state of the current broadcast shot (a new shot is a cut)
   let tvFrame = null, tvPending = null; // E27: the TV shot's state, and a camera request held until the shot has played out
+  // F38: a plane shot overlays the current camera. Requests made meanwhile are remembered and replayed when it ends, except the
+  // human's own cameras (aim, shoulder, inspect), which end it at once.
+  let planeSaved = null, planeFrame = null;
+  function setPlaneShot(on) {
+    if (on === !!planeSaved) return;
+    if (on) {
+      planeSaved = [mode, opts, false]; planeFrame = null;
+      from.pos.copy(cur.pos); from.tgt.copy(cur.tgt);
+      mode = 'plane'; opts = {}; trans = 1; computeGoal(0, true);
+    } else {
+      const [m, o, f] = planeSaved; planeSaved = null; planeFrame = null;
+      mode = m; opts = o; setCamera(m, o, f);
+    }
+  }
   function setCamera(m, o = {}, flush = false) {
+    if (planeSaved) {
+      if (m === 'aim' || m === 'shoulder' || m === 'inspect') setPlaneShot(false);
+      else { planeSaved = [m, o, flush]; return; }
+    }
     if (mode === 'tv' && m !== 'tv' && m !== 'flight' && !flush && !o.now) { // let the boule settle on screen before the next cut
       if (tvFrame && tvFrame.restT < (TV.hold[tvFrame.variant] || 0) && !reduce()) { tvPending = [m, o]; return; }
     }
     tvPending = null;
-    const cutIn = m === 'tv' || mode === 'tv'; // TV style cuts: no glide into or out of the shot
+    const cutIn = m === 'tv' || mode === 'tv' || m === 'broadcast' || !!o.cut; // TV style cuts: no glide into or out of the shot
     if (m === 'tv') tvFrame = null;
+    if (m === 'broadcast') bcFrame = null;
     if (m === 'inspect' && (mode !== 'inspect' || o.reset)) { // o.reset: a scripted cut replaces the user's orbit
       orbit.dist = o.dist || 2.5;
       orbit.az = o.az !== undefined ? o.az : 0;
@@ -1237,6 +1342,22 @@ export function createRenderer(canvas, terrain) {
       obsFrame = f;
       goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
       goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
+    } else if (mode === 'plane') { // F38: a spectator's view of the floatplane
+      const pp = floatplane.pos;
+      const f = framePlane({ x: pp.x, y: pp.y, z: pp.z }, { dt, aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50, groundAt: (x, y) => terrain.sample(x, y).h, width: C.terrainW }, planeFrame);
+      planeFrame = f;
+      goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
+      goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
+    } else if (mode === 'broadcast') { // F01: a director's shot (opts.shot: prep | throw | reaction | flight)
+      const jk = opts.bodies && opts.bodies.find((b) => b.kind === 'jack' && !b.dead);
+      const sub = opts.subject;
+      const face = opts.face !== undefined ? opts.face : opts.faceTo && sub ? Math.atan2(opts.faceTo.x - sub.x, opts.faceTo.y - sub.y) : undefined;
+      const f = frameBroadcast(opts.shot, { subject: sub, face, body: opts.body, jack: jk, dir: court.dir, dt, reduced: reduce(), groundAt: (x, y) => terrain.sample(x, y).h, aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50 }, bcFrame);
+      if (f) {
+        bcFrame = f;
+        goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
+        goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
+      }
     } else if (mode === 'tv') { // E27: a TV-style shot of an AI throw
       const jk = opts.bodies && opts.bodies.find((b) => b.kind === 'jack' && !b.dead);
       const f = frameTV(tvVariant(opts.variant) || 'a', { body: opts.body, jack: jk, dir: court.dir, dt, reduced: reduce(), groundAt: (x, y) => terrain.sample(x, y).h, aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50 }, tvFrame);
@@ -1262,6 +1383,12 @@ export function createRenderer(canvas, terrain) {
       goal.tgt.set(b.x + heading.x * 2.5, b.y + heading.y * 2.5, Math.max(0, b.z * 0.4));
     } else if (mode === 'head') {
       const t = opts.target || { x: 2, y: 8 };
+      if (opts.exact) { // F22: a camera solved by fitScoring: target and distance given
+        const e = opts.exact, el2 = opts.el || 1.38, gz = groundZ(e);
+        goal.tgt.set(e.x, e.y, gz);
+        goal.pos.set(e.x, e.y - court.dir * Math.cos(el2) * e.dist, gz + Math.sin(el2) * e.dist);
+        return;
+      }
       // frame the target plus any listed points (nearby live boules) with a margin
       let x0 = t.x, x1 = t.x, y0 = t.y, y1 = t.y;
       for (const p of opts.points || []) {
@@ -1355,8 +1482,7 @@ export function createRenderer(canvas, terrain) {
     if (PC.pos.z < floor) PC.pos.z = floor;
     camera.position.copy(PC.pos);
     camera.lookAt(PC.P);
-    sun.target.position.copy(PC.P);
-    sun.position.copy(PC.P).add(sunOffset);
+    aimSun(PC.P);
   }
 
   // Sepia: while paused the scene is drawn to a target and a full-screen triangle redraws it in sepia
@@ -1414,6 +1540,7 @@ export function createRenderer(canvas, terrain) {
       fov = baseFov * (1 - 0.32 * focusK * Math.max(0, Math.min(1, (d - 3) / 5)));
     }
     if (mode === 'observer' && obsFrame) fov *= obsFrame.fovK; // E11: the spectator's slow zoom
+    if (mode === 'plane' && planeFrame) fov *= planeFrame.fovK; // F38
     if (Math.abs(fov - camera.fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
     if (trans < 1) {
       trans = Math.min(1, trans + dt / TRANSITION);
@@ -1430,8 +1557,7 @@ export function createRenderer(canvas, terrain) {
     camera.position.copy(cur.pos);
     camera.lookAt(cur.tgt);
     // shadow frustum follows what we look at
-    sun.target.position.copy(cur.tgt);
-    sun.position.copy(cur.tgt).add(sunOffset);
+    aimSun(cur.tgt);
   }
 
   // Minimal orbit controls for inspect mode
@@ -1511,6 +1637,7 @@ export function createRenderer(canvas, terrain) {
     // keep the court in view on tall (phone) screens
     camera.fov = camera.aspect < 1 ? 62 : 50;
     camera.updateProjectionMatrix();
+    if (scoringFit && scoringArgs && mode === 'head' && opts.exact) solveScoring(false); // F22: re-fit the circle into the new free region
   }
   let ro = null;
   if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(resize); ro.observe(canvas); }
@@ -1526,7 +1653,6 @@ export function createRenderer(canvas, terrain) {
         tmpQ.setFromAxisAngle(tmpV, wl * dt);
         e.mesh.quaternion.premultiply(tmpQ);
       }
-      if (e.ring) e.ring.visible = mode === 'head' && !e.body.dead;
     }
     tickRing(dt);
     if (dt > 0 && !reduce()) {
@@ -1535,6 +1661,8 @@ export function createRenderer(canvas, terrain) {
     }
     updateFades(dt);
     updateCamera(dt);
+    if (!reduce()) lake.update(dt);
+    floatplane.update(dt, camera, reduce());
     updatePreview();
     updateJackMark(dt);
     renderScene();
@@ -1565,5 +1693,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, clearMeasure, showJackZone, syncCourt, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  return { sync, fadeBody, setCamera, setPlaneShot, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
 }

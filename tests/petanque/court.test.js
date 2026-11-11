@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { C } from '../../assets/js/petanque/constants.js';
 import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { mulberry32 } from '../../assets/js/petanque/rng.js';
 import { createBody, launch, createWorld, simulate, deadRowSlot, deadJackSpot } from '../../assets/js/petanque/physics.js';
@@ -173,4 +174,37 @@ test('chooseJackPlacement and jackValid read the same moved circle and flipped d
       assert.equal(jackFault({ x: circle.x, y: circle.y + 3 * dir }, geometry).reason, 'short');
     } finally { resetCourt(); }
   }
+});
+
+test('F10: the ring after a dead jack is centred near its last in-bounds spot', () => {
+  const W = C.terrainW, L = C.terrainL;
+  for (const [spot, dir] of [[{ x: 2.1, y: L - 0.02 }, 1], [{ x: 2.1, y: 0.02 }, -1], [{ x: 0.02, y: 7 }, 1], [{ x: W - 0.02, y: 8 }, -1]]) {
+    const n = nextCircle(spot, dir);
+    assert.ok(Math.abs(n.placed.x - spot.x) <= 1.5 && Math.abs(n.placed.y - spot.y) <= 1.5, JSON.stringify(n.placed));
+    assert.ok(n.circle.x >= 0 && n.circle.x <= W && Math.abs(n.circle.x - spot.x) <= 1.5);
+  }
+});
+
+test('F24: after a mène the court circle and dir are exactly nextCircle of the last jack, from either mène end', () => {
+  const W = C.terrainW, L = C.terrainL;
+  try {
+    for (const dir of [1, -1]) {
+      for (const jack of [{ x: 2.3, y: 9.2 }, { x: 1.1, y: L - 2 }, { x: 3.4, y: 2.5 }, { x: 2.0, y: 7.0, dead: true, spot: { x: 2.2, y: L - 0.3 } }]) {
+        const circle = dir > 0 ? { x: 2, y: 1 } : { x: 2, y: L - 1 };
+        resetCourt(); setCourt(circle, dir);
+        const base = createMatch({ target: 13, players: undefined });
+        const m = { ...base, phase: 'meneEnd', jack, boules: [], result: { void: true }, geometry: { ...base.geometry, circle: { ...circle }, dir } };
+        const spot = jack.dead && jack.spot ? jack.spot : jack;
+        const want = nextCircle(spot, court.dir, { width: m.geometry.width, length: m.geometry.length });
+        const next = apply(m, { type: 'nextMene' });
+        assert.deepEqual(next.geometry.circle, { x: want.circle.x, y: want.circle.y });
+        assert.equal(next.geometry.dir, want.dir);
+        assert.equal(want.dir, -dir, 'play turns to the other end');
+        setCourt(next.geometry.circle, next.geometry.dir); // what main.js applyCourt does in quick, slow and instant mode alike
+        assert.equal(court.circle.x, want.circle.x); assert.equal(court.circle.y, want.circle.y);
+        assert.equal(court.throwFrom.x, want.circle.x); assert.equal(court.throwFrom.y, want.circle.y);
+        assert.equal(court.dir, want.dir);
+      }
+    }
+  } finally { resetCourt(); }
 });

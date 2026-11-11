@@ -3,7 +3,7 @@
 
 import { settings, MODE_INFO } from './settings.js';
 
-const TEAM_NAMES = ['You & Pierre', 'Marcel & Odette'];
+const TEAM_NAMES = ['You & Pierre', 'Marcel & Odette']; // initial labels; update() sets them from the match
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -22,6 +22,66 @@ function button(text, cls, onClick) {
 const focusSoon = (node) => {
   if (node) setTimeout(() => node.focus({ preventScroll: true }), 0);
 };
+
+// F48: translucent press-and-hold icon buttons (pan the view, read the ground, overhead view). One finger or the mouse
+// holds an icon (pointer capture, so sliding off it keeps the hold); Space or Enter holds it from the keyboard. The hold
+// ends on release, pointercancel, lost capture, blur or Escape, and never opens a context menu or selects text.
+// defs: [{ cls, label, title, svg, onHold({ dirX, dirY, pointer }), onRelease() }]. dirX/dirY (-1..1) say where on the
+// icon the pointer is (the pan icon uses them as four arrows); they are 0 for the keyboard.
+export function createHoldIcons(defs) {
+  const wrap = el('div', 'pc-holds');
+  wrap.setAttribute('role', 'group');
+  wrap.setAttribute('aria-label', 'Hold to change the view');
+  wrap.hidden = true;
+  const buttons = defs.map((d) => {
+    const b = button('', 'pc-hold ' + d.cls);
+    b.innerHTML = d.svg;
+    b.setAttribute('aria-label', d.label);
+    b.title = d.title || d.label;
+    b.setAttribute('aria-pressed', 'false');
+    let pointerId = null, keyHeld = false;
+    const dirOf = (e) => {
+      const r = b.getBoundingClientRect(), nx = (e.clientX - r.left - r.width / 2) / (r.width / 2), ny = (e.clientY - r.top - r.height / 2) / (r.height / 2);
+      if (Math.hypot(nx, ny) < 0.18) return { dirX: 0, dirY: 0 }; // dead centre: no direction
+      return Math.abs(nx) >= Math.abs(ny) ? { dirX: Math.sign(nx), dirY: 0 } : { dirX: 0, dirY: Math.sign(ny) };
+    };
+    const held = () => pointerId !== null || keyHeld;
+    const start = (info) => { b.classList.add('is-held'); b.setAttribute('aria-pressed', 'true'); d.onHold(info); };
+    const end = () => {
+      if (!held() && !b.classList.contains('is-held')) return;
+      pointerId = null; keyHeld = false;
+      b.classList.remove('is-held'); b.setAttribute('aria-pressed', 'false');
+      d.onRelease();
+    };
+    b.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      e.preventDefault(); e.stopPropagation();
+      if (pointerId !== null) return;
+      pointerId = e.pointerId;
+      try { b.setPointerCapture(e.pointerId); } catch (err) { /* synthetic or released pointer */ }
+      start({ ...dirOf(e), pointer: true });
+    });
+    b.addEventListener('pointermove', (e) => { if (e.pointerId === pointerId) d.onHold({ ...dirOf(e), pointer: true }); });
+    for (const t of ['pointerup', 'pointercancel', 'lostpointercapture']) b.addEventListener(t, (e) => { if (e.pointerId === pointerId) end(); });
+    b.addEventListener('pointerleave', (e) => { if (e.pointerId === pointerId && !b.hasPointerCapture(e.pointerId)) end(); });
+    b.addEventListener('contextmenu', (e) => e.preventDefault());
+    b.addEventListener('dragstart', (e) => e.preventDefault());
+    b.addEventListener('click', (e) => e.preventDefault());
+    b.addEventListener('keydown', (e) => {
+      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); if (!e.repeat && !held()) { keyHeld = true; start({ dirX: 0, dirY: 0, pointer: false }); } }
+      else if (e.key === 'Escape' && held()) { e.preventDefault(); e.stopPropagation(); end(); }
+    });
+    b.addEventListener('keyup', (e) => { if ((e.key === ' ' || e.key === 'Enter') && keyHeld) end(); });
+    b.addEventListener('blur', end);
+    b.releaseHold = end;
+    return b;
+  });
+  wrap.append(...buttons);
+  return {
+    el: wrap, buttons,
+    setVisible(on) { if (!on) for (const b of buttons) b.releaseHold(); wrap.hidden = !on; },
+  };
+}
 
 // root: the #petanque container; callbacks: { onStart({ target, difficulty }), onNext, onPlayAgain, onChoose(playerId) }
 export function createHud(root, hudEl, cb) {
@@ -44,7 +104,7 @@ export function createHud(root, hudEl, cb) {
     head.append(nm, score);
     const players = el('div', 'pt-players');
     box.append(head, players);
-    return { box, score, players };
+    return { box, score, players, nm };
   });
   const meneEl = el('div', 'pt-mene');
   board.append(teamEls[0].box, meneEl, teamEls[1].box);
@@ -63,12 +123,17 @@ export function createHud(root, hudEl, cb) {
   pausedEl.hidden = true;
   pausedEl.setAttribute('role', 'group');
   pausedEl.setAttribute('aria-label', 'Game paused');
-  const resumeBtn = button('Resume game', 'pt-btn pt-resume', () => cb.onResume && cb.onResume());
+  // F32: three actions only: Resume, New game (back to setup) and End game (leave the full-window view for the page)
+  const resumeBtn = button('Resume', 'pt-btn pt-resume', () => cb.onResume && cb.onResume());
   pausedEl.append(el('span', 'pt-paused-text', 'Game paused.'), resumeBtn,
-    button('New game', 'pt-btn pt-btn-alt pt-paused-new', () => cb.onNewGame && cb.onNewGame()));
-  hudEl.append(pausedEl, board, dock);
+    button('New game', 'pt-btn pt-btn-alt pt-paused-new', () => cb.onNewGame && cb.onNewGame()),
+    button('End game', 'pt-btn pt-btn-alt pt-paused-end', () => cb.onEndGame && cb.onEndGame()));
+  // F11: "who holds the point" banner, shown before each aim (main.js drives its 2 s hold on the game clock)
+  const holdEl = el('div', 'pt-holding');
+  holdEl.setAttribute('aria-live', 'polite');
+  hudEl.append(pausedEl, board, holdEl, dock);
 
-  let setupState = { target: 13, difficulty: 'medium' };
+  let setupState = { target: 13, difficulty: 'medium', partner: settings.partner };
 
   function clearOverlay() { overlay.textContent = ''; overlay.className = 'pt-overlay'; }
 
@@ -86,9 +151,13 @@ export function createHud(root, hudEl, cb) {
     return c;
   }
 
-  function radioGroup(card, legendText, name, options, value, onChange) {
-    const fs = el('fieldset', 'pt-fieldset');
-    fs.append(el('legend', null, legendText));
+  // One compact row: a bold label on the left, the radio options inline beside it
+  function radioGroup(card, legendText, name, options, value, onChange, cls = '') {
+    const fs = el('div', 'pt-fieldset ' + cls);
+    fs.setAttribute('role', 'radiogroup');
+    fs.setAttribute('aria-label', legendText);
+    fs.append(el('span', 'pt-legend', legendText));
+    const opts = el('div', 'pt-opts');
     for (const [val, label] of options) {
       const lab = el('label', 'pt-choice');
       const input = document.createElement('input');
@@ -96,44 +165,57 @@ export function createHud(root, hudEl, cb) {
       input.checked = String(val) === String(value);
       input.addEventListener('change', () => onChange(val));
       lab.append(input, el('span', null, label));
-      fs.append(lab);
+      opts.append(lab);
     }
+    fs.append(opts);
     card.append(fs);
+    return fs;
   }
 
   function showSetup(initial) {
     setupState = { ...setupState, ...(initial || {}) };
     board.hidden = true; turnEl.hidden = true;
     const c = card('Set up your game', 'pt-setup');
-    c.append(el('p', 'pt-blurb', 'You and Pierre play Marcel and Odette, doublette, three boules each.'));
-    if (setupState.cast) {
-      const ul = el('ul', 'pt-cast');
-      ul.setAttribute('aria-label', 'The players');
-      for (const m of setupState.cast) {
-        const li = el('li', 'pt-cast-item pt-cast' + m.team);
-        li.append(el('strong', null, m.name), el('span', null, ` \u2014 ${m.bio}`));
-        ul.append(li);
+    const cast = setupState.cast || [];
+    const nameOf = (id) => (cast.find((m) => m.id === id) || { name: id }).name;
+    const blurb = el('p', 'pt-blurb');
+    const bioEl = el('p', 'pt-partner-bio');
+    const refresh = () => {
+      const part = setupState.partner;
+      const opp = cast.filter((m) => m.id !== part).map((m) => m.name);
+      blurb.textContent = `You and ${nameOf(part)} play ${opp.join(' and ')}, doublette, three boules each.`;
+      const m = cast.find((q) => q.id === part);
+      bioEl.textContent = m ? `${m.name}: ${m.bio}.` : '';
+    };
+    c.append(blurb);
+    if (cast.length) {
+      // F45: choose your partner; the other two are the opponents
+      const fs = el('div', 'pt-fieldset pt-partner');
+      fs.setAttribute('role', 'radiogroup');
+      fs.setAttribute('aria-label', 'Your partner');
+      fs.append(el('span', 'pt-legend', 'Your partner'));
+      const row = el('div', 'pt-partners');
+      for (const m of cast) {
+        const lab = el('label', 'pt-partner-choice');
+        const input = document.createElement('input');
+        input.type = 'radio'; input.name = 'pt-partner'; input.value = m.id;
+        input.checked = m.id === setupState.partner;
+        input.addEventListener('change', () => { setupState.partner = m.id; settings.partner = m.id; refresh(); });
+        lab.append(input, el('strong', null, m.name), el('span', 'pt-partner-tag', m.tag || ''));
+        row.append(lab);
       }
-      c.append(ul);
+      fs.append(row);
+      c.append(fs, bioEl);
     }
+    refresh();
     radioGroup(c, 'Play to', 'pt-target', [[13, '13 points'], [7, '7 points (quick)']],
       setupState.target, (v) => { setupState.target = +v; });
     radioGroup(c, 'Opponents', 'pt-diff', [['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard']],
       setupState.difficulty, (v) => { setupState.difficulty = v; });
-    const modeFs = el('fieldset', 'pt-fieldset pt-modes');
-    modeFs.append(el('legend', null, 'Pace'));
-    for (const [val, label] of [['slow', 'Slow'], ['quick', 'Quick']]) {
-      const lab = el('label', 'pt-choice pt-mode-choice');
-      const input = document.createElement('input');
-      input.type = 'radio'; input.name = 'pt-mode'; input.value = val;
-      input.checked = settings.mode === val;
-      input.addEventListener('change', () => { settings.mode = val; });
-      const txt = el('span', null);
-      txt.append(el('strong', null, label), el('span', 'pt-mode-desc', ' \u2014 ' + MODE_INFO[val]));
-      lab.append(input, txt);
-      modeFs.append(lab);
-    }
-    c.append(modeFs);
+    const modeDesc = el('p', 'pt-mode-desc', MODE_INFO[settings.mode]);
+    radioGroup(c, 'Pace', 'pt-mode', [['slow', 'Slow'], ['quick', 'Quick']], settings.mode,
+      (v) => { settings.mode = v; modeDesc.textContent = MODE_INFO[v]; }, 'pt-modes');
+    c.append(modeDesc);
     const start = button('Start game', 'pt-btn pt-start', () => cb.onStart({ ...setupState }));
     c.append(start);
     say('Choose your game options, then start.');
@@ -157,7 +239,9 @@ export function createHud(root, hudEl, cb) {
       teamEls[t].score.textContent = match.scores[t];
       teamEls[t].box.classList.toggle('is-turn', !!turn && turn.team === t);
       teamEls[t].players.textContent = '';
-      for (const p of match.players.filter((q) => q.team === t)) {
+      const members = match.players.filter((q) => q.team === t);
+      if (members.length) teamEls[t].nm.textContent = [...members].sort((a, b) => (b.isHuman ? 1 : 0) - (a.isHuman ? 1 : 0)).map((q) => q.name).join(' & ');
+      for (const p of members) {
         const row = el('div', 'pt-player' + (turn && turn.playerId === p.id ? ' is-active' : ''));
         row.append(el('span', 'pt-pname', p.name), dots(p.boulesLeft));
         teamEls[t].players.append(row);
@@ -169,11 +253,14 @@ export function createHud(root, hudEl, cb) {
   }
 
   // Who-throws card (human team), centred over the court with a translucent backdrop.
-  // players: the throwers with boules; suggestion: Pierre's advice (replaced later by setSuggestion).
+  // players: the throwers with boules; suggestion: your partner's advice (replaced later by setSuggestion).
   let chooserCard = null;
   let suggestEl = null;
   let whoBtns = [];
+  let advisor = 'Pierre'; // the partner who suggests (F45: whoever you chose)
   function showChooser(players, suggestion) {
+    const partner = players.find((p) => !p.isHuman);
+    if (partner) advisor = partner.name;
     const c = card('Your team to play', 'pt-choose');
     c.classList.add('pt-choose-card');
     c.tabIndex = -1;
@@ -199,14 +286,14 @@ export function createHud(root, hudEl, cb) {
     c.append(group);
     focusSoon(c);
   }
-  // playerId: the one Pierre says should throw; they get a "Pierre suggests" tag (never pre-selected)
+  // playerId: the one your partner says should throw; they get a "<Partner> suggests" tag (never pre-selected)
   function setSuggestion(text, playerId) {
     if (suggestEl) suggestEl.textContent = text;
     for (const b of whoBtns) {
       const on = playerId !== undefined && b.dataset.player === playerId;
       b.classList.toggle('is-suggested', on);
       const tag = b.querySelector('.pt-who-tag');
-      if (on && !tag) b.append(el('span', 'pt-who-tag', 'Pierre suggests'));
+      if (on && !tag) b.append(el('span', 'pt-who-tag', `${advisor} suggests`));
       if (!on && tag) tag.remove();
     }
   }
@@ -234,6 +321,14 @@ export function createHud(root, hudEl, cb) {
     hintEl.hidden = false;
   }
   function hideHint() { hintEl.hidden = true; }
+
+  // F11: text as composed by main.js, team 0 | 1 for the accent. Fades in and out through the is-on class (CSS).
+  function showHolding(text, team) {
+    holdEl.textContent = text;
+    holdEl.classList.toggle('pt-holding1', team === 1);
+    holdEl.classList.add('is-on');
+  }
+  function hideHolding() { holdEl.classList.remove('is-on'); }
 
   function showPaused(on) {
     pausedEl.hidden = !on;
@@ -274,5 +369,5 @@ export function createHud(root, hudEl, cb) {
     focusSoon(again);
   }
 
-  return { say, showSetup, hideOverlay, update, showChooser, setSuggestion, hideChooser, showHint, hideHint, showPaused, showMeneEnd, showYellowCard, showGameOver };
+  return { say, showSetup, hideOverlay, update, showChooser, setSuggestion, hideChooser, showHint, hideHint, showHolding, hideHolding, showPaused, showMeneEnd, showYellowCard, showGameOver };
 }
