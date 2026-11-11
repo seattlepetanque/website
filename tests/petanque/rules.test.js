@@ -93,10 +93,66 @@ test('team with no live boule on ground throws; dead boules do not count', () =>
   assert.equal(nextTeam(m), 1);
 });
 
-test('nobody on the ground: last thrower throws again', () => {
+test('first boule dead: the opponent throws next (Art. 16)', () => {
   let m = started({});
   m = throwBoule(m, 'you', jackAt, [b('a', 0, 9, 9, true)]);
+  assert.equal(nextTeam(m), 1);
+});
+
+test('all boules dead: strict alternation 0,1,0,1 until one stays', () => {
+  let m = started({});
+  const dead = [];
+  const order = [];
+  const who = { 0: ['you', 'pierre'], 1: ['marcel', 'odette'] };
+  const used = { 0: 0, 1: 0 };
+  let team = 0;
+  for (let i = 0; i < 4; i++) {
+    const id = who[team][used[team]++ % 2];
+    dead.push(b('d' + i, team, 9, 9, true));
+    m = throwBoule(m, id, jackAt, dead.slice());
+    team = nextTeam(m);
+    order.push(team);
+  }
+  assert.deepEqual(order, [1, 0, 1, 0]);
+  // a boule stays in play: normal rules resume (team 1 has no boule on the ground, so it plays)
+  m = throwBoule(m, 'you', jackAt, [...dead, b('s', 0, 2, 8.5)]);
+  assert.equal(m.stayed, true);
+  assert.equal(nextTeam(m), 1);
+});
+
+test('a shot that clears the ground after boules stayed: the last thrower plays again (Art. 29)', () => {
+  let m = started({});
+  m = throwBoule(m, 'you', jackAt, [b('a', 0, 2, 8.5)]);
+  assert.equal(nextTeam(m), 1);
+  m = throwBoule(m, 'marcel', jackAt, [b('a', 0, 9, 9, true), b('c', 1, 9, 9, true)]);
+  assert.equal(m.stayed, true);
+  assert.equal(nextTeam(m), 1);
+});
+
+test('first boule dead, second live: the other team of the live boule plays', () => {
+  let m = started({});
+  m = throwBoule(m, 'you', jackAt, [b('a', 0, 9, 9, true)]);
+  m = throwBoule(m, 'marcel', jackAt, [b('a', 0, 9, 9, true), b('c', 1, 2, 8.5)]);
   assert.equal(nextTeam(m), 0);
+});
+
+test('every boule dead: the mène is void and the same jack team throws next', () => {
+  let m = started({});
+  const dead = [];
+  const ids = [['you', 'you', 'you', 'pierre', 'pierre', 'pierre'], ['marcel', 'marcel', 'marcel', 'odette', 'odette', 'odette']];
+  const used = [0, 0];
+  let team = 0;
+  while (m.phase === 'play' && dead.length < 12) {
+    dead.push(b('d' + dead.length, team, 9, 9, true));
+    m = throwBoule(m, ids[team][used[team]++], jackAt, dead.slice());
+    team = nextTeam(m) ?? team;
+  }
+  assert.equal(dead.length, 12);
+  assert.equal(m.phase, 'meneEnd');
+  assert.equal(m.result.void, true);
+  m = apply(m, { type: 'nextMene' });
+  assert.equal(m.jackTeam, 0);
+  assert.equal(m.stayed, false);
 });
 
 test('one team out of boules: the other plays its remaining boules', () => {

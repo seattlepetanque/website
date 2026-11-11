@@ -46,6 +46,7 @@ export function createMatch({ target = 13, players, geometry, firstJackTeam = 0 
     mene: 1,
     jackTeam: firstJackTeam, // team that throws (or must throw) the jack
     lastThrower: null, // team of the last boule thrown this mène
+    stayed: false, // F74: has any boule come to rest in play this mène (Art. 16: until one does, dead first boules alternate teams)
     inFlight: null, // playerId whose boule is being simulated
     phase: 'jack', // 'jack' | 'jackPlace' | 'play' | 'meneEnd' | 'gameOver'
     placingTeam: null, // team that places the jack by hand after an invalid throw (phase 'jackPlace')
@@ -149,7 +150,9 @@ export function nextTeam(match) {
   if (in0 !== in1) return in0 ? 0 : 1; // only one team has boules left
   const last = match.lastThrower ?? match.jackTeam;
   const live = [0, 1].map((t) => match.boules.some((b) => !b.dead && b.team === t));
-  if (!live[0] && !live[1]) return last;
+  // F74, Art. 16: while no boule has stayed in play, a dead boule passes the turn to the opponent (alternately);
+  // once boules have stayed and a shot cleared the ground, Art. 29 applies: the last thrower plays again.
+  if (!live[0] && !live[1]) return match.stayed || match.lastThrower == null ? last : 1 - last; // lastThrower null: the first boule, the jack team throws it
   if (live[0] !== live[1]) return live[0] ? 1 : 0; // team without a boule on the ground
   const hold = holdingTeam(match.jack, match.boules);
   if (hold === 'tie' || hold === null) return last;
@@ -210,14 +213,14 @@ export function apply(match, event) {
         // Invalid: the other team places the jack by hand; the thrower's team still plays first.
         return { ...match, phase: 'jackPlace', jackTeam: event.team, placingTeam: 1 - event.team, jack: null };
       }
-      return { ...match, phase: 'play', jackTeam: event.team, placingTeam: null, jack, boules: [], lastThrower: null };
+      return { ...match, phase: 'play', jackTeam: event.team, placingTeam: null, jack, boules: [], lastThrower: null, stayed: false };
     }
     case 'jackPlaceSettled': {
       // E04: the jack has come to rest. A valid resting place starts play; otherwise a yellow card and the same team places again.
       if (match.phase !== 'jackPlace' || event.team !== match.placingTeam) return match;
       const jack = { x: event.jack.x, y: event.jack.y, dead: !!event.jack.dead };
       if (!jackPlaceValid(jack, match.geometry)) return { ...match, yellowCards: (match.yellowCards || 0) + 1 };
-      return { ...match, phase: 'play', placingTeam: null, jack, boules: [], lastThrower: null, yellowCards: 0 };
+      return { ...match, phase: 'play', placingTeam: null, jack, boules: [], lastThrower: null, stayed: false, yellowCards: 0 };
     }
     case 'bouleThrown': {
       if (match.phase !== 'play') return match;
@@ -237,7 +240,7 @@ export function apply(match, event) {
       const none = boulesInHand(match, 0) + boulesInHand(match, 1) === 0;
       if (jack.dead || none) return endMene(match, jack, boules);
       if (clinchedOnGround(match, jack, boules)) return endMene(match, jack, boules);
-      return { ...match, jack, boules, inFlight: null };
+      return { ...match, jack, boules, inFlight: null, stayed: match.stayed || boules.some((x) => !x.dead) };
     }
     case 'nextMene': {
       if (match.phase !== 'meneEnd') return match;
@@ -251,6 +254,7 @@ export function apply(match, event) {
         mene: match.mene + 1,
         jackTeam: r && !r.void ? r.team : match.jackTeam, // winner throws; void keeps the same team
         lastThrower: null,
+        stayed: false,
         inFlight: null,
         phase: 'jack',
         placingTeam: null,
