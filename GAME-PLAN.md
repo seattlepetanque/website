@@ -32,7 +32,7 @@ assets/js/petanque/
   constants.js tuning table
 ```
 
-## 2. Throw gesture
+## 2. Throw gesture (superseded by §9, the donnée throw)
 
 Every throw is five numbers: `yaw`, `speed` (m/s), `loft` (radians), `backspin` (rad/s), `sidespin` (rad/s). Human and AI produce exactly these and go through the same physics.
 
@@ -108,3 +108,55 @@ API: `terrain.sample(x, y) → { h, nx, ny, nz, friction, loose }`, `terrain.sto
 4. Rules + HUD + full loop with a placeholder AI.
 5. Monte Carlo AI.
 6. Polish: audio, divots, measuring, commentary, tuning, device testing.
+
+---
+
+# Round 2
+
+Play-testing showed the physics has the right feel (randomness, rocks) but the swing gesture made the game unplayable. Round 2 replaces the throw with a donnée-based toss, then adds visible players. Order of importance: (1) throwing, (2) stick-figure skeleton and animation, (3) skinned human meshes. The physics stays as it is for now.
+
+## 9. The donnée throw (replaces §2)
+
+Real players pick a landing spot (the *donnée*) and then decide how high to throw. The game copies that.
+
+**Flow on the human's turn**
+
+1. **Aim:** the player stands in the circle, seen from an over-the-shoulder camera. Drag sideways (or ←/→) to turn. This can be repeated freely.
+2. **Toss:** press on the terrain to place the donnée, then pull down to raise the loft. While held, a live arc shows the intended throw, widening into a *cone of possibility*, with an ellipse on the ground where the boule may land. Release to throw. Dragging back above the press point, or Esc, cancels.
+3. **Re-aim:** a "Re-aim" button returns to step 1 at any time before release.
+
+- Clicking within a short distance of a boule or the jack snaps the donnée onto it (a tir). The HUD then reads "Tir".
+- Keyboard path: ←/→ turn, arrows with Shift move the donnée, W/S change loft, Enter throws, Esc cancels.
+- The jack is thrown the same way, with the legal 6–10 m zone drawn.
+
+**Throw model** (`donnee.js`, pure, shared by the human and the AI)
+
+- **Inputs:** release point, donnée (x, y), loft.
+- **Loft:** 8°–75°. The HUD names the style: below 20° roulette, 20–45° demi-portée, above 45° plombée, "Tir" when snapped to a target.
+- **Speed:** solved numerically so the flight (same gravity and drag as `physics.js`) lands exactly on the donnée, including its terrain height.
+- **Backspin:** a function of loft (more loft, more backspin), tuned so a plombée checks up and a roulette runs.
+- **Execution error (the cone):** per player skill, a lateral sigma and a longitudinal sigma that grow with distance and with loft, plus a small loft sigma. The actual throw samples the donnée and loft from this distribution, so what is drawn is what happens.
+- **Sidespin:** comes from the lateral error (off-axis throws curl a little further off-axis).
+- After landing, the physics adds its own randomness (landing tilt, pebbles, rocks, slopes) as now.
+
+**Drawing (C07):** the nominal arc as a cream ribbon inside a translucent pale-blue cone (an elliptical tube whose cross-section grows toward the landing, outlined by four edge arcs at **2σ**, about 86% of landings), filled 1σ (39%) and 2σ ground ellipses, and a small donnée mark. The shoulder camera eases toward the donnée and zooms in a little while a toss is live. An optional *roll guide* of orange dashes laid on the ground, ending in a ring, shows a noiseless roll-out on the perceived terrain; it is on for Easy, off for Medium and Hard, always on for the jack unless the player turned guides off, and can be toggled. Release height follows loft until the character's hand supplies it (0.5 m crouched below 18°, 0.9 m standing above 30°). A tir (snapped donnée) aims 0.2 m short of the target.
+
+**AI:** plans in the same space (donnée + loft) and throws through the same model with its own skill cone. Before throwing, the AI's donnée marker and arc are shown briefly ("Marcel picks his spot…").
+
+**Skill:** the human has a fixed, medium cone; difficulty changes the AI cones and the roll-guide default.
+
+## 10. Players: skeleton, animation, meshes
+
+- **Camera:** over-the-shoulder, behind and to the right of the thrower at about head height, looking at the donnée area. Zoom with wheel/pinch. The head (overhead) and inspect views stay available from a View button.
+- **Positions:** the thrower stands in the circle; the partner waits behind, the opponents to one side.
+- **Stage 1, stick figure (`character.js`):** a procedural skeleton (pelvis, spine, neck, head, shoulders, elbows, wrists, hips, knees, ankles) drawn as simple capsules. Procedural animations: idle (breathing, weight shift), turn, pointer's crouch or shooter's stance, backswing, release, follow-through, watch, celebrate, dismay, walk to and from the circle. The boule leaves from the hand at the release frame, and arm angle at release follows loft.
+- **Stage 2, skinned meshes (opt-in with `?figures=mesh`; the user prefers the stick figures, which stay the default):** CC0 rigged humans (first choice: Quaternius or Kenney packs, licences verified and recorded in a credits file), loaded with three.js's GLTFLoader, driven by the same skeleton API. Mixamo and Ready Player Me are out because of their licence terms. The stick figure stays as the fallback if a model fails to load.
+- **Personalities** (looks, stance, idle quirks, reactions, commentary, skill):
+  - **Marcel:** old Provençal pointeur, flat cap and belly, crouches low, unhurried, grumbles at bad luck.
+  - **Odette:** retired schoolteacher and sharp tireur, sun hat, stands tall, precise and dry.
+  - **Pierre** (your partner): young, enthusiastic, a bit overconfident, celebrates loudly.
+  - **You:** a neutral default look, chosen to stand out from the others.
+
+## 11. Later: terrain styles (not scheduled)
+
+Choosable terrains, each a preset over the terrain and physics constants: mostly sandy; sandy with noticeable rocks; spread gravel on hard pack; spread gravel on soft pack. Each has a dry and a wet version (wet: darker colour, different rolling resistance and landing dig, less bounce). Picked on the setup screen.

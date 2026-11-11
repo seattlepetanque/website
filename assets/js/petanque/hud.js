@@ -97,6 +97,16 @@ export function createHud(root, hudEl, cb) {
     board.hidden = true; turnEl.hidden = true; chooser.hidden = true;
     const c = card('Set up your game', 'pt-setup');
     c.append(el('p', 'pt-blurb', 'You and Pierre play Marcel and Odette, doublette, three boules each.'));
+    if (setupState.cast) {
+      const ul = el('ul', 'pt-cast');
+      ul.setAttribute('aria-label', 'The players');
+      for (const m of setupState.cast) {
+        const li = el('li', 'pt-cast-item pt-cast' + m.team);
+        li.append(el('strong', null, m.name), el('span', null, ` \u2014 ${m.bio}`));
+        ul.append(li);
+      }
+      c.append(ul);
+    }
     radioGroup(c, 'Play to', 'pt-target', [[13, '13 points'], [7, '7 points (quick)']],
       setupState.target, (v) => { setupState.target = +v; });
     radioGroup(c, 'Opponents', 'pt-diff', [['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard']],

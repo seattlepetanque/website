@@ -1,168 +1,80 @@
-// Monte Carlo AI: picks the five throw numbers by simulating candidates on a perceived clone of the world.
-// A flat-terrain launch table gives first guesses, a noiseless refine sim corrects for slope and friction,
-// then each candidate is scored over several noisy sims. The chosen throw gets noise too (the AI is human).
+// Monte Carlo AI on the donnée model: plans candidates as (donnée, loft), throws through donnee.js with the
+// player's own skill cone (like the human), and scores each candidate over several noisy sims on a perceived
+// clone of the world. A per-style roll-out table (flat terrain) gives first guesses for pointing données,
+// noiseless sims on the perceived terrain refine them.
 import { C } from './constants.js';
-import { mulberry32, gauss } from './rng.js';
+import { mulberry32 } from './rng.js';
 import { createBody, launch, createWorld, simulate } from './physics.js';
 import { meneResult, boulesInHand, jackValid } from './rules.js';
+import { SKILL, scaledSkill, coneFor, executeThrow, solveLaunch, styleForLoft, releaseFrom } from './donnee.js';
 
-// Tuning. Noise sigmas are for a 'medium' player at their best style; scaled by role and difficulty.
+const DEG = Math.PI / 180;
+
+// Tuning
 export const AI = {
   sims: { easy: 8, medium: 12, hard: 16 },
-  noiseScale: { easy: 1.8, medium: 0.9, hard: 0.5 },
-  // yaw (rad), speed (fraction), loft (rad), spin (fraction)
-  noise: {
-    roulette: { yaw: 0.008, speed: 0.02, loft: 0.02, spin: 0.15 },
-    demi: { yaw: 0.009, speed: 0.022, loft: 0.025, spin: 0.15 },
-    plombee: { yaw: 0.01, speed: 0.026, loft: 0.025, spin: 0.15 },
-    tir: { yaw: 0.007, speed: 0.025, loft: 0.025, spin: 0.12 },
-    jack: { yaw: 0.02, speed: 0.04, loft: 0.03, spin: 0.2 },
-    jackLow: { yaw: 0.02, speed: 0.04, loft: 0.03, spin: 0.2 },
+  lofts: { roulette: 14 * DEG, demi: 32 * DEG, plombee: 55 * DEG, tir: 32 * DEG, tirHigh: 42 * DEG, jackLow: 35 * DEG, jack: 55 * DEG },
+  shootBonus: { pointeur: 0, tireur: 0.6 }, // tireurs like a shot: added to the score of tir candidates
+  // personality: added to the score of pointing candidates of that style (Marcel the pointeur likes to roll)
+  // (Pierre likes to shoot: a small bonus on tir candidates; Odette is a tireur through her role)
+  stylePref: {
+    marcel: { roulette: 0.22, demi: 0.06 },
+    odette: { demi: 0.02 },
+    pierre: { demi: 0.04, tir: 0.08 },
   },
-  roleMult: { // [pointing styles, tir]
-    pointeur: [1, 1.8],
-    tireur: [1.5, 1],
-  },
-  shootBonus: { pointeur: 0, tireur: 0.15 }, // tireurs like a shot: added to the score of tir candidates
+  styleNoise: 0.08, // random +- added to every candidate so equal-looking choices vary between turns
   maxSimSeconds: 14,
-  refineSims: 4,
+  refineSims: 3,
   refineIters: 2,
   riskAversion: 0.1,
   shootRange: 1, // shoot opponent boules this close to the jack
-  tirShort: 0.08, // aim the landing this far short of the target (hit in the air or on the first hop: carreau)
+  tirHighShort: 0.1, // the higher shot lands almost on the target and stops there
+  tirShort: 0.45, // aim the donnée this far short of the target: lands, then rolls or hops into it (measured ~60% move it, ~20% carreau)
   jackTarget: 8, // m from circle for the jack throw
+  minDonnee: 1.5, // m from the thrower
 };
 
-export const STYLES = {
-  roulette: { loft: 0.21, backspin: 15 },
-  demi: { loft: 0.6, backspin: 55 },
-  plombee: { loft: 1.25, backspin: 80 },
-  tir: { loft: 0.55, backspin: 80 },
-  jack: { loft: 1.1, backspin: 40 },
-  jackLow: { loft: 0.6, backspin: 20 },
-};
-const FRENCH = { roulette: 'roule', demi: 'points a demi-portée', plombee: 'points a la plombée' };
-
+const FRENCH = { roulette: 'roule', 'demi-portee': 'points a demi-portée', plombee: 'points a la plombée' };
 const FROM = C.throwFrom;
-const TABLE_D = [];
-for (let d = 2; d <= 14.001; d += 0.5) TABLE_D.push(d);
 
-// --- Launch table -------------------------------------------------------------------------
+// --- Roll-out table -----------------------------------------------------------------------
 
-function flatStub() {
-  const mu = (C.rollResistPacked + C.rollResistLoose) / 2;
-  const s = { h: 0, nx: 0, ny: 0, nz: 1, friction: mu, loose: 0.5 };
-  return {
-    sample: () => s, stonesNear: () => [], addDivot() {}, resetDivots() {},
-    visibleStones: () => [], perceived() { return this; },
-  };
-}
-
-// Where a noiseless throw ends up: first landing point (landing=true) or resting spot
-function flightEnd(world, kind, p, landing, maxSeconds) {
-  const b = launch(createBody(kind, { team: -1 }), p);
-  world.bodies.length = 0;
-  world.events.length = 0;
-  world.t = 0;
-  world.add(b);
-  if (landing) {
-    let n = Math.ceil(maxSeconds / C.dt);
-    while (n-- > 0 && !world.events.some((e) => e.type === 'land')) world.step();
-    const e = world.events.find((ev) => ev.type === 'land');
-    return e ? { x: e.x, y: e.y } : { x: b.x, y: b.y };
-  }
-  simulate(world, maxSeconds);
-  return { x: b.x, y: b.y };
-}
-
-let tableCache = null;
-export function resetLaunchTable() { tableCache = null; }
-function getTable() {
-  if (tableCache) return tableCache;
-  const world = createWorld(flatStub(), () => 0.5);
+// Where a body ends up after being thrown to land at `landing` (flat terrain): rest distance by donnée distance
+const rollCache = new Map();
+function rollTable(kind, loft, from) {
+  const key = kind + ':' + Math.round(loft * 1000) + ':' + Math.round((from.z ?? 0.9) * 20);
+  if (rollCache.has(key)) return rollCache.get(key);
+  const terrain = flatStub();
+  const world = createWorld(terrain, () => 0.5);
   world.isClone = true;
-  const table = {};
-  for (const style of Object.keys(STYLES)) {
-    const st = STYLES[style];
-    const kind = style.startsWith('jack') ? 'jack' : 'boule';
-    const landing = style === 'tir';
-    const speeds = [];
-    let lo = 1.5, hi = 20;
-    for (const d of TABLE_D) {
-      // speed is monotone in distance, so narrow the bracket as we go
-      let a = Math.max(1.5, speeds.length ? speeds[speeds.length - 1] * 0.98 : lo), b = hi;
-      for (let i = 0; i < 12; i++) {
-        const mid = (a + b) / 2;
-        const e = flightEnd(world, kind, { yaw: 0, speed: mid, loft: st.loft, backspin: st.backspin, sidespin: 0 }, landing, 12);
-        if (e.y - FROM.y < d) a = mid; else b = mid;
-      }
-      speeds.push((a + b) / 2);
-    }
-    table[style] = speeds;
+  const ds = [], rest = [];
+  for (let d = AI.minDonnee; d <= 13.001; d += 0.5) {
+    const tp = solveLaunch({ from, landing: { x: from.x, y: from.y + d }, loft, terrain });
+    const b = launch(createBody(kind, { team: -1 }), tp, from);
+    world.bodies.length = 0;
+    world.events.length = 0;
+    world.t = 0;
+    world.add(b);
+    simulate(world, 12);
+    ds.push(d);
+    rest.push(b.dead ? 99 : b.y - from.y);
   }
-  tableCache = table;
-  return table;
+  const t = { ds, rest };
+  rollCache.set(key, t);
+  return t;
 }
+export function resetLaunchTable() { rollCache.clear(); }
 
-export function launchSpeed(style, dist) {
-  const sp = getTable()[style];
-  if (dist <= TABLE_D[0]) return { speed: sp[0], slope: (sp[1] - sp[0]) / 0.5 };
-  const f = Math.min((dist - TABLE_D[0]) / 0.5, TABLE_D.length - 1.0001);
-  const i = Math.floor(f);
-  const slope = (sp[i + 1] - sp[i]) / 0.5;
-  return { speed: sp[i] + (f - i) * (sp[i + 1] - sp[i]), slope };
-}
-
-// --- Candidates ---------------------------------------------------------------------------
-
-function baseThrow(style, tx, ty) {
-  const dx = tx - FROM.x, dy = ty - FROM.y;
-  const dist = Math.max(TABLE_D[0], Math.min(TABLE_D[TABLE_D.length - 1], Math.hypot(dx, dy)));
-  const st = STYLES[style];
-  const ls = launchSpeed(style, dist);
-  return {
-    p: { yaw: Math.atan2(dx, dy), speed: ls.speed, loft: st.loft, backspin: st.backspin, sidespin: 0 },
-    slope: ls.slope, tx, ty, dist,
-  };
-}
-
-// Correct yaw and speed using the mean of a few noiseless sims on a body-free copy of the perceived
-// terrain (gravel makes single rolls chaotic, so a single sim would chase noise)
-function refine(world, kind, style, base, rand) {
-  const w = world.clone(world.terrain.perceived(), mulberry32(seedFrom(rand)));
-  const landing = style === 'tir';
-  const p = { ...base.p };
-  for (let it = 0; it < AI.refineIters; it++) {
-    let mx = 0, my = 0;
-    for (let s = 0; s < AI.refineSims; s++) {
-      const e = flightEnd(w, kind, p, landing, AI.maxSimSeconds);
-      mx += e.x / AI.refineSims; my += e.y / AI.refineSims;
+// Donnée distance whose flat-terrain rest distance is `want`; null if it would run past by > 0.6 m
+export function donneeDistFor(kind, loft, from, want) {
+  const { ds, rest } = rollTable(kind, loft, from);
+  if (want < rest[0]) return want < rest[0] - 0.6 ? null : ds[0];
+  for (let i = 1; i < ds.length; i++) {
+    if (rest[i] >= want && rest[i - 1] < want) {
+      return ds[i - 1] + (want - rest[i - 1]) / (rest[i] - rest[i - 1]) * (ds[i] - ds[i - 1]);
     }
-    const ex = mx - base.tx, ey = my - base.ty;
-    const ux = Math.sin(p.yaw), uy = Math.cos(p.yaw);
-    const along = ex * ux + ey * uy;
-    const lat = ex * uy - ey * ux;
-    p.yaw -= lat / base.dist;
-    const dv = along / Math.max(base.slope, 0.2);
-    p.speed -= Math.max(-0.25 * p.speed, Math.min(0.25 * p.speed, dv));
   }
-  return p;
-}
-
-function scaleFor(style, role, difficulty) {
-  const rm = AI.roleMult[role] || AI.roleMult.pointeur;
-  return (AI.noiseScale[difficulty] ?? AI.noiseScale.medium) * (style === 'tir' ? rm[1] : rm[0]);
-}
-
-function applyNoise(p, style, role, difficulty, rand) {
-  const n = AI.noise[style], k = scaleFor(style, role, difficulty);
-  return {
-    yaw: p.yaw + gauss(rand) * n.yaw * k,
-    speed: p.speed * (1 + gauss(rand) * n.speed * k),
-    loft: Math.max(0.08, p.loft + gauss(rand) * n.loft * k),
-    backspin: Math.max(0, p.backspin * (1 + gauss(rand) * n.spin * k)),
-    sidespin: gauss(rand) * 2 * k,
-  };
+  return ds[ds.length - 1];
 }
 
 function seedFrom(rand) { return (rand() * 4294967296) >>> 0; }
@@ -171,12 +83,50 @@ const dist2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 function liveBoules(world) { return world.bodies.filter((b) => b.kind === 'boule'); }
 function theJack(world) { return world.bodies.find((b) => b.kind === 'jack'); }
 
+// Noiseless landing of a donnée on `terrain` then the mean of a few settle sims
+function meanEnd(world, kind, from, donnee, loft, terrain, rand) {
+  const tp = solveLaunch({ from, landing: donnee, loft, terrain });
+  let mx = 0, my = 0;
+  const n = AI.refineSims;
+  for (let s = 0; s < n; s++) {
+    const w = world.clone(terrain, mulberry32(seedFrom(rand)));
+    const b = launch(createBody(kind, { team: -1 }), tp, from);
+    w.add(b);
+    simulate(w, AI.maxSimSeconds);
+    mx += b.x / n; my += b.y / n;
+  }
+  return { x: mx, y: my };
+}
+
+// Move the donnée so the noiseless mean rest spot lands on `target` (corrects for slope and friction)
+function refineDonnee(world, kind, from, target, loft, donnee, perceived, rand) {
+  const d = { ...donnee };
+  for (let it = 0; it < AI.refineIters; it++) {
+    const e = meanEnd(world, kind, from, d, loft, perceived, rand);
+    d.x += Math.max(-1, Math.min(1, target.x - e.x));
+    d.y += Math.max(-1, Math.min(1, target.y - e.y));
+  }
+  return d;
+}
+
+// --- Candidates ---------------------------------------------------------------------------
+
+// Pointing donnée: short of `target` so the roll carries to it, refined on the perceived terrain
+function pointDonnee(world, kind, from, target, loft, perceived, rand) {
+  const dx = target.x - from.x, dy = target.y - from.y, dist = Math.hypot(dx, dy);
+  const dd = donneeDistFor(kind, loft, from, dist);
+  if (dd === null) return null;
+  const k = Math.min(dd, dist) / dist;
+  const d0 = { x: from.x + dx * k, y: from.y + dy * k };
+  return refineDonnee(world, kind, from, target, loft, d0, perceived, rand);
+}
+
 function buildCandidates(world, match, player) {
   const jack = theJack(world);
   if (!jack || jack.dead) return [];
   const team = player.team, opp = 1 - team;
   const c = [];
-  const pt = (style, dx, dy, tag) => c.push({ style, tx: jack.x + dx, ty: jack.y + dy, intent: 'point', tag });
+  const pt = (style, dx, dy) => c.push({ style, loft: AI.lofts[style], target: { x: jack.x + dx, y: jack.y + dy }, intent: 'point', tag: style });
   // pointing at the jack, plus offsets to get round blockers
   pt('roulette', 0, 0); pt('demi', 0, 0); pt('plombee', 0, 0);
   pt('roulette', 0.22, 0); pt('roulette', -0.22, 0);
@@ -185,14 +135,17 @@ function buildCandidates(world, match, player) {
   const targets = liveBoules(world)
     .filter((b) => !b.dead && b.team === opp && dist2(b, jack) <= AI.shootRange)
     .sort((a, b) => dist2(a, jack) - dist2(b, jack)).slice(0, 2);
-  for (const b of targets) c.push({ style: 'tir', tx: b.x, ty: b.y - AI.tirShort, intent: 'shoot', target: b, tag: 'boule' });
+  for (const b of targets) {
+    c.push({ style: 'tir', loft: AI.lofts.tir, target: { x: b.x, y: b.y }, shortBy: AI.tirShort, intent: 'shoot', tag: 'boule' });
+    c.push({ style: 'tir', loft: AI.lofts.tirHigh, target: { x: b.x, y: b.y }, shortBy: AI.tirHighShort, intent: 'shoot', tag: 'boule' });
+  }
   // shoot the jack when the opponent holds 2+ points and we have boules after this one
   const res = meneResult(jack, liveBoules(world));
   if (!res.void && res.team === opp && res.points >= 2 && boulesInHand(match, team) > 1) {
-    c.push({ style: 'tir', tx: jack.x, ty: jack.y, intent: 'shoot', target: jack, tag: 'jack' });
+    c.push({ style: 'tir', loft: AI.lofts.tir, target: { x: jack.x, y: jack.y }, shortBy: AI.tirShort, intent: 'shoot', tag: 'jack' });
   }
   // keep within the field and the cap
-  return c.filter((k) => k.ty < C.terrainL - 0.5 && k.ty > 2 && k.tx > 0.3 && k.tx < C.terrainW - 0.3).slice(0, 10);
+  return c.filter((k) => k.target.y < C.terrainL - 0.5 && k.target.y > 2 && k.target.x > 0.3 && k.target.x < C.terrainW - 0.3).slice(0, 12);
 }
 
 // --- Evaluation ---------------------------------------------------------------------------
@@ -228,30 +181,57 @@ function evaluate(world, team, handT, handO, deadBefore) {
 
 // --- Decision (generator so the async variant can yield between candidates) ----------------
 
-function* decide({ world, match, player, difficulty = 'medium', rand }) {
-  const role = player.role;
+const skillFor = (player, difficulty) => scaledSkill(SKILL[player && player.id] ?? SKILL.human, difficulty);
+const clampDonnee = (d) => ({
+  x: Math.max(0.2, Math.min(C.terrainW - 0.2, d.x)),
+  y: Math.max(0.5, Math.min(C.terrainL - 0.2, d.y)),
+});
+
+// One noisy throw through the same model as the human's: the player's cone, on the given terrain
+function throwThrough({ from, donnee, loft, skill, terrain, rand }) {
+  const cone = coneFor({ skill, from, landing: donnee, loft });
+  const tp = executeThrow({ from, landing: donnee, loft, cone, terrain, rand }).throwParams;
+  tp.from = from; // launch() uses it, so the boule leaves from the same release point the solver assumed
+  return tp;
+}
+
+function* decide({ world, match, player, difficulty = 'medium', rand, from = FROM }) {
   const nSims = AI.sims[difficulty] ?? AI.sims.medium;
   const team = player.team;
+  const skill = skillFor(player, difficulty);
   const handT = boulesInHand(match, team) - 1, handO = boulesInHand(match, 1 - team);
   const perceived = world.terrain.perceived();
   const deadBefore = liveBoules(world).filter((b) => b.dead && b.team === team).length;
   const cands = buildCandidates(world, match, player);
+  const finish = (donnee, loft, intent, label, score, snapped, labelKey) => {
+    const rel = releaseFrom(from, loft);
+    const throwParams = throwThrough({ from: rel, donnee, loft, skill, terrain: world.terrain, rand });
+    return { throwParams, from: rel, intent, label, labelKey, score, donnee, loft, style: styleForLoft(loft, snapped) };
+  };
   if (!cands.length) {
     // no jack to aim at: just lob towards the middle of the lane
-    const base = baseThrow('demi', C.circle.x, 8);
-    return { throwParams: applyNoise(base.p, 'demi', role, difficulty, rand), intent: 'point', label: `${player.name} points a demi-portée` };
+    return finish({ x: C.circle.x, y: 8 }, AI.lofts.demi, 'point', `${player.name} points a demi-portée`, 0, false, { event: 'spotPoint', style: 'demi-portee' });
   }
   const seeds = cands.map(() => seedFrom(rand));
   let best = null;
   for (let i = 0; i < cands.length; i++) {
     const k = cands[i];
+    const fk = releaseFrom(from, k.loft);
     const srand = mulberry32(seeds[i]);
-    const base = baseThrow(k.style, k.tx, k.ty);
-    const p = refine(world, 'boule', k.style, base, srand);
+    let donnee;
+    if (k.intent === 'shoot') {
+      const dx = k.target.x - from.x, dy = k.target.y - from.y, d = Math.hypot(dx, dy) || 1;
+      donnee = { x: k.target.x - dx / d * k.shortBy, y: k.target.y - dy / d * k.shortBy };
+    } else {
+      donnee = pointDonnee(world, 'boule', fk, k.target, k.loft, perceived, srand);
+      if (!donnee) continue;
+    }
+    donnee = clampDonnee(donnee);
     let sum = 0, sum2 = 0;
     for (let s = 0; s < nSims; s++) {
       const w = world.clone(perceived, mulberry32(seedFrom(srand)));
-      const b = launch(createBody('boule', { team, owner: player.id }), applyNoise(p, k.style, role, difficulty, srand));
+      const tp = throwThrough({ from: fk, donnee, loft: k.loft, skill, terrain: perceived, rand: srand });
+      const b = launch(createBody('boule', { team, owner: player.id }), tp, fk);
       w.add(b);
       simulate(w, AI.maxSimSeconds);
       const v = evaluate(w, team, handT, handO, deadBefore);
@@ -259,20 +239,27 @@ function* decide({ world, match, player, difficulty = 'medium', rand }) {
     }
     const mean = sum / nSims;
     const sd = Math.sqrt(Math.max(0, sum2 / nSims - mean * mean));
-    const score = mean - AI.riskAversion * sd + (k.intent === 'shoot' ? (AI.shootBonus[role] || 0) : 0);
-    if (!best || score > best.score) best = { k, p, score };
+    const pref = (AI.stylePref[player.id] || {})[k.style] || 0;
+    const score = mean - AI.riskAversion * sd + (k.intent === 'shoot' ? (AI.shootBonus[player.role] || 0) : 0) +
+      pref + (srand() - 0.5) * AI.styleNoise;
+    if (!best || score > best.score) best = { k, donnee, score };
     yield;
   }
-  const { k, p } = best;
-  const throwParams = applyNoise(p, k.style, role, difficulty, rand);
-  return { throwParams, intent: k.intent, label: makeLabel(player, k), score: best.score };
+  const { k, donnee } = best;
+  return finish(donnee, k.loft, k.intent, makeLabel(player, k), best.score, k.intent === 'shoot', labelKeyFor(k));
 }
 
 function makeLabel(player, k) {
   const n = player.name;
-  if (k.intent === 'point') return `${n} ${FRENCH[k.style]}`;
+  if (k.intent === 'point') return `${n} ${FRENCH[styleForLoft(k.loft)]}`;
   if (k.tag === 'jack') return `${n} goes for the cochonnet!`;
   return `${n} shoots at ${player.team === 1 ? 'your' : 'their'} boule`;
+}
+
+// Personality hook: main.js turns this into a line from personalities.js (`label` stays as the plain fallback)
+function labelKeyFor(k) {
+  if (k.intent === 'point') return { event: 'spotPoint', style: styleForLoft(k.loft) };
+  return { event: 'spotShoot', target: k.tag === 'jack' ? 'jack' : 'boule' };
 }
 
 export function chooseThrow(args) {
@@ -291,72 +278,57 @@ export async function chooseThrowAsync(args) {
 
 // --- Jack throw ---------------------------------------------------------------------------
 
-// Tries a few styles and distances, simulates each on the perceived terrain and keeps the one
-// that most often lands a legal jack (6-10 m, inside the lines), then adds skill noise.
-export function chooseJackThrow({ world, difficulty = 'medium', rand, player } = {}) {
-  const role = player ? player.role : 'pointeur';
-  const nSims = AI.sims[difficulty] ?? AI.sims.medium;
+// Tries a few lofts and distances, simulates each on the perceived terrain (with the player's cone) and keeps
+// the one that most often lands a legal jack (6-10 m, inside the lines).
+export function chooseJackThrow({ world, difficulty = 'medium', rand, player, from: base = FROM } = {}) {
+  const nSims = Math.max(16, AI.sims[difficulty] ?? AI.sims.medium); // a legal jack matters on every level
+  const skill = skillFor(player, difficulty);
   const perceived = world.terrain.perceived();
   const cands = [];
-  for (const style of ['jack', 'jackLow']) {
+  for (const style of ['jackLow', 'jack']) {
+    const from = releaseFrom(base, AI.lofts[style]);
     for (const d of [AI.jackTarget - 1, AI.jackTarget, AI.jackTarget + 1]) {
-      cands.push({ style, tx: C.circle.x + (rand() - 0.5) * 0.4, ty: C.circle.y + d });
+      const want = { x: C.circle.x + (rand() - 0.5) * 0.4, y: C.circle.y + d };
+      const dd = donneeDistFor('jack', AI.lofts[style], from, Math.hypot(want.x - from.x, want.y - from.y));
+      if (dd === null) continue;
+      const len = Math.hypot(want.x - from.x, want.y - from.y);
+      const k = Math.min(dd, len) / len;
+      cands.push({ loft: AI.lofts[style], want, donnee: clampDonnee({ x: from.x + (want.x - from.x) * k, y: from.y + (want.y - from.y) * k }) });
     }
   }
   let best = null;
   for (const k of cands) {
     const srand = mulberry32(seedFrom(rand));
-    const p = planShot(world, k.style, k.tx, k.ty, srand);
+    const from = releaseFrom(base, k.loft);
+    const donnee = refineDonnee(world, 'jack', from, k.want, k.loft, k.donnee, perceived, srand);
     let ok = 0;
     for (let s = 0; s < nSims; s++) {
       const w = world.clone(perceived, mulberry32(seedFrom(srand)));
       w.bodies.length = 0;
-      const b = launch(createBody('jack', {}), applyNoise(p, k.style, role, difficulty, srand));
+      const tp = throwThrough({ from, donnee, loft: k.loft, skill, terrain: perceived, rand: srand });
+      const b = launch(createBody('jack', {}), tp, from);
       w.add(b);
       simulate(w, AI.maxSimSeconds);
       if (jackValid(b)) ok++;
     }
-    const score = ok - 0.1 * Math.abs(k.ty - C.circle.y - AI.jackTarget);
-    if (!best || score > best.score) best = { p, k, score };
+    const score = ok - 0.1 * Math.abs(k.want.y - C.circle.y - AI.jackTarget);
+    if (!best || score > best.score) best = { k, donnee, score };
   }
-  const throwParams = applyNoise(best.p, best.k.style, role, difficulty, rand);
-  return { throwParams, intent: 'jack', label: `${player ? player.name : 'The AI'} throws the cochonnet` };
+  const { k, donnee } = best;
+  const from = releaseFrom(base, k.loft);
+  const throwParams = throwThrough({ from, donnee, loft: k.loft, skill, terrain: world.terrain, rand });
+  return {
+    throwParams, from, intent: 'jack', label: `${player ? player.name : 'The AI'} throws the cochonnet`,
+    labelKey: { event: 'spotJack' },
+    donnee, loft: k.loft, style: styleForLoft(k.loft),
+  };
 }
 
-// Noiseless refined throw for a style aimed at (tx, ty); exported for tests and tuning
-export function planShot(world, style, tx, ty, rand) {
-  const base = baseThrow(style, tx, ty);
-  return refine(world, style.startsWith('jack') ? 'jack' : 'boule', style, base, rand);
-}
-
-// --- Human jack assist ----------------------------------------------------------------------
-
-const JACK_REF_SPEED = 6.4; // m/s: a natural swing, which lands a boule about 8 m out
-const jackSpeedCache = new Map();
-
-// Launch speed that lands a (flat-terrain) jack AI.jackTarget m from the circle at this loft
-export function idealJackSpeed(loft, backspin = 20) {
-  const key = Math.round(loft * 20) + ':' + Math.round(backspin / 5);
-  if (jackSpeedCache.has(key)) return jackSpeedCache.get(key);
-  const world = createWorld(flatStub(), () => 0.5);
-  world.isClone = true;
-  let lo = 1.5, hi = 20;
-  for (let i = 0; i < 14; i++) {
-    const mid = (lo + hi) / 2;
-    const e = flightEnd(world, 'jack', { yaw: 0, speed: mid, loft, backspin, sidespin: 0 }, false, 12);
-    if (e.y - FROM.y < AI.jackTarget) lo = mid; else hi = mid;
-  }
-  const v = (lo + hi) / 2;
-  jackSpeedCache.set(key, v);
-  return v;
-}
-
-// The jack is light and the 6-10 m window is narrow, so a human jack throw keeps the swing's aim,
-// loft and feel, but its speed is pulled toward the speed that lands 8 m out (strength 0..1)
-export function assistJackThrow(tp, strength = 0.65) {
-  const backspin = Math.min(tp.backspin || 0, 30);
-  const ideal = idealJackSpeed(tp.loft, backspin);
-  const rel = Math.max(0.5, Math.min(1.6, tp.speed / JACK_REF_SPEED));
-  const speed = ideal * (1 + (rel - 1) * (1 - strength));
-  return { ...tp, speed, backspin, sidespin: (tp.sidespin || 0) * 0.5 };
+function flatStub() {
+  const mu = (C.rollResistPacked + C.rollResistLoose) / 2;
+  const s = { h: 0, nx: 0, ny: 0, nz: 1, friction: mu, loose: 0.5 };
+  return {
+    sample: () => s, stonesNear: () => [], addDivot() {}, resetDivots() {},
+    visibleStones: () => [], perceived() { return this; },
+  };
 }

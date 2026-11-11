@@ -129,3 +129,126 @@ Worth a human play-test or not done:
 - In `?debug&autotest` (all players AI) the human player's name "You" gives odd commentary ("You is aiming...").
 - The head camera at game over is dimmed by the overlay and loose boules spread over 2 m make labels small.
 - The AI launch table is built on the first AI turn (a short pause on slow devices).
+
+---
+
+# Round 2 backlog
+
+Design: GAME-PLAN.md §9–11. Round 1 contracts above still apply (units, axes, `constants.js`, tests, build check, agents do not commit, don't edit files owned by another in-progress item). Order of importance: throwing (C01–C07), stick figures (C08–C09), meshes (C10–C12).
+
+## Round 2 contracts
+
+- **`donnee.js`** (pure, no DOM/three.js), shared by human and AI:
+  - `LOFT_MIN` (8°), `LOFT_MAX` (75°) in radians; `styleForLoft(loft, snapped) → 'roulette' | 'demi-portee' | 'plombee' | 'tir'`.
+  - `backspinForLoft(loft) → rad/s`.
+  - `solveLaunch({ from, landing: { x, y }, loft, terrain }) → { yaw, speed, loft, backspin, sidespin: 0 }`. Numeric, using the same gravity and drag as `physics.js`; lands within 2 cm of the donnée (including its terrain height).
+  - `SKILL`: `{ human, marcel, odette, pierre }`, each `{ lat, long, loft }` base sigmas, plus `difficultyScale` for AI players.
+  - `coneFor({ skill, from, landing, loft }) → { sigmaLat, sigmaLong, sigmaLoft }` (metres, metres, radians), growing with distance and loft.
+  - `executeThrow({ from, landing, loft, cone, terrain, rand }) → { throwParams, actualLanding, lateralError }`: samples the cone, solves the launch, sets sidespin from the lateral error.
+  - `arcPath(from, throwParams, n = 40) → [{ x, y, z }]` (flight only, no collisions).
+  - `coneEnvelope({ from, landing, loft, cone, terrain }) → { center, edges: [4 paths], ellipse1, ellipse2 }`, paths as `[{ x, y, z }]`.
+  - `predictRoll({ world, terrain, throwParams }) → [{ x, y, z }]`: noiseless sim on `terrain.perceived()` via `world.clone`, path of the thrown body.
+- **`render.js` additions:** `setCamera('shoulder', { player: { x, y }, yaw, zoom })`; `setThrowPreview({ center, edges, ellipse1, ellipse2, roll, donnee, style, legalZone } | null)`; `setPlayers([{ id, x, y, yaw }])` (placeholder capsules until C09 replaces them with characters).
+- **`toss.js`** (DOM input, replaces the swing in `input.js`): `createTossInput(canvas, { pick(clientX, clientY) → {x,y}|null, getYaw, onTurn(dyaw), onPreview({ donnee, loft, snappedTo }), onThrow({ donnee, loft, snappedTo }), onCancel(), targets() → [{ id, x, y, r }] }) → { setPhase('aim' | 'toss' | 'off'), destroy() }`.
+- **`character.js`** (C08): `createCharacter(THREE, spec) → { root, update(dt), setStance('idle' | 'aim' | 'crouch' | 'stand' | 'watch' | 'celebrate' | 'dismay'), walkTo({ x, y, yaw }) → Promise, playThrow({ loft, onRelease(handWorldPos) }) → Promise, handWorldPosition(), dispose() }`. `spec = { name, height, build, colors, stance: 'crouch' | 'stand', quirks }`. C11 swaps the visual for a skinned mesh behind the same API.
+
+## Round 2 items
+
+| ID | Status | Model | Deps | Title |
+|---|---|---|---|---|
+| C01 | done | sonnet | — | Throw model: solver, backspin, cone (`donnee.js`) |
+| C02 | done | sonnet | — | Over-the-shoulder camera, placeholder players, preview drawing |
+| C03 | done | sonnet | C01, C02 | Toss input: aim, donnée, pull for loft |
+| C04 | done | sonnet | C03, C05 | Integrate the donnée throw into the game |
+| C05 | done | sonnet | C01 | AI on the donnée model |
+| C06 | done | haiku | C04 | Remove the old swing code; update README |
+| C07 | done | sonnet | C04, C05, C06 | Review and tune throw feel |
+| C08 | done | sonnet | C02 | Stick-figure skeleton and procedural animation |
+| C09 | done | sonnet | C07, C08 | Characters in the game: positions, throw sync, reactions |
+| C10 | done | sonnet | — | Find and vendor CC0 rigged human models |
+| C11 | done | sonnet | C09, C10 | Skinned meshes on the skeleton |
+| C12 | done | sonnet | C11 | Personalities: looks, quirks, reactions, commentary |
+| C13 | done | sonnet | C12 | Round 2 final review |
+
+### C01 Throw model (sonnet)
+Implement `donnee.js` per the contracts and GAME-PLAN §9, with `tests/petanque/donnee.test.js`. Read `physics.js` for the exact flight integration (gravity, drag, dt) and make `solveLaunch` match it (e.g. bisection on speed using a tiny flight-only integrator that mirrors physics, or launching a body in a bare world). Tune `backspinForLoft` with the physics: a 60° plombée should stop within ~0.4 m of its donnée on flat terrain, a 12° roulette should run well past it, a 35° demi-portée in between. Cone defaults: human lateral ≈ 1.2% of distance, longitudinal ≈ 3% at low loft rising to ≈ 5% at 75°, loft sigma ≈ 1.5°. Tests: landing error < 2 cm across distances 3–12 m and lofts 8–75° on flat and seeded terrain; backspin monotonic in loft; sampled landings match the cone's sigmas statistically; envelope paths finite; `predictRoll` ends near a real noiseless sim.
+
+### C02 Over-the-shoulder camera, placeholder players, preview drawing (sonnet)
+In `render.js` only: the `'shoulder'` camera (behind and right of the player at ~1.7 m, looking at a point ~7 m ahead along `yaw`, smooth, wheel/pinch zoom), `setPlayers` with simple capsule placeholders (team colours), and `setThrowPreview` drawing: nominal arc as a ribbon or tube, four faint edge arcs, 1σ (solid) and 2σ (faint) ellipses on the terrain, dotted roll guide, donnée marker (ring on the ground, distinct when snapped to a target), optional legal-zone arcs. Add a `?debug&preview` path in `main.js` (only that block) that shows a static preview with made-up paths for screenshots. Verify with headless Chrome screenshots.
+
+### C03 Toss input (sonnet)
+Implement `toss.js` per contracts and GAME-PLAN §9 (aim drag/arrow turning, press to place the donnée, pull down for loft, release to throw, cancel above press point or Esc, snapping to targets within ~0.25 m, keyboard path), with `tests/petanque/toss.test.js` for the pure parts (drag → loft mapping, snapping, cancel rule). Pull distance for full loft ≈ 35% of canvas height; loft changes smoothly. Does not edit `main.js`.
+
+### C04 Integrate the donnée throw (sonnet)
+In `main.js`, `hud.js`, CSS, `content/game.md`: replace the swing and the precise sliders (keep raw sliders only behind `?debug`) with `toss.js` + `donnee.js` + the shoulder camera and preview. HUD: loft readout with style name, "Re-aim" button, "Roll guide" toggle (default by difficulty), "View" button cycling shoulder / head / inspect. Human jack throw uses the same flow with the legal zone. AI turns: show the AI's donnée and arc for ~1 s before it throws. Update the intro text and first-time hint. Debug paths keep working.
+
+### C05 AI on the donnée model (sonnet)
+Refactor `ai.js` to plan candidates as (donnée, loft) and throw through `donnee.js` (`executeThrow` with the player's `SKILL` scaled by difficulty). Keep the Monte Carlo evaluation and the `chooseThrow` / `chooseThrowAsync` / `chooseJackThrow` signatures, adding `{ donnee, loft }` to the result so the game can show it. Remove the old launch table if no longer needed. Update `ai.test.js` and `match.test.js`; report accuracy per difficulty with `measure-ai.js`.
+
+### C06 Remove the old swing code (haiku)
+Delete the swing gesture and gauge (`input.js`, its tests, gauge CSS) once nothing imports them; update README.md's game section (controls, modules, tuning locations). `npm test` and the build must pass.
+
+### C07 Review and tune throw feel (sonnet)
+Play through the new flow (scripted via debug hooks and headless screenshots): check the cone sizes feel fair at 6–10 m, the loft → backspin curve gives distinct roulette / demi-portée / plombée behaviour, tir by snapping works and sometimes carreaus, AI shows its spot, jack throws are easy to make legal. Fix bugs, tune, and add a short human play-test checklist to the end of this file.
+
+### C08 Stick-figure skeleton and animation (sonnet)
+Implement `character.js` per contracts and GAME-PLAN §10, stage 1: joint hierarchy with fixed bone lengths scaled by `spec.height` and `build`, drawn with capsules and a sphere head; procedural animations with smooth blending; `playThrow` with backswing → release (calls `onRelease` with the hand's world position at the release frame; arm angle at release follows loft) → follow-through; crouch for `stance: 'crouch'`. Tests for pose math (no NaN, bone lengths constant, release fires once). A `?debug&characters` path in `main.js` (only that block) shows all stances for screenshots.
+
+### C09 Characters in the game (sonnet)
+Replace placeholder capsules with four `character.js` characters: thrower in the circle, partner behind, opponents to the side; walk in and out of the circle between turns; the throw animation drives the launch (boule leaves from the hand at release; `from` = hand position) and the shoulder camera follows the current thrower; reactions after each throw (celebrate / dismay / watch) from the outcome.
+
+### C10 Find and vendor CC0 rigged human models (sonnet)
+Find rigged, animated or animatable human models in glTF/GLB under CC0 (first choice: Quaternius, Kenney) or CC-BY (attribution required). Verify each licence on the source page; exclude Mixamo, Ready Player Me and anything with unclear terms. Pick enough to give four distinct players (separate models, or one base plus variants for hats, colours and proportions), keep the total download small (target < 3 MB), put them in `static/models/` with `static/models/CREDITS.md` (source URL, author, licence, date checked). Also vendor three.js r170's `GLTFLoader.js` and its imports into `assets/js/vendor/`. Report bone names, scale, triangle counts and any included animations.
+
+### C11 Skinned meshes on the skeleton (sonnet)
+Load the C10 models with GLTFLoader, map `character.js`'s skeleton onto the model bones (retarget or drive the model bones directly), keep the same API, fall back to the stick figure if loading fails, keep phones smooth.
+
+### C12 Personalities (sonnet)
+Give Marcel, Odette, Pierre and You distinct looks (model choice, colours, hats/accessories), stances, idle quirks, reactions and commentary lines, tied to their `SKILL` profiles, per GAME-PLAN §10.
+
+### C13 Round 2 final review (sonnet)
+`npm test`, build check, full-match test, screenshots on desktop and phone, bug review, and a "Round 2 remaining issues" list at the end of this file.
+
+## Round 2 notes
+
+- From C02 screenshot: waiting players placed near the circle (partner behind at (2.6, 0.2), opponents at x ≈ 3.5) stand between the shoulder camera and the court and block much of the view. C04/C09: put waiting players out of shot (behind the camera, or beside the court near y ≈ 0–1 at x < 0 or x > 4), and raise the shoulder camera a little (~2.1 m) so the head area shows above the thrower's shoulder.
+- From C02: the roll-guide dots are too small to see at 7–9 m; make them larger or a dashed ribbon.
+- From C01: with release at z = 0.9 m, a 12° roulette to a 4 m donnée lands fast and runs ~10 m past (off the court). Real roulettes are released low from a crouch and land 1–2 m out. C07/C09: take the release point from the character's hand (crouched pointer ≈ 0.4–0.5 m), and check roulettes then behave; consider capping roulette donnée distance or showing the roll guide by default for low lofts.
+- From C01: sidespin from lateral error (≈ 20 rad/s at 2σ) moves a ball only ~3 mm; the lateral error itself carries the off-axis effect. Fine for now.
+- From C01: plombée stops within 0.4 m up to ~7 m; at 8–10 m it ends 0.5–0.9 m past (backspin depends only on loft). Acceptable; revisit in C07 if it feels off.
+- From C10: the vendored models are Kenney "Mini Characters" (CC0, ~250 KB each): stylised chibi figures ~0.7 units tall (scale ≈ 2.4 for 1.7 m), T-pose, a 7-bone rig (root, leg-left, leg-right, torso, arm-left, arm-right, head) with no elbows or knees, 32 short clips (idle, walk, crouch, pick-up, emote-yes/no, holding-right…), no throw or celebrate clip, no hats. Throws must be procedural on arm-right/torso; hats as meshes on the head bone. A richer human rig (Quaternius Universal Base Characters / Modular Women, CC0) needs a manual download (122 MB zip / Drive quota). The user chose the Kenney chibis (2026-10-31). C11: drive the 7 bones from character.js's skeleton (shoulder → arm-right/arm-left, hips → legs, spine lean → torso, pelvis height → root), use Kenney clips (walk, idle, crouch) where they fit, and keep the stick figure selectable (e.g. `?figures=stick`) and as the load-failure fallback.
+- From C05: AI now picks plombée for ~85–90% of points (roulette rarely wins); tireur shoot bonus raised to 0.4; on flat terrain many shots run past the target to the end of the lane. Pointing accuracy improved a lot (medium mean 0.47 m, hard 0.40 m) because the skill cones are tighter than the old noise — C07 should check whether the AI is now too strong against a human using the same cones.
+- From C04 screenshots: the cone is hard to see — at 8 m the ±1σ edge arcs (~±10 cm) merge with the centre arc and the 1σ ellipse is a small ring. C07: make the cone read as a cone (e.g. a translucent filled surface between the edge arcs, widening toward the landing; make the ellipses filled and more visible; consider drawing 2σ as the outer edge). Also the roll guide sits behind the descending arc along the camera's line of sight; dashes or a ribbon would read better. Waiting players' shadows show at the left edge of the shoulder view.
+
+### C07 human play-test checklist
+
+Done by script and screenshots; a person still needs to feel it. Try each on a mouse, a trackpad and a phone (touch), on Easy and Hard.
+
+- **Cone:** press on the court at about 8 m and pull for a demi-portée (~35°) and a plombée (~60°). The pale-blue cone should widen toward the landing, the two ground ellipses (inner 1σ, outer 2σ) should be easy to see, and the camera should ease toward your spot. Throw ten boules at the same spot: about nine should end up inside the outer ellipse, four in the inner one. Does the cone feel fair, or too small to matter?
+- **Roll guide:** toggle it. The orange dashes should be clearly different from the cream arc and end in a ring. A roulette (≤ 18°) to a donnée 3 to 3.5 m out should roll to about 7 to 8 m; a plombée should stop near its donnée. On Easy the guide starts on, on Medium and Hard off.
+- **Low throws:** drag a low loft (about 12°) and watch the release height drop (crouch). Do roulettes feel controllable, or do they run off the court too easily? (Rest distance changes about 3.5 m per metre of donnée, so it is touchy by nature.)
+- **Tir:** press within 25 cm of a boule or the jack: the ring turns red, the readout says "Tir ... lands just short" and the cone sits 20 cm short of the target. At 30 to 40° expect to move the target about a third of the time and carreau a few times in a hundred.
+- **Jack:** the jack guide is on by default; aim so the orange dashes end between the yellow lines. Almost every toss aimed that way should be legal.
+- **AI spot:** watch Marcel and Odette show their spot (marker, arc and cone) for about a second before each throw. Marcel should now sometimes roll or demi-portée; Easy should feel clearly beatable, Medium about even with you pointing carefully, Hard strong.
+- **Phone:** the cone and dashes should still read at 500 px wide; dragging with a thumb must not scroll the page; pulling for loft should reach both extremes without leaving the canvas.
+- **Look for:** arcs leaving the top of the screen for lofts above ~60° (expected for very high lobs), the placeholder thrower hiding the start of the arc, cones that look wider or narrower than where the boules land, and any throw that leaves from a different height than the preview showed.
+- From C09: release heights now come from the character's hand (crouched ≈ 0.16–0.8 m, standing ≈ 0.7–1.4 m by loft), replacing C07's 0.5/0.9 m rule — roulette behaviour shifts; re-run the C07 checklist in C13. The mène-end/game-over gathering reads poorly from the steep head camera (only legs at the top corners); the post-throw reaction cut shows only the thrower; the first throw of a mène gets no reaction. Waiting characters cast no shadow (their shadows fell into the shoulder view).
+- From C11: meshes load in the background (stick figures until ready; `?figures=stick`; 5 s timeout → stick fallback; use `&modeltimeout=600000` for headless screenshots). Mesh release heights are lower (crouch ≈ 0.12–0.4 m, stand ≈ 0.1–0.7 m), so plombées start low — check in C13 whether standing throwers should release higher (the chibi's short arms). Shoulder camera widened (×1.45) because the big heads block the view; the thrower's head still fills the lower-left in the human view. Odette's bun pokes through her sun hat from behind. `spec.colors` is ignored in mesh mode (texture colours), and the belly ellipsoid uses the spec shirt colour, which can clash with the texture. Kenney walk clip unused (procedural gait).
+- User decision (2026-10-31, after C11): stick figures are the default — the meshes are cute but oddly scaled and can't show crouching. Kenney meshes stay opt-in behind `?figures=mesh` and are not downloaded otherwise. Folded into C12.
+- From C12: feet resized (heel-to-toe 0.145·H) and the thrower's footprint centred on the circle; worst-case reach 0.20–0.23 m of the 0.25 m radius (Pierre standing has ~2 cm margin) — checked numerically, not visually. The AI-spot status read "Odette throws the cochonnet (4.5 m)" — check whether that distance is the donnée, and whether the jack ends legal. "You points…" labels still appear in all-AI debug matches. Marcel's belly reads as a large green ball on the stick figure.
+
+## Later (not scheduled)
+
+- T01 Terrain style presets (GAME-PLAN §11): sandy, sandy with rocks, gravel on hard pack, gravel on soft pack, each dry or wet; picker on the setup screen.
+
+## Round 2 remaining issues
+
+C13 outcome (numbers from `measure-human.js 160`, `measure-release.js`, real stick-figure release points):
+
+- **Release-point regression:** no retune needed. Mean distance of the point to the jack (m), before with the old fixed release heights, then after with the figure's hand: human plombée 0.50 (perfect donnée judgement), demi 0.95, roulette 1.85 to 1.93; Marcel easy 0.99 to 0.95, medium 0.65 to 0.69, hard 0.46 to 0.52; Pierre easy 0.99 to 1.01, medium 0.75 to 0.64, hard 0.46 to 0.43. Easy stays clearly beatable, Medium is near a careful human, Hard is a little stronger than a perfect-judgement plombée. Plombée stops within 0.1 to 0.4 m of its donnée from 4 to 8 m for all four players; a roulette to a 3 m donnée comes to rest about 3 m beyond it (standing throwers about 2.8 m, crouching 3.5 m). AI jack legality over 64 jacks each: 81% to 98% (average 92%); Pierre and Odette on Easy are lowest (84% to 86%), because their wide cones miss the 6 to 10 m window; an illegal jack just passes to the other team. Raising the simulation count for the jack did not change this. A human aiming with the roll guide at 7 to 8 m gets 88% to 98% legal at 14, 25 and 35 degrees; aiming at 9 m is 88% at 14 degrees but only 73% at 25 and 53% at 35 degrees (the cone grows with loft and 10 m is close).
+- **Fixed in C13:** a player teleported mid-walk (new mène or New game while walking) snapped back to the old walk goal (`setPlacement` now ends the walk); the AI jack throw had no error handling and the throw animation path could leave a rejected promise (both now caught, with a single-launch guard); AI spot text for a jack now reads "lands at 7.5 m, should roll to about 7.7 m" (the old "(4.5 m)" was the landing spot, not where the jack ends; the settled distance is reported afterwards as "Jack is X m out"); all-AI debug matches call the first player Sam, not You; Marcel's belly is a small flattened paunch in the shirt colour (and absent in mesh mode); the mène-end and game-over views now hold the head camera for 2.2 s (measuring labels), then cut to a low angled shot from the circle side with the four players gathered behind the jack; the reaction cut now frames the thrower and a reacting team-mate, and the first boule of a mène gets a reaction (celebrate when within 30 cm, dismay beyond 1 m); `setCamera('inspect')` ignored new angle and distance when already in inspect mode (`reset: true` now overrides the user's orbit).
+- **Feet in the circle:** checked visually from the side (`?debug&topcam&who=pierre&topdist=2.4&topel=0.5&topaz=1.5708`): both the crouch and the stand footprints sit inside the red ring; Pierre's margin looked fine, so it was not widened.
+- **Listeners and state:** `boot()` runs once, so New game and Play again reuse the same toss, HUD and renderer listeners (no leaks); the toss machine goes to 'off' as soon as a throw is released, so there are no double throws.
+- **Not done:** the bundle always includes `GLTFLoader` (about 110 KB unminified) even though the models only download with `?figures=mesh` (Hugo's js.Build does not split chunks); mesh mode is otherwise as C11 left it (odd scale, bun under the sun hat, short arms so plombées start low); in all-AI debug matches Sam still speaks as "You" in commentary; waiting characters have no shadow; the AI launch table is still built on the first AI turn; the mène-end card covers the boules by the jack in the gathered view (the head view just before it shows them with labels).
+- **A human should play-test:** the toss on a mouse, trackpad and phone (pull length for loft, dwell to start a toss, thumb dragging without scrolling the page, cancelling by dragging back up); cone fairness at 6 to 10 m (about 86% of throws inside the outer ellipse, 39% inside the inner one); how the roulette run-out feels now that crouched releases are low (touchy: about 3.5 m of rest per metre of donnée); walk-in, reaction and gathering timing (CAST_SPEED 2.4 m/s, 800 ms reaction cut, 2.2 s before the gathered shot) and whether the reaction cut is too short or interrupts the next turn; the shoulder view with Odette or Pierre standing (their bodies fill the lower left); the commentary tone and repetition across a whole game; audio levels by ear (clack, crunch, roll); phone layout of the toss readout and the setup card in portrait and landscape.
+- From the C13 mène-end screenshot: in all-AI debug matches the scoreboard says "Sam" but quotes still read "You: …". The mène-end card covers the boules by the jack in the gathering shot.

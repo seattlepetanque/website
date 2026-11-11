@@ -42,7 +42,9 @@ Edits made through the local CMS write straight to your working copy. Review the
 
 The game is at `/game.html`. Its page is `content/game.md`, its template is `layouts/_default/game.html`, and its styles are in `assets/css/game.css`. The code is in `assets/js/petanque/`, bundled by Hugo's built-in `js.Build`, so building the site needs no `npm install`.
 
-three.js 0.170.0 is vendored in `assets/js/vendor/` (see the README there for its source and licence). Nothing is loaded from a CDN at runtime.
+three.js 0.170.0 is vendored in `assets/js/vendor/` (see the README there for its source and licence), with its `GLTFLoader.js`. Nothing is loaded from a CDN at runtime.
+
+Four player models are in `static/models/`: Marcel, Odette, Pierre and You, from the Kenney Mini Characters pack (CC0; see `static/models/CREDITS.md`). The players are stick figures from `character.js` by default (each with their own colours, hat, build and idle quirks, set in `personalities.js`); the models are opt-in with `?figures=mesh` and are not downloaded otherwise.
 
 The modules in `assets/js/petanque/`:
 
@@ -52,7 +54,9 @@ The modules in `assets/js/petanque/`:
 - `physics.js`: boule and jack bodies, flight, impact and rolling
 - `rules.js`: mène state, turn order, scoring, dead boules
 - `ai.js`: Monte Carlo AI
-- `input.js`: swing gesture to throw parameters, and the swing gauge
+- `donnee.js`: the donnée throw model: launch solver, backspin from loft, error cones
+- `toss.js`: toss input: turn, place the donnée, pull for loft
+- `character.js`: stick-figure players with procedural animation
 - `render.js`: three.js scene and cameras
 - `hud.js`: DOM HUD (setup, score, who throws, mène and game-over panels)
 - `audio.js`: synthesized sounds (Web Audio)
@@ -69,7 +73,9 @@ The tests are in `tests/petanque/`. Physics, rules, terrain and AI have no DOM o
 To tune the game:
 
 - Physics and terrain numbers: `constants.js`.
-- Swing feel (speed, loft and backspin mapping): `SWING` in `input.js`.
+- Player skill and error cones: `SKILL` and `difficultyScale` in `donnee.js`; release height `releaseHeight`; tir aim `SNAP_SHORT`; AI style personality `AI.stylePref` in `ai.js`. `node tests/petanque/measure-human.js` compares a reasonable human with each AI difficulty, and `node tests/petanque/measure-release.js` checks roll-outs by style from each character's real release point.
+- Loft to backspin: `backspinForLoft` in `donnee.js`.
+- Toss input feel: `TOSS` in `toss.js`.
 - AI strength: `AI` in `ai.js`.
 
 Debug URLs (add the query to `/game.html`):
@@ -77,6 +83,12 @@ Debug URLs (add the query to `/game.html`):
 - `?debug`: turns on debug hooks.
 - `?debug&autotest`: AI-only quick match, with no delays.
 - `?debug&humanturn`: stops at your first boule. Use `?debug&humanturn=chooser` to stop at the who-throws chooser, or `?debug&humanturn=jack` to throw the jack yourself.
+- `?debug&humanturn&demo`: a scripted toss preview, for screenshots.
+- `?debug&aispot`: holds the view on the AI's spot, for screenshots.
+- `?debug&topcam`: top-down view of the circle (`&who=pierre|marcel|odette`, `&topdist=`, `&topel=`, `&topaz=` for a side view), for checking foot placement.
+- `?debug&preview`: static throw preview with made-up paths, for screenshots.
+- `?debug&characters`: all the stick-figure stances side by side, for screenshots. Add `&cast=quirk` (with `&q=0..2` for which quirk), `&cast=celebrate` or `&cast=dismay` for the four real players. `&figures=mesh` there too for the models.
+- `?figures=mesh`: use the Kenney mesh models instead of the stick figures (`?figures=stick` is the default).
 - `?seed=N`: fixes the court and random numbers, so the same N gives the same game.
 
 `GAME-PLAN.md` describes the design. `GAME-BACKLOG.md` lists the work items and their history.
@@ -102,6 +114,7 @@ layouts/                  page templates (Go templates)
 static/
   images/                 uploaded images (Decap media folder)
   admin/                  Decap CMS admin page and config.yml
+  models/                 player models (Kenney Mini Characters, CC0) and CREDITS.md
 deploy/                   scripts for building the site on the host
 backups/                  old Publii backups, kept for history
 tests/petanque/           Node tests for the game

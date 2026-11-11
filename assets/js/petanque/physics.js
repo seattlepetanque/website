@@ -19,7 +19,7 @@ export function createBody(kind, props = {}) {
 }
 
 // yaw 0 = +y, positive yaw toward +x. Backspin opposes the forward roll; sidespin is about +z.
-export function launch(body, p, from = C.throwFrom) {
+export function launch(body, p, from = p.from || C.throwFrom) {
   const dx = Math.sin(p.yaw), dy = Math.cos(p.yaw);
   const cl = Math.cos(p.loft), sl = Math.sin(p.loft);
   const bs = p.backspin || 0;
@@ -237,6 +237,7 @@ function collide(w, a, b) {
   }
   const vn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny + (b.vz - a.vz) * nz;
   if (vn >= 0) return;
+  const rel = Math.hypot(b.vx - a.vx, b.vy - a.vy, b.vz - a.vz); // full relative speed before impact (audio: directness = speed / rel)
   const e = (a.kind === 'jack' || b.kind === 'jack') ? C.boule2jack : C.boule2boule;
   const hz = 1 - nz * nz;
   const iea = aG ? ima * hz : ima, ieb = bG ? imb * hz : imb;
@@ -263,7 +264,7 @@ function collide(w, a, b) {
   }
   bv(a); bv(b);
   const sp = -vn;
-  w.events.push({ type: 'hit', t: w.t, a: a.id, b: b.id, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, speed: sp });
+  w.events.push({ type: 'hit', t: w.t, a: a.id, b: b.id, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, speed: sp, rel });
   if (a.state === 'resting') { a.state = 'rolling'; a.restT = 0; }
   if (b.state === 'resting') { b.state = 'rolling'; b.restT = 0; }
 }
