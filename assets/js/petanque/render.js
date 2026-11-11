@@ -1,6 +1,5 @@
 // three.js renderer for the pétanque game. World axes: x across, y along, z up.
 import { stripGeometry } from './strip.js';
-import { TUBE_N, TUBE_SIDES, PYR_VERTS, tubeIndices, pyramidIndices, throwTube, rollPyramid } from './prediction.js';
 import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
 import { jackMaterialParams } from './terrain.js';
@@ -963,66 +962,277 @@ export function createRenderer(canvas, terrain) {
     }
   }
 
-  // Throw preview (F83): two smooth translucent volumes with soft edges and reused buffers.
-  //  - throw: an orange elliptical tube along the arc (cross-section = 2 sigma of the cone). The shader fades the
-  //    silhouette (alpha ~ facing^p), so there is no hard edge from any camera.
-  //  - roll: a blue pyramid draped on the ground, apex where the ball first touches, widening to the rest spread and closed by
-  //    a rounded cap; per-vertex alpha is 0 along every edge. The maths lives in prediction.js (pure, node-tested).
-  const CREAM = '#fff1c2', RED = '#c0262f', ORANGE = '#ff9420', BLUE = '#2f7dff';
-  const throwMat = new THREE.ShaderMaterial({
-    transparent: true, depthWrite: false, side: THREE.DoubleSide,
-    uniforms: { uColor: { value: new THREE.Color(ORANGE) } },
-    vertexShader: `attribute float aAlpha; attribute vec3 aRad; varying float vA; varying vec3 vN; varying vec3 vV;
-      void main() { vA = aAlpha; vN = normalMatrix * aRad; vec4 mv = modelViewMatrix * vec4(position, 1.0); vV = mv.xyz; gl_Position = projectionMatrix * mv; }`,
-    fragmentShader: `uniform vec3 uColor; varying float vA; varying vec3 vN; varying vec3 vV;
-      void main() { float f = abs(dot(normalize(vN), normalize(-vV))); gl_FragColor = vec4(uColor, vA * (0.12 + 0.88 * pow(f, 1.2))); }`,
+  // Throw preview: camera-facing ribbons (rebuilt per frame from cached points, buffers reused),
+  // dotted roll guide, donnée ring, optional legal-zone arcs
+  function makeRibbon(cap, mat, order) {
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(cap * 6), ix = new Uint16Array((cap - 1) * 6);
+    for (let i = 0; i < cap - 1; i++) ix.set([2 * i, 2 * i + 1, 2 * i + 3, 2 * i, 2 * i + 3, 2 * i + 2], i * 6);
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setIndex(new THREE.BufferAttribute(ix, 1));
+    geo.setDrawRange(0, 0);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = order;
+    mesh.visible = false;
+    scene.add(mesh);
+    return { mesh, pos, cap, n: 0, pts: new Float32Array(cap * 3), k: 0.003 };
+  }
+  // pts: [{x,y,z}], ground: drape on the terrain
+  function setRibbonPath(r, pts, ground, close) {
+    let n = 0;
+    if (pts && pts.length > 1) {
+      const m = Math.min(pts.length, r.cap - 1);
+      for (let i = 0; i < m; i++) {
+        const q = pts[i];
+        r.pts[n * 3] = q.x; r.pts[n * 3 + 1] = q.y;
+        r.pts[n * 3 + 2] = ground ? terrain.sample(q.x, q.y).h + 0.012 : q.z;
+        n++;
+      }
+      if (close && n < r.cap && Math.hypot(pts[0].x - pts[m - 1].x, pts[0].y - pts[m - 1].y) > 1e-3) {
+        r.pts.copyWithin(n * 3, 0, 3); n++;
+      }
+    }
+    r.n = n;
+    r.mesh.visible = n > 1;
+  }
+  function updateRibbon(r, cam) {
+    const n = r.n, p = r.pts, o = r.pos;
+    if (n < 2) return;
+    let sx = 0, sy = 0, sz = 1;
+    for (let i = 0; i < n; i++) {
+      const a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1);
+      const tx = p[b * 3] - p[a * 3], ty = p[b * 3 + 1] - p[a * 3 + 1], tz = p[b * 3 + 2] - p[a * 3 + 2];
+      const vx = cam.x - p[i * 3], vy = cam.y - p[i * 3 + 1], vz = cam.z - p[i * 3 + 2];
+      let cx = ty * vz - tz * vy, cy = tz * vx - tx * vz, cz = tx * vy - ty * vx;
+      const l = Math.hypot(cx, cy, cz);
+      if (l > 1e-9) { sx = cx / l; sy = cy / l; sz = cz / l; }
+      const w = r.k * Math.hypot(vx, vy, vz);
+      o[i * 6] = p[i * 3] - sx * w; o[i * 6 + 1] = p[i * 3 + 1] - sy * w; o[i * 6 + 2] = p[i * 3 + 2] - sz * w;
+      o[i * 6 + 3] = p[i * 3] + sx * w; o[i * 6 + 4] = p[i * 3 + 1] + sy * w; o[i * 6 + 5] = p[i * 3 + 2] + sz * w;
+    }
+    r.mesh.geometry.attributes.position.needsUpdate = true;
+    r.mesh.geometry.setDrawRange(0, (n - 1) * 6);
+  }
+  const ribbonMat = (color, opacity, offset = -2) => new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity, side: THREE.DoubleSide, fog: false, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: offset, polygonOffsetUnits: offset,
   });
-  const flatMat = new THREE.ShaderMaterial({
+  const CREAM = '#fff1c2', RED = '#c0262f', CONE = '#bff0ff';
+  const ribbons = {
+    centerOutline: makeRibbon(64, ribbonMat('#241608', 0.85, 0), 10),
+    center: makeRibbon(64, ribbonMat(CREAM, 1, -3), 11),
+    edgeOutlines: [0, 1, 2, 3].map(() => makeRibbon(64, ribbonMat('#241608', 0.45, 0), 8)),
+    edges: [0, 1, 2, 3].map(() => makeRibbon(64, ribbonMat(CONE, 0.9, -1), 9)),
+    e1Outline: makeRibbon(160, ribbonMat('#241608', 0.7, 0), 8),
+    e1: makeRibbon(160, ribbonMat(CONE, 1, -3), 9),
+    e2Outline: makeRibbon(160, ribbonMat('#241608', 0.45, 0), 7),
+    e2: makeRibbon(160, ribbonMat(CONE, 0.9, -2), 8),
+  };
+  ribbons.center.k = 0.0026; ribbons.centerOutline.k = 0.0042;
+  for (const r of ribbons.edges) r.k = 0.0017;
+  for (const r of ribbons.edgeOutlines) r.k = 0.0029;
+  ribbons.e1.k = 0.0032; ribbons.e1Outline.k = 0.0048; ribbons.e2.k = 0.0022; ribbons.e2Outline.k = 0.0036;
+  const allRibbons = [ribbons.centerOutline, ribbons.center, ...ribbons.edges, ...ribbons.edgeOutlines,
+    ribbons.e1Outline, ribbons.e1, ribbons.e2Outline, ribbons.e2];
+
+  // Cone surface: a translucent elliptical tube around the nominal arc whose cross-section grows toward the
+  // landing (lateral half-width = 2 sigma, vertical half-height from the longitudinal error), alpha rising
+  // toward the landing. Rebuilt per preview from the envelope arcs, so it is exactly the drawn cone.
+  const TUBE_N = 41, TUBE_SIDES = 16;
+  const coneMat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, side: THREE.DoubleSide,
-    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-    uniforms: { uColor: { value: new THREE.Color(BLUE) } },
+    uniforms: { uColor: { value: new THREE.Color(CONE) } },
     vertexShader: 'attribute float aAlpha; varying float vA; void main() { vA = aAlpha; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
     fragmentShader: 'uniform vec3 uColor; varying float vA; void main() { gl_FragColor = vec4(uColor, vA); }',
   });
-  const volumeMesh = (mat, nVerts, indices, order, withRad) => {
+  const coneGeo = new THREE.BufferGeometry();
+  const conePos = new Float32Array(TUBE_N * TUBE_SIDES * 3), coneAlpha = new Float32Array(TUBE_N * TUBE_SIDES);
+  {
+    const ix = [];
+    for (let i = 0; i < TUBE_N - 1; i++) {
+      for (let j = 0; j < TUBE_SIDES; j++) {
+        const a0 = i * TUBE_SIDES + j, a1 = i * TUBE_SIDES + (j + 1) % TUBE_SIDES, b0 = a0 + TUBE_SIDES, b1 = a1 + TUBE_SIDES;
+        ix.push(a0, b0, b1, a0, b1, a1);
+      }
+    }
+    coneGeo.setAttribute('position', new THREE.BufferAttribute(conePos, 3));
+    coneGeo.setAttribute('aAlpha', new THREE.BufferAttribute(coneAlpha, 1));
+    coneGeo.setIndex(ix);
+  }
+  const coneMesh = new THREE.Mesh(coneGeo, coneMat);
+  coneMesh.frustumCulled = false; coneMesh.renderOrder = 6; coneMesh.visible = false;
+  scene.add(coneMesh);
+  const CONE_K = 2; // the cone is drawn at 2 sigma (about 86% of landings fall inside the ground ellipse)
+  // Fill the tube from the preview's centre arc and its four +-1 sigma arcs; returns the four 2-sigma edge
+  // paths (lateral +/-, vertical +/-) so the outline ribbons coincide with the surface.
+  function buildCone(center, edges) {
+    const n = center.length, sides = [[], [], [], []];
+    if (!edges || edges.length < 4 || n < 3) return null;
+    const m = Math.min(n, TUBE_N);
+    for (let i = 0; i < TUBE_N; i++) {
+      const q = Math.min(i, m - 1);
+      const c = center[q], pa = center[Math.max(0, q - 1)], pb = center[Math.min(n - 1, q + 1)];
+      let tx = pb.x - pa.x, ty = pb.y - pa.y, tz = pb.z - pa.z;
+      const tl = Math.hypot(tx, ty, tz) || 1; tx /= tl; ty /= tl; tz /= tl;
+      const rem = (vx, vy, vz) => { const d = vx * tx + vy * ty + vz * tz; return [vx - d * tx, vy - d * ty, vz - d * tz]; };
+      const l = rem((edges[0][q].x - edges[1][q].x) / 2, (edges[0][q].y - edges[1][q].y) / 2, (edges[0][q].z - edges[1][q].z) / 2);
+      // vertical direction of the section: t x l, flipped to point up
+      let nx = ty * l[2] - tz * l[1], ny = tz * l[0] - tx * l[2], nz = tx * l[1] - ty * l[0];
+      const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl;
+      if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+      const w = rem((edges[2][q].x - edges[3][q].x) / 2, (edges[2][q].y - edges[3][q].y) / 2, (edges[2][q].z - edges[3][q].z) / 2);
+      const la = Math.hypot(l[0], l[1], l[2]) * CONE_K;
+      const lb = Math.abs(w[0] * nx + w[1] * ny + w[2] * nz) * CONE_K;
+      const b = Math.max(lb, 0.8 * la); // never thinner than 0.8 of the width, so it reads as a cone from behind
+      const f = q / (m - 1);
+      for (let j = 0; j < TUBE_SIDES; j++) {
+        const th = j / TUBE_SIDES * Math.PI * 2, cs = Math.cos(th), sn = Math.sin(th);
+        const o = (i * TUBE_SIDES + j) * 3;
+        conePos[o] = c.x + cs * l[0] * CONE_K + sn * nx * b;
+        conePos[o + 1] = c.y + cs * l[1] * CONE_K + sn * ny * b;
+        conePos[o + 2] = c.z + cs * l[2] * CONE_K + sn * nz * b;
+        coneAlpha[i * TUBE_SIDES + j] = 0.04 + 0.26 * f * f;
+      }
+      const pt = (th) => ({ x: c.x + Math.cos(th) * l[0] * CONE_K + Math.sin(th) * nx * b, y: c.y + Math.cos(th) * l[1] * CONE_K + Math.sin(th) * ny * b, z: c.z + Math.cos(th) * l[2] * CONE_K + Math.sin(th) * nz * b });
+      if (i < m) { sides[0].push(pt(0)); sides[1].push(pt(Math.PI)); sides[2].push(pt(Math.PI / 2)); sides[3].push(pt(-Math.PI / 2)); }
+    }
+    coneGeo.attributes.position.needsUpdate = true;
+    coneGeo.attributes.aAlpha.needsUpdate = true;
+    return sides;
+  }
+
+  // Filled ground ellipses (triangle fans draped on the terrain)
+  function makeFan(color, opacity, order, cap = 64) {
     const geo = new THREE.BufferGeometry();
-    const pos = new Float32Array(nVerts * 3), alpha = new Float32Array(nVerts), rad = withRad ? new Float32Array(nVerts * 3) : null;
+    const pos = new Float32Array((cap + 1) * 3), ix = [];
+    for (let i = 0; i < cap; i++) ix.push(0, 1 + i, 1 + (i + 1) % cap);
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('aAlpha', new THREE.BufferAttribute(alpha, 1));
-    if (rad) geo.setAttribute('aRad', new THREE.BufferAttribute(rad, 3));
-    geo.setIndex(indices);
-    const mesh = new THREE.Mesh(geo, mat);
+    geo.setIndex(ix);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity, side: THREE.DoubleSide, fog: false, depthWrite: false,
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+    }));
     mesh.frustumCulled = false; mesh.renderOrder = order; mesh.visible = false;
     scene.add(mesh);
-    return { mesh, geo, pos, alpha, rad };
-  };
-  const tubeVol = volumeMesh(throwMat, TUBE_N * TUBE_SIDES, tubeIndices(), 6, true);
-  const pyrVol = volumeMesh(flatMat, PYR_VERTS, pyramidIndices(), 5, false);
-  const pyrXY = new Float32Array(PYR_VERTS * 2);
-  const PYR_LIFT = 0.02;
-  function setThrowVolume(center, edges) {
-    const ok = center && edges && throwTube(center, edges, tubeVol.pos, tubeVol.alpha, tubeVol.rad);
-    tubeVol.mesh.visible = !!ok;
-    if (!ok) return;
-    tubeVol.geo.attributes.position.needsUpdate = true;
-    tubeVol.geo.attributes.aAlpha.needsUpdate = true;
-    tubeVol.geo.attributes.aRad.needsUpdate = true;
+    return { mesh, pos, cap };
   }
+  const fans = { e2: makeFan(CONE, 0.28, 5), e1: makeFan(CONE, 0.5, 6) };
+  function setFan(f, pts) {
+    if (!pts || pts.length < 4) { f.mesh.visible = false; return; }
+    const m = pts.length - 1; // the closing point repeats the first
+    let cx = 0, cy = 0;
+    for (let i = 0; i < m; i++) { cx += pts[i].x / m; cy += pts[i].y / m; }
+    f.pos[0] = cx; f.pos[1] = cy; f.pos[2] = terrain.sample(cx, cy).h + 0.01;
+    for (let i = 0; i < f.cap; i++) {
+      const q = pts[Math.min(m - 1, Math.round(i * m / f.cap))];
+      f.pos[3 + i * 3] = q.x; f.pos[4 + i * 3] = q.y; f.pos[5 + i * 3] = terrain.sample(q.x, q.y).h + 0.01;
+    }
+    f.mesh.geometry.attributes.position.needsUpdate = true;
+    f.mesh.visible = true;
+  }
+
+  // Roll guide (D21): a soft translucent orange band on the ground that widens toward the rest point, a dashed centre
+  // line (dark under-layer, bright orange on top) and a faint rest ellipse. Orange so it is never mistaken for the blue cone.
+  const DASHES = 160, DASH_LEN = 0.3, DASH_GAP = 0.25, DASH_W = 0.05;
+  const dashMat = (color, opacity) => new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity, side: THREE.DoubleSide, fog: false, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+  });
+  const dashGeo = new THREE.PlaneGeometry(1, 1);
+  const dashBack = new THREE.InstancedMesh(dashGeo, dashMat('#241608', 0.75), DASHES);
+  const dashTop = new THREE.InstancedMesh(dashGeo, dashMat('#ffae2b', 1), DASHES);
+  // rest ellipse: a unit ring and fill in a group that is laid on the ground, rotated and scaled per band
+  const restGroup = new THREE.Group(), restInner = new THREE.Group();
+  for (const [geo, color, op, order] of [[new THREE.CircleGeometry(1, 40), '#ffae2b', 0.16, 11], [new THREE.RingGeometry(0.9, 1, 40), '#241608', 0.35, 12], [new THREE.RingGeometry(0.93, 0.985, 40), '#ffae2b', 0.7, 13]]) {
+    const m = new THREE.Mesh(geo, dashMat(color, op)); m.renderOrder = order; m.frustumCulled = false; restInner.add(m);
+  }
+  restGroup.add(restInner); restGroup.visible = false; scene.add(restGroup);
+  // the band: three nested ground strips (widest faintest) so it fades toward its edges
+  const BAND_N = 40, BAND_LAYERS = [[1, 0.2], [0.66, 0.2], [0.33, 0.2]];
+  const bandStrips = BAND_LAYERS.map(([w, op], li) => {
+    const geo = new THREE.BufferGeometry(), ix = [];
+    for (let i = 0; i < BAND_N - 1; i++) ix.push(2 * i, 2 * i + 1, 2 * i + 3, 2 * i, 2 * i + 3, 2 * i + 2);
+    const pos = new Float32Array(BAND_N * 6);
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setIndex(ix); geo.setDrawRange(0, 0);
+    const mesh = new THREE.Mesh(geo, dashMat('#ffae2b', op));
+    mesh.frustumCulled = false; mesh.renderOrder = 9 + li; mesh.visible = false; scene.add(mesh);
+    return { mesh, pos, w };
+  });
+  for (const [o, order] of [[dashBack, 13], [dashTop, 14]]) {
+    o.frustumCulled = false; o.renderOrder = order; o.visible = false; scene.add(o);
+  }
+  dashBack.count = dashTop.count = 0;
+  const dM = new THREE.Matrix4(), dPos = new THREE.Vector3(), dX = new THREE.Vector3(), dY = new THREE.Vector3(), dZ = new THREE.Vector3();
   // `band`: { center: [{x,y,z}], halfWidths, restMean, restCov } from predictRollBand (a bare point list also works)
   function setRoll(band) {
+    let n = 0;
+    restGroup.visible = false;
+    for (const st of bandStrips) st.mesh.visible = false;
     if (Array.isArray(band)) { // plain path: a narrow band with no spread
       const m = band.length;
       band = { center: band, halfWidths: band.map((_, i) => 0.04 + 0.06 * i / Math.max(1, m - 1)), restMean: band[m - 1], restCov: { xx: 0.003, xy: 0, yy: 0.003 } };
     }
-    const ok = band && rollPyramid(band, pyrXY, pyrVol.alpha);
-    pyrVol.mesh.visible = !!ok;
-    if (!ok) return;
-    for (let i = 0; i < PYR_VERTS; i++) {
-      const x = pyrXY[2 * i], y = pyrXY[2 * i + 1];
-      pyrVol.pos[3 * i] = x; pyrVol.pos[3 * i + 1] = y; pyrVol.pos[3 * i + 2] = terrain.sample(x, y).h + PYR_LIFT;
+    const pts = band && band.center;
+    if (pts && pts.length > 1) {
+      // the band: perpendicular offsets of each centre point, widened to read from the shoulder view
+      const m = Math.min(pts.length, BAND_N);
+      for (const st of bandStrips) {
+        for (let i = 0; i < m; i++) {
+          const a = pts[Math.max(0, i - 1)], b = pts[Math.min(m - 1, i + 1)];
+          let tx = b.x - a.x, ty = b.y - a.y;
+          const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+          const hw = Math.max(0.16, (band.halfWidths[i] || 0.05) * 2.5) * st.w;
+          for (let sd = 0; sd < 2; sd++) {
+            const k = sd ? -1 : 1, x = pts[i].x - ty * hw * k, y = pts[i].y + tx * hw * k;
+            const o = (i * 2 + sd) * 3;
+            st.pos[o] = x; st.pos[o + 1] = y; st.pos[o + 2] = terrain.sample(x, y).h + 0.014;
+          }
+        }
+        st.mesh.geometry.attributes.position.needsUpdate = true;
+        st.mesh.geometry.setDrawRange(0, (m - 1) * 6);
+        st.mesh.visible = true;
+      }
+      // walk the path by arc length, laying a dash every DASH_LEN + DASH_GAP
+      let pos = 0; // distance along the path to the start of the next dash
+      let acc = 0; // path length so far
+      for (let i = 1; i < pts.length && n < DASHES; i++) {
+        const a = pts[i - 1], b = pts[i], seg = Math.hypot(b.x - a.x, b.y - a.y);
+        if (seg < 1e-6) continue;
+        while (pos < acc + seg && n < DASHES) {
+          const mid = pos + DASH_LEN / 2;
+          const t = Math.max(0, Math.min(1, (mid - acc) / seg));
+          const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+          const h = terrain.sample(x, y);
+          dZ.set(h.nx || 0, h.ny || 0, h.nz || 1).normalize();
+          dX.set((b.x - a.x) / seg, (b.y - a.y) / seg, 0);
+          dX.addScaledVector(dZ, -dX.dot(dZ)).normalize();
+          dY.crossVectors(dZ, dX);
+          dPos.set(x, y, h.h + 0.016);
+          dM.makeBasis(dX.clone().multiplyScalar(DASH_LEN), dY.clone().multiplyScalar(DASH_W), dZ);
+          dM.setPosition(dPos);
+          dashTop.setMatrixAt(n, dM);
+          dM.makeBasis(dX.clone().multiplyScalar(DASH_LEN + 0.03), dY.clone().multiplyScalar(DASH_W + 0.035), dZ);
+          dM.setPosition(dPos);
+          dashBack.setMatrixAt(n, dM);
+          n++;
+          pos += DASH_LEN + DASH_GAP;
+        }
+        acc += seg;
+      }
+      // rest ellipse at 1.5 sigma along the principal axes of the rest covariance
+      const e = band.restMean || pts[pts.length - 1], h = terrain.sample(e.x, e.y), c = band.restCov;
+      const tr = (c.xx + c.yy) / 2, df = Math.sqrt(((c.xx - c.yy) / 2) ** 2 + c.xy * c.xy);
+      const l1 = Math.max(0.0036, tr + df), l2 = Math.max(0.0036, tr - df);
+      restGroup.position.set(e.x, e.y, h.h + 0.018);
+      restGroup.quaternion.setFromUnitVectors(upZ, dZ.set(h.nx || 0, h.ny || 0, h.nz || 1).normalize());
+      restInner.rotation.z = 0.5 * Math.atan2(2 * c.xy, c.xx - c.yy);
+      restInner.scale.set(Math.max(0.14, 1.5 * Math.sqrt(l1)), Math.max(0.14, 1.5 * Math.sqrt(l2)), 1);
+      restGroup.visible = true;
     }
-    pyrVol.geo.attributes.position.needsUpdate = true;
-    pyrVol.geo.attributes.aAlpha.needsUpdate = true;
+    dashTop.count = dashBack.count = n;
+    dashTop.instanceMatrix.needsUpdate = dashBack.instanceMatrix.needsUpdate = true;
+    dashTop.visible = dashBack.visible = n > 0;
   }
 
   // donnée marker: ring on the ground; snapped adds a bold red ring and ticks
@@ -1054,13 +1264,26 @@ export function createRenderer(canvas, terrain) {
     preview = p || null;
     previewApex = p && p.center ? Math.max(0, ...p.center.map((q) => q.z)) : 0;
     if (!p) {
-      tubeVol.mesh.visible = false;
+      for (const r of allRibbons) { r.n = 0; r.mesh.visible = false; }
+      coneMesh.visible = false;
+      fans.e1.mesh.visible = fans.e2.mesh.visible = false;
       setRoll(null);
       marker.visible = false;
       jackZone.visible = false;
       return;
     }
-    setThrowVolume(p.center, p.edges);
+    setRibbonPath(ribbons.center, p.center, false);
+    setRibbonPath(ribbons.centerOutline, p.center, false);
+    const sides = p.center && p.edges ? buildCone(p.center, p.edges) : null;
+    coneMesh.visible = !!sides;
+    ribbons.edges.forEach((r, i) => setRibbonPath(r, sides ? sides[i] : p.edges && p.edges[i], false));
+    ribbons.edgeOutlines.forEach((r, i) => setRibbonPath(r, sides ? sides[i] : p.edges && p.edges[i], false));
+    setFan(fans.e1, p.ellipse1);
+    setFan(fans.e2, p.ellipse2);
+    setRibbonPath(ribbons.e1, p.ellipse1, true, true);
+    setRibbonPath(ribbons.e1Outline, p.ellipse1, true, true);
+    setRibbonPath(ribbons.e2, p.ellipse2, true, true);
+    setRibbonPath(ribbons.e2Outline, p.ellipse2, true, true);
     setRoll(p.roll);
     if (p.donnee) {
       const s = terrain.sample(p.donnee.x, p.donnee.y);
@@ -1072,6 +1295,10 @@ export function createRenderer(canvas, terrain) {
       marker.visible = true;
     } else marker.visible = false;
     if (p.legalZone) jackZone.visible = true;
+  }
+  function updatePreview() {
+    if (!preview) return;
+    for (const r of allRibbons) updateRibbon(r, camera.position);
   }
 
   // Camera state
@@ -1486,6 +1713,7 @@ export function createRenderer(canvas, terrain) {
     sailboats.update(dt, reduce(), floatplane, edgeZ); // F64
     butterflies.update(dt, reduce(), butterflies.busy); // F67, F81
     clouds.update(dt, reduce()); // F68
+    updatePreview();
     updateJackMark(dt);
     renderScene();
   }
