@@ -8,7 +8,7 @@ import { createTerrain } from './terrain.js';
 import { createWorld, createBody, launch, placeDeadBall, deadRowSlot, deadJackSpot } from './physics.js';
 import { createRenderer } from './render.js';
 import {
-  createMatch, defaultPlayers, teamNamesFor, validPartner, opponentIds, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm, deadJackText,
+  createMatch, defaultPlayers, teamNamesFor, validPartner, opponentIds, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm, deadJackText, jackGap, jackTooClose, TIE_EPS,
 } from './rules.js';
 import { detectAnnouncement } from './announce.js';
 import { createAnnouncer } from './announce-view.js';
@@ -985,7 +985,7 @@ function boot() {
     refreshHud({ team, playerId: thrower.id, text: `${thrower.isHuman ? 'You' : thrower.name} throw${thrower.isHuman ? '' : 's'} the jack` });
     aimView();
     if (thrower.isHuman) {
-      humanTurn('jack', thrower.id, lead + 'Your jack. Aim, then toss it onto the court between the two yellow lines (6 to 10 metres out). It rolls on after landing: aim so the orange dashes end inside the zone.');
+      humanTurn('jack', thrower.id, lead + 'Your jack. Aim, then toss it onto the court between the two yellow lines (6 to 10 metres from the edge of the circle). It rolls on after landing: aim so the orange dashes end inside the zone.');
     } else {
       aiJack(thrower, lead).catch((err) => console.error(err));
     }
@@ -1801,7 +1801,8 @@ function boot() {
     const j = jackBody();
     lastKind = null;
     if (j && j.dead) return 'The jack is out: dead jack.';
-    if (was.kind === 'jack') return `Jack is ${Math.hypot(was.x - court.circle.x, was.y - court.circle.y).toFixed(1)} m out.`;
+    if (was.kind === 'jack') return `Jack is ${jackGap(was, match && match.geometry).toFixed(1)} m out.`; // F75: edge to edge
+    if (j && match && jackTooClose(j, match.geometry)) return 'The jack is too close: less than 3 m from the circle, dead jack.'; // F76, Art. 9.3
     if (was.dead) lastKind = 'dead';
     if (was.dead) return `${ownerName(was)} boule is out: dead boule.`;
     const gap = Math.hypot(was.x - j.x, was.y - j.y) - was.r - j.r;
@@ -1889,7 +1890,7 @@ function boot() {
       say2(`${why} ${TEAM_NAMES[placing]} place the cochonnet.`);
       later(() => aiPlaceJack(why).catch((err) => console.error(err)), 1300);
     } else {
-      say2(`${why} You and ${PERSONALITIES[partner].name} place the cochonnet: click a green spot between the yellow arcs (6 to 10 m out).`);
+      say2(`${why} You and ${PERSONALITIES[partner].name} place the cochonnet: click a green spot between the yellow arcs (6 to 10 m from the edge of the circle).`);
       later(() => humanPlaceJack(), 1300);
       if (debug && params.has('px')) humanPlaceMarker(); // screenshots: show the marker at once
     }
@@ -1987,7 +1988,7 @@ function boot() {
     match = { ...match, jack: { x: j.x, y: j.y, dead: j.dead } };
     headView(j);
     const first = match.players.filter((p) => p.team === match.jackTeam && p.isHuman).length ? `You and ${PERSONALITIES[partner].name} play` : `${TEAM_NAMES[match.jackTeam]} play`;
-    say2(`Jack placed at ${Math.hypot(j.x - court.circle.x, j.y - court.circle.y).toFixed(1)} m. ${first} first.`);
+    say2(`Jack placed at ${jackGap(j, match.geometry).toFixed(1)} m. ${first} first.`);
     later(startPlay, 1400);
   }
   // ?debug&jackplace[=ai]: skip the throw and fail the jack, so the placement shows at once
@@ -2042,6 +2043,10 @@ function boot() {
     }
     const prevHold = holdingTeam(match.jack, match.boules);
     match = apply(match, { type: 'throwSettled', jack: snap.jack, boules: snap.boules });
+    { // F76: the rules judged a jack knocked to less than 3 m from the circle dead: show it dead too (fetch and ring follow the dead-jack flow)
+      const jb = jackBody();
+      if (match.jack && match.jack.dead && jb && !jb.dead) placeDeadBall(world, jb, jb.x, jb.y);
+    }
     if (match.phase === 'meneEnd' || match.phase === 'gameOver') {
       cancelFetch();
       endOfMene(note);
@@ -2115,15 +2120,15 @@ function boot() {
       const live = world.bodies.filter((b) => b.kind === 'boule' && !b.dead);
       const near = [0, 1].map((t) => live.filter((b) => b.team === t)
         .reduce((m, b) => Math.min(m, Math.hypot(b.x - j.x, b.y - j.y)), Infinity));
-      if (jackOut && r.inHand) note = deadJackText(r.inHand, TEAM_NAMES); // F13: from the boules in hand when it went dead
+      if (jackOut && r.inHand) note = deadJackText(r.inHand, TEAM_NAMES, r.jackReason); // F13: from the boules in hand when it went dead
       else if (!live.length) note = 'No live boules on the court: mène void.';
-      else if (Math.abs(near[0] - near[1]) <= 0.002) note = 'The closest boules of each team are the same distance from the cochonnet: mène void.';
+      else if (Math.abs(near[0] - near[1]) <= TIE_EPS) note = 'The closest boules of each team are the same distance from the cochonnet: mène void.';
       else { note = 'Mène void.'; console.warn('[void mène] no reason found: please report this with the details below'); }
       console.info('[void mène]', { jackDead: !!(j && j.dead), jackAt: j && { x: +j.x.toFixed(3), y: +j.y.toFixed(3) },
         liveBoules: live.length, closest: near.map((d) => (Number.isFinite(d) ? +d.toFixed(4) : null)),
         matchJack: match.jack, inHand: match.players.map((p) => `${p.id}:${p.boulesLeft}`).join(' ') });
     }
-    else if (jackOut && r.inHand) note = deadJackText(r.inHand, TEAM_NAMES); // F13: dead jack, one team holds boules
+    else if (jackOut && r.inHand) note = deadJackText(r.inHand, TEAM_NAMES, r.jackReason); // F13: dead jack, one team holds boules
     else if (!jackOut && !r.void && r.measured && r.measured.length) {
       // report the winning boule's gap, the figure on its measuring label
       const win = world.bodies.find((b) => b.id === r.measured[0].id);

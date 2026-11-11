@@ -1,17 +1,20 @@
 // Pétanque rules and scoring (doublette). Pure data logic: no DOM, no physics.
 // Jack: { x, y, dead }. Boules: { id, team, owner, x, y, dead }. Metres, 2D distances.
-import { nextCircle } from './court.js';
+import { nextCircle, CIRCLE_R } from './court.js';
 
 export const DEFAULT_GEOMETRY = Object.freeze({
   circle: Object.freeze({ x: 2, y: 1 }),
   dir: 1, // E10: +1 plays toward y = length, -1 toward y = 0; moves with the circle each mène
   width: 4,
   length: 15,
-  jackMin: 6,
+  circleR: CIRCLE_R, // radius of the circle; the throw limits are measured from its inner edge (F75)
+  jackMin: 6, // F75: edge to edge, circle's inner edge to the jack's nearest point
   jackMax: 10,
 });
 
-const TIE_EPS = 0.001; // equidistant within 1 mm
+// F77: the one tie tolerance: two boules are equidistant from the jack within 1 mm (rules.js scoring and holding, and the
+// void-mène message in main.js and the tactics' tie test use this same constant)
+export const TIE_EPS = 0.001;
 const BOULES_PER_PLAYER = 3;
 const EPS = 1e-9;
 
@@ -60,11 +63,17 @@ export function createMatch({ target = 13, players, geometry, firstJackTeam = 0 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 // E20: the cochonnet is judged like a boule at the side strings (in while any part is inside: out only when the
-// whole jack is past a string) and must be more than 0.5 m before the end string. 6-10 m from the circle centre.
+// whole jack is past a string). Every other limit is edge to edge (user decision, F75/F76/F80): the 6-10 m throw limits
+// are the gap between the circle's inner edge and the jack's nearest point (jackGap); the jack's surface must be more than
+// 0.5 m before the end string (its centre more than JACK_END_CENTRE); a live jack less than 3 m from the circle (same gap)
+// is dead (Art. 9.3).
 // The end string is the far one in the playing direction: geometry.dir (+1 toward y = length, the default; -1 toward
 // y = 0), ready for E10's flipping direction. One rule for a thrown and a placed jack.
 export const JACK_R = 0.015;
-export const JACK_END_MARGIN = 0.5;
+export const JACK_END_MARGIN = 0.5; // metres from the jack's EDGE to the end string
+export const JACK_END_CENTRE = JACK_END_MARGIN + JACK_R; // the same rule for the jack's centre
+export const JACK_DEAD_DIST = 3; // Art. 9.3: edge gap from the circle below which a jack is dead
+export const JACK_CENTRE_SHIFT = CIRCLE_R + JACK_R; // centre distance = edge gap + this (default circle)
 // F06: every displayed distance is surface to surface. gapM: metres from a's edge to b's edge (negative = touching or overlapping).
 // fmtCm: one decimal, "18.3 cm" (metres from 1 m up, "1.8 m").
 export const gapM = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) - (a.r ?? 0) - (b.r ?? 0);
@@ -72,13 +81,28 @@ export function fmtCm(m) {
   const v = Math.max(0, m);
   return v < 1 ? `${(v * 100).toFixed(1)} cm` : `${v.toFixed(1)} m`;
 }
-const endGap = (jack, g) => ((g.dir ?? 1) < 0 ? jack.y : g.length - jack.y); // distance in front of the end string
+const endGap = (jack, g) => ((g.dir ?? 1) < 0 ? jack.y : g.length - jack.y); // distance from the jack's centre to the end string
+const circleR = (g) => g.circle.r ?? g.circleR ?? CIRCLE_R;
+// F75: metres from the circle's inner edge to the jack's nearest point (negative = overlapping the circle)
+export function jackGap(jack, geometry = DEFAULT_GEOMETRY) {
+  const g = { ...DEFAULT_GEOMETRY, ...geometry };
+  return dist(jack, g.circle) - circleR(g) - JACK_R;
+}
+// Art. 9.3: a live jack closer than 3 m (edge to edge) to the circle is dead
+export const jackTooClose = (jack, geometry = DEFAULT_GEOMETRY) => !!jack && !jack.dead && jackGap(jack, geometry) < JACK_DEAD_DIST - EPS;
+// the legal range of the jack's CENTRE distance from the circle's centre (what the zone lines and AI aims use)
+export function jackCentreRange(geometry = DEFAULT_GEOMETRY) {
+  const g = { ...DEFAULT_GEOMETRY, ...geometry }, k = circleR(g) + JACK_R;
+  return { min: g.jackMin + k, max: g.jackMax + k };
+}
+// the jack's edge is more than 0.5 m before the end string
+const endOk = (jack, g) => endGap(jack, g) - JACK_R > JACK_END_MARGIN + EPS;
 export function jackValid(jack, geometry = DEFAULT_GEOMETRY) {
   const g = { ...DEFAULT_GEOMETRY, ...geometry };
   if (!jack || jack.dead) return false;
-  const d = dist(jack, g.circle);
-  if (d < g.jackMin - EPS || d > g.jackMax + EPS) return false;
-  return jack.x >= -JACK_R - EPS && jack.x <= g.width + JACK_R + EPS && endGap(jack, g) > JACK_END_MARGIN;
+  const gap = jackGap(jack, g);
+  if (gap < g.jackMin - EPS || gap > g.jackMax + EPS) return false;
+  return jack.x >= -JACK_R - EPS && jack.x <= g.width + JACK_R + EPS && endOk(jack, g);
 }
 export const jackPlaceValid = jackValid;
 
@@ -123,21 +147,22 @@ export function meneResult(jack, boules) {
 
 // Why a jack is not legal: { reason: 'out'|'short'|'far'|'line'|'end', dist } or null when it is valid.
 // 'line': whole jack past a side string (side 'left'|'right', gap = how far past the string, m);
-// 'end': centre within 0.5 m of the end string (gap = distance to it, margin = 0.5);
+// 'end': the jack's edge within 0.5 m of the end string (gap = edge to string, margin = 0.5);
+// 'short'/'far': dist = the edge gap from the circle's inner edge (6 to 10 m);
 // 'out': dead (went over a line during the roll); back = it now lies in a legal spot.
 export function jackFault(jack, geometry = DEFAULT_GEOMETRY) {
   const g = { ...DEFAULT_GEOMETRY, ...geometry };
   if (jackValid(jack, g)) return null;
   if (!jack || jack.dead) {
     const back = !!jack && jackValid({ x: jack.x, y: jack.y }, g);
-    return { reason: 'out', dist: jack ? dist(jack, g.circle) : 0, ...(back ? { back } : {}) };
+    return { reason: 'out', dist: jack ? jackGap(jack, g) : 0, ...(back ? { back } : {}) };
   }
-  const d = dist(jack, g.circle);
+  const d = jackGap(jack, g); // edge gap
   if (d < g.jackMin - EPS) return { reason: 'short', dist: d };
   if (d > g.jackMax + EPS) return { reason: 'far', dist: d };
   if (jack.x < -JACK_R) return { reason: 'line', dist: d, side: 'left', gap: -jack.x - JACK_R };
   if (jack.x > g.width + JACK_R) return { reason: 'line', dist: d, side: 'right', gap: jack.x - g.width - JACK_R };
-  return { reason: 'end', dist: d, gap: endGap(jack, g), margin: JACK_END_MARGIN };
+  return { reason: 'end', dist: d, gap: endGap(jack, g) - JACK_R, margin: JACK_END_MARGIN };
 }
 export const jackPlaceFault = jackFault;
 
@@ -161,12 +186,13 @@ export function nextTeam(match) {
 
 // The sentence for a dead cochonnet, from the boules in hand [team0, team1] when it went dead.
 // Both teams holding boules or neither: void. Only one team: that team scores them.
-export function deadJackText(inHand, teamNames = teamNamesFor('pierre')) {
+export function deadJackText(inHand, teamNames = teamNamesFor('pierre'), reason = 'out') {
   const [h0, h1] = inHand;
-  if (h0 > 0 && h1 > 0) return 'The cochonnet went out: both teams still have boules, so the mène is void.';
-  if (h0 === 0 && h1 === 0) return 'The cochonnet went out and neither team has boules left, so the mène is void.';
+  const what = reason === 'close' ? 'The cochonnet is too close to the circle (less than 3 m): dead jack' : 'The cochonnet went out';
+  if (h0 > 0 && h1 > 0) return `${what}: both teams still have boules, so the mène is void.`;
+  if (h0 === 0 && h1 === 0) return `${what} and neither team has boules left, so the mène is void.`;
   const team = h0 > 0 ? 0 : 1;
-  return `The cochonnet went out with only ${teamNames[team]} holding boules: they score ${inHand[team]}.`;
+  return `${what} with only ${teamNames[team]} holding boules: they score ${inHand[team]}.`;
 }
 
 function endMene(match, jack, boules) {
@@ -176,11 +202,11 @@ function endMene(match, jack, boules) {
     // inHand is the count at the moment the jack died (kept on the result for the message, deadJackText).
     const h0 = boulesInHand(match, 0);
     const h1 = boulesInHand(match, 1);
-    const inHand = [h0, h1];
-    if (h0 > 0 && h1 > 0) result = { void: true, inHand };
-    else if (h0 > 0) result = { team: 0, points: h0, measured: [], inHand };
-    else if (h1 > 0) result = { team: 1, points: h1, measured: [], inHand };
-    else result = { void: true, inHand };
+    const inHand = [h0, h1], jackReason = jack.reason || 'out'; // 'close': F76, less than 3 m from the circle
+    if (h0 > 0 && h1 > 0) result = { void: true, inHand, jackReason };
+    else if (h0 > 0) result = { team: 0, points: h0, measured: [], inHand, jackReason };
+    else if (h1 > 0) result = { team: 1, points: h1, measured: [], inHand, jackReason };
+    else result = { void: true, inHand, jackReason };
   } else {
     result = meneResult(jack, boules);
   }
@@ -236,6 +262,10 @@ export function apply(match, event) {
     case 'throwSettled': {
       if (match.phase !== 'play') return match;
       const jack = { x: event.jack.x, y: event.jack.y, dead: !!event.jack.dead };
+      if (jack.dead && event.jack.spot) jack.spot = { x: event.jack.spot.x, y: event.jack.spot.y };
+      if (jackTooClose(jack, match.geometry)) { // F76, Art. 9.3: knocked to less than 3 m from the circle: dead where it lies
+        jack.dead = true; jack.reason = 'close'; jack.spot = { x: jack.x, y: jack.y };
+      }
       const boules = event.boules.map((b) => ({ ...b }));
       const none = boulesInHand(match, 0) + boulesInHand(match, 1) === 0;
       if (jack.dead || none) return endMene(match, jack, boules);

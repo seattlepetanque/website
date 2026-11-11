@@ -4,10 +4,13 @@ import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
 import { jackMaterialParams } from './terrain.js';
 import { court } from './court.js';
-import { JACK_END_MARGIN } from './rules.js';
+import { JACK_END_CENTRE, JACK_CENTRE_SHIFT } from './rules.js';
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
 import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, scoringTargetBox } from './camera.js';
+import { makeButterflies } from './butterflies.js'; // F67
+import { makeDog } from './dog.js'; // F70
+import { makeDucks } from './ducks.js'; // F69
 import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeTreeShadows, makeSkyPanorama, makeLake, makeSailboats, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 import { createFloatplane } from './floatplane.js'; // F19
 
@@ -252,6 +255,9 @@ export function createRenderer(canvas, terrain) {
   const lake = makeLake(C.terrainW / 2, edgeZ); // F19: distant lake (shimmer frozen when paused or under reduced motion)
   scene.add(lake.mesh);
   const sailboats = makeSailboats(C.terrainW / 2, edgeZ); scene.add(sailboats.group); // F64
+  const ducks = makeDucks(C.terrainW / 2, edgeZ); scene.add(ducks.group); // F69
+  const dog = makeDog(terrain); scene.add(dog.group); // F70
+  const butterflies = makeButterflies(edgeZ); scene.add(butterflies.group); // F67
   const floatplane = createFloatplane({ cx: C.terrainW / 2, z: edgeZ + 0.05 });
   scene.add(floatplane.group);
   scene.add(makeTufts(terrain, isPhone()));
@@ -525,9 +531,9 @@ export function createRenderer(canvas, terrain) {
     const hi = Math.asin(Math.max(-1, Math.min(1, (C.terrainW - c.x) / rad)));
     return [lo, hi];
   };
-  // E20: the zone stops JACK_END_MARGIN before the end string (the far one in the playing direction, zoneDir = +1 toward
+  // E20/F75: the zone stops JACK_END_CENTRE (0.5 m + the jack's radius: its edge 0.5 m clear) before the end string (the far one in the playing direction, zoneDir = +1 toward
   // y = terrainL, -1 toward y = 0; E10 sets it with the circle). A no-op with the default circle: the 10 m arc ends at y = 11.
-  const zoneY = (y) => (court.dir < 0 ? Math.max(y, JACK_END_MARGIN) : Math.min(y, C.terrainL - JACK_END_MARGIN));
+  const zoneY = (y) => (court.dir < 0 ? Math.max(y, JACK_END_CENTRE) : Math.min(y, C.terrainL - JACK_END_CENTRE));
   const zoneMat = (opacity, color = '#ffd24a') => new THREE.MeshBasicMaterial({
     color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide, fog: false,
     polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6,
@@ -586,8 +592,10 @@ export function createRenderer(canvas, terrain) {
   // E10: the zone geometry follows the circle and direction, so it is rebuilt whenever the court moves
   function buildZones() {
     for (const g of [jackZone, placeZone]) { for (const m of g.children.slice()) { g.remove(m); m.geometry.dispose(); } }
-    for (const rad of [C.jackMinDist, C.jackMaxDist]) { jackZone.add(zoneLine(rad, 0.07, 0.008, 3)); placeZone.add(zoneLine(rad, 0.07, 0.008, 3)); }
-    placeZone.add(zoneFill(C.jackMinDist, C.jackMaxDist, 0.006, 2)); // the 10 m arc stops short of the far string, so the side strings are the only clip
+    // F75: the 6 m and 10 m limits are edge to edge, so the lines (the jack's centre) sit JACK_CENTRE_SHIFT further out
+    const rMin = C.jackMinDist + JACK_CENTRE_SHIFT, rMax = C.jackMaxDist + JACK_CENTRE_SHIFT;
+    for (const rad of [rMin, rMax]) { jackZone.add(zoneLine(rad, 0.07, 0.008, 3)); placeZone.add(zoneLine(rad, 0.07, 0.008, 3)); }
+    placeZone.add(zoneFill(rMin, rMax, 0.006, 2)); // the 10 m arc stops short of the far string, so the side strings are the only clip
   }
   buildZones();
   // The circle or direction changed (court.js): rebuild the zones and move the ring (`fade`: a short fade out and in)
@@ -1647,6 +1655,9 @@ export function createRenderer(canvas, terrain) {
     if (!reduce()) lake.update(dt);
     floatplane.update(dt, camera, reduce());
     sailboats.update(dt, reduce(), floatplane, edgeZ); // F64
+    ducks.update(dt, reduce(), floatplane, edgeZ); // F69
+    dog.update(dt, reduce()); // F70
+    butterflies.update(dt, reduce()); // F67
     updatePreview();
     updateJackMark(dt);
     renderScene();

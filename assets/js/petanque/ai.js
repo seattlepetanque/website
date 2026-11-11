@@ -7,7 +7,7 @@ import { C } from './constants.js';
 import { court, ahead } from './court.js';
 import { mulberry32 } from './rng.js';
 import { createBody, launch, createWorld, simulate } from './physics.js';
-import { jackValid, jackPlaceValid, DEFAULT_GEOMETRY, JACK_END_MARGIN } from './rules.js';
+import { jackValid, jackPlaceValid, DEFAULT_GEOMETRY, JACK_END_CENTRE, JACK_CENTRE_SHIFT } from './rules.js';
 import { coneFor, executeThrow, solveLaunch, styleForLoft, releaseFrom, fitToBudget, feltTerrain, roughness as roughnessOf, ROUGH_LOFT_FULL, ROUGH_LOFT_NONE } from './donnee.js';
 import { DEFAULT_CFG, DIFFICULTY, PROMOTE_DRAW, readSituation, plan, evalEnd, explain, skillOfPlayer, whoThrows, dropMargin } from './tactics.js';
 export { ROUGH_LOFT_FULL, ROUGH_LOFT_NONE };
@@ -39,7 +39,7 @@ export const AI = {
   tirShortClose: DEFAULT_CFG.tirShortClose, // a second, closer aim: the sims prefer it when the thrower is accurate (Hard)
   tirShort: DEFAULT_CFG.tirShort, // aim the donnée this far short of the target: lands, then rolls or hops into it (D16 sweep: 22 degrees, 0.5-0.7 m short moved the target most often)
   roughK: 1.0, // extra rolling resistance fraction the planner assumes for a roulette (see roughness())
-  jackTarget: 8, // m from circle for the jack throw
+  jackTarget: 8.4, // m from the circle CENTRE for the jack throw (F75: was 8; the legal centre range is now 6.265-10.265 m, shifted by 0.265; retuned so seeded flat-court AI jacks stay about 80% valid)
   minDonnee: 1.5, // m from the thrower
 };
 
@@ -465,13 +465,13 @@ export async function chooseThrowAsync(args) {
 // --- Jack throw ---------------------------------------------------------------------------
 
 // Tries a few lofts and distances, simulates each on the perceived terrain (with the player's cone) and keeps
-// the one that most often lands a legal jack (6-10 m, inside the lines).
+// the one that most often lands a legal jack (6-10 m edge to edge, inside the lines).
 export function chooseJackThrow({ world, difficulty = 'medium', rand, player, from: base = FROM, geometry } = {}) {
   const geo = { ...DEFAULT_GEOMETRY, circle: court.circle, dir: court.dir, ...geometry };
   const cc = geo.circle;
   const endDir = (geo.dir ?? 1) < 0 ? -1 : 1;
   const endY = endDir > 0 ? geo.length : 0;
-  const rollRoom = JACK_END_MARGIN + 0.8; // E20: aim this far in front of the end string (the jack rolls on)
+  const rollRoom = JACK_END_CENTRE + 0.8; // E20: aim this far in front of the end string (the jack rolls on)
   const nSims = Math.max(16, AI.sims[difficulty] ?? AI.sims.medium); // a legal jack matters on every level
   const skill = skillFor(player, difficulty);
   const perceived = world.terrain.perceived();
@@ -529,7 +529,7 @@ export function chooseJackThrow({ world, difficulty = 'medium', rand, player, fr
 const PLACE_TASTE = { marcel: { dist: 6.9, side: -0.35 }, odette: { dist: 8.6, side: 0.3 }, pierre: { dist: 8.0, side: 0.1 } };
 const PLACE_NOISE = { easy: 1, medium: 0.5, hard: 0.2 };
 
-// The AI places an invalid jack by hand: a valid spot (6-10 m, inside the lines) at a distance and side the
+// The AI places an invalid jack by hand: a valid spot (6-10 m edge to edge, inside the lines) at a distance and side the
 // placer likes, away from big rocks and slopes on the terrain it can see, with a little randomness.
 // Pure given `rand`. Returns { x, y, distance, label }.
 export function chooseJackPlacement({ match, player, difficulty = 'medium', rand = Math.random, terrain, attempt = 0 } = {}) {
@@ -544,9 +544,9 @@ export function chooseJackPlacement({ match, player, difficulty = 'medium', rand
   // E04: after a yellow card (`attempt` > 0) stay well inside the lines and off slopes, so the jack cannot roll out
   const margin = attempt > 0 ? 0.25 + 0.2 * attempt : 0;
   const slopeW = 6 * (1 + 2 * attempt);
-  const clear = (sp) => !margin || [[margin, 0], [-margin, 0], [0, margin], [0, -margin]].every(([ox, oy]) => jackPlaceValid({ x: sp.x + ox, y: sp.y + oy }, geometry) && Math.abs(Math.hypot(sp.x + ox - c.x, sp.y + oy - c.y) - 8) <= 2);
+  const clear = (sp) => !margin || [[margin, 0], [-margin, 0], [0, margin], [0, -margin]].every(([ox, oy]) => jackPlaceValid({ x: sp.x + ox, y: sp.y + oy }, geometry) && Math.abs(Math.hypot(sp.x + ox - c.x, sp.y + oy - c.y) - (8 + JACK_CENTRE_SHIFT)) <= 2);
   let best = null;
-  for (let d = C.jackMinDist + pad; d <= C.jackMaxDist - pad + 1e-9; d += 0.25) {
+  for (let d = C.jackMinDist + JACK_CENTRE_SHIFT + pad; d <= C.jackMaxDist + JACK_CENTRE_SHIFT - pad + 1e-9; d += 0.25) { // F75: centre distances (edge gap 6-10 m plus the shift)
     for (let dx = -1.9; dx <= 1.9 + 1e-9; dx += 0.2) { // full court width (D14)
       const x = c.x + dx, y = c.y + dir * Math.sqrt(Math.max(0, d * d - dx * dx));
       const spot = { x, y };
@@ -565,8 +565,8 @@ export function chooseJackPlacement({ match, player, difficulty = 'medium', rand
   if (!best) best = { x: c.x, y: c.y + 8 * dir, distance: 8 }; // unreachable with the default geometry
   const name = player ? player.name : 'The AI';
   return {
-    x: best.x, y: best.y, distance: best.distance,
-    label: `${name} places the cochonnet at ${best.distance.toFixed(1)} m`,
+    x: best.x, y: best.y, distance: best.distance - JACK_CENTRE_SHIFT,
+    label: `${name} places the cochonnet at ${(best.distance - JACK_CENTRE_SHIFT).toFixed(1)} m`,
   };
 }
 

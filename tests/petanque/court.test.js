@@ -24,13 +24,13 @@ test('nextCircle: placed around the jack, legal, direction flips, front of the r
         const n = nextCircle({ x, y }, dir);
         const p = n.placed, c = n.circle;
         assert.equal(n.dir, -dir);
-        assert.ok(p.x >= 1 && p.x <= 3 && p.y >= 1 && p.y <= 14, `placed legal ${JSON.stringify(p)}`);
-        if (x >= 1 && x <= 3) assert.ok(Math.hypot(p.x - x, p.y - y) <= JACK_TOL + 1e-9, 'placed around the jack');
-        assert.ok(c.x >= 1 && c.x <= 3 && c.y >= 1 && c.y <= 14, `final legal ${JSON.stringify(c)}`);
+        assert.ok(p.x >= 0 && p.x <= 4 && p.y >= 1 && p.y <= 14, `placed legal ${JSON.stringify(p)}`);
+        if (x >= 0 && x <= 4) assert.ok(Math.hypot(p.x - x, p.y - y) <= JACK_TOL + 1e-9, 'placed around the jack');
+        assert.ok(c.x >= 0 && c.x <= 4 && c.y >= 1 && c.y <= 14, `final legal ${JSON.stringify(c)}`);
         assert.ok(n.front >= FRONT_MIN - 1e-9, `front ${n.front}`);
         assert.equal(n.moved, c.y !== p.y);
         if (n.moved) {
-          assert.ok(Math.abs(n.front - FRONT_WANT) < 1e-9, 'corrected to 11 m');
+          assert.ok(Math.abs(n.front - FRONT_WANT) < 1e-9, 'corrected to FRONT_WANT');
           assert.ok((c.y - p.y) * n.dir < 0, 'moved backwards, away from the far string');
         }
       }
@@ -38,30 +38,30 @@ test('nextCircle: placed around the jack, legal, direction flips, front of the r
   }
 });
 
-test('nextCircle: a jack that finished 4 m from an end gets a ring with 11 m to the far string; plenty of room is left alone', () => {
+test('nextCircle: a jack that finished 4 m from an end gets a ring with FRONT_WANT to the far string; plenty of room is left alone', () => {
   const a = nextCircle({ x: 2.1, y: 4 }, 1); // the jack is 4 m from y = 0 and the next mène plays toward y = 0
   assert.equal(a.dir, -1);
   assert.ok(a.moved);
-  assert.ok(Math.abs(a.front - 11) < 1e-9);
+  assert.ok(Math.abs(a.front - FRONT_WANT) < 1e-9);
   assert.ok(a.circle.y > a.placed.y, 'moved back, away from y = 0');
   const a2 = nextCircle({ x: 2.1, y: 11 }, -1); // 4 m from y = 15, toward y = 15
   assert.equal(a2.dir, 1);
-  assert.ok(a2.moved && Math.abs(a2.front - 11) < 1e-9 && a2.circle.y < a2.placed.y);
+  assert.ok(a2.moved && Math.abs(a2.front - FRONT_WANT) < 1e-9 && a2.circle.y < a2.placed.y);
   const b = nextCircle({ x: 2.3, y: 11 }, 1); // toward y = 0 with 10.75 m from the front of the ring
   assert.equal(b.dir, -1);
   assert.ok(!b.moved);
   assert.deepEqual(b.circle, b.placed);
   assert.ok(Math.hypot(b.circle.x - 2.3, b.circle.y - 11) <= JACK_TOL);
-  const c = nextCircle({ x: 2, y: 10.2 }, 1); // 9.95 m: just short, so moved back to 11 m
-  assert.ok(c.moved && Math.abs(c.front - 11) < 1e-9);
+  const c = nextCircle({ x: 2, y: 10.2 }, 1); // 9.95 m: just short, so moved back to FRONT_WANT
+  assert.ok(c.moved && Math.abs(c.front - FRONT_WANT) < 1e-9);
 });
 
 test('nextCircle: jack in the margin or beyond the string clamps to legal ground', () => {
   const n = nextCircle({ x: -0.4, y: 14.8 }, 1);
-  assert.deepEqual([n.placed.x, n.placed.y], [1, 14]);
+  assert.deepEqual([n.placed.x, n.placed.y], [0, 14]);
   assert.equal(n.dir, -1);
   const m = nextCircle({ x: 5, y: 0.2 }, -1);
-  assert.deepEqual([m.placed.x, m.placed.y], [3, 1]);
+  assert.deepEqual([m.placed.x, m.placed.y], [4, 1]);
   assert.equal(m.dir, 1);
   assert.ok(nextCircle(null, 1).circle);
 });
@@ -107,7 +107,7 @@ test('rules geometry with a moved circle: jack distance and the end rule use the
   assert.ok(!jackValid({ x: 2, y: 16 }, geometry)); // 4 m behind, out
   assert.ok(jackValid({ x: 2, y: 2 }, geometry)); // 10 m, 2 m from the end string
   assert.ok(!jackValid({ x: 2, y: 0.4 }, geometry), 'within 0.5 m of the end string at y = 0');
-  assert.ok(jackValid({ x: 2, y: 0.6 }, { ...geometry, circle: { x: 2, y: 6.8 } }));
+  assert.ok(jackValid({ x: 2, y: 0.6 }, { ...geometry, circle: { x: 2, y: 6.9 } }));
   assert.equal(jackFault({ x: 2, y: 8 }, geometry).reason, 'short');
   assert.ok(jackPlaceValid({ x: 2, y: 5 }, geometry));
   // the same spot read with the default geometry (circle at y = 1, +y) is a different answer
@@ -162,8 +162,8 @@ test('chooseJackPlacement and jackValid read the same moved circle and flipped d
           const player = match.players.find((p) => p.id === id);
           const spot = chooseJackPlacement({ match, player, difficulty: 'medium', rand: mulberry32(attempt * 7 + id.length), terrain: flat(), attempt });
           const d = Math.hypot(spot.x - circle.x, spot.y - circle.y);
-          assert.ok(d >= 6 && d <= 10, `${id}: ${d} m from the circle ${JSON.stringify(circle)} dir ${dir}`);
-          assert.ok(Math.abs(d - spot.distance) < 1e-6);
+          assert.ok(d - 0.265 >= 6 - 1e-9 && d - 0.265 <= 10 + 1e-9, `${id}: ${d} m (edge ${d - 0.265}) from the circle ${JSON.stringify(circle)} dir ${dir}`);
+          assert.ok(Math.abs(d - 0.265 - spot.distance) < 1e-6, 'the reported distance is the edge gap');
           assert.ok((spot.y - circle.y) * dir > 0, 'in the playing direction');
           assert.ok(jackValid(spot, geometry) && jackPlaceValid(spot, geometry));
         }

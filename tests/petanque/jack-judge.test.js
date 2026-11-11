@@ -23,8 +23,9 @@ test('E08: for 300 seeded jack throws the judged position is the final one and t
     assert.ok(Math.hypot(b.x - judged.x, b.y - judged.y) < 1e-9, `throw ${i} still moving when judged`);
     const m = apply(createMatch({ firstJackTeam: 0 }), { type: 'jackThrown', team: 0, jack: judged });
     const d = Math.hypot(judged.x - C.circle.x, judged.y - C.circle.y);
-    const expectValid = !judged.dead && d >= 6 && d <= 10 && judged.x >= -0.015 && judged.x <= 4.015 && 15 - judged.y > 0.5;
-    assert.equal(jackValid(judged), expectValid, `throw ${i} at ${judged.x},${judged.y} d=${d}`);
+    const gap = d - C.circle.r - C.jack.r; // F75: edge to edge; the end margin is also tested at the jack's edge
+    const expectValid = !judged.dead && gap >= 6 && gap <= 10 && judged.x >= -0.015 && judged.x <= 4.015 && 15 - judged.y - C.jack.r > 0.5;
+    assert.equal(jackValid(judged), expectValid, `throw ${i} at ${judged.x},${judged.y} gap=${gap}`);
     assert.equal(m.phase, expectValid ? 'play' : 'jackPlace', `throw ${i}`);
     if (expectValid) valid++;
   }

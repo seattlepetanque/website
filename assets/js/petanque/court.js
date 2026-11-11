@@ -7,7 +7,10 @@ import { C } from './constants.js';
 export const CIRCLE_R = 0.25;
 export const DEFAULT_CIRCLE = Object.freeze({ x: 2, y: 1 });
 export const JACK_TOL = 0.25; // the last jack lies within this of the new circle's centre
-export const COURT_MARGIN = 1; // circle centre at least this far from the side strings and end lines
+export const COURT_MARGIN = 1; // circle centre at least this far from the end lines
+// F79: no margin from the side strings (the rule's 1 m is from obstacles; strings are not obstacles): the ring may touch or
+// straddle a string. Only its centre must stay on the court, which also keeps it clear of the timbers (C.lumberGap outside).
+export const SIDE_MARGIN = 0;
 
 export const court = {
   circle: { x: DEFAULT_CIRCLE.x, y: DEFAULT_CIRCLE.y, r: CIRCLE_R },
@@ -41,15 +44,21 @@ export const toLocal = (p, c = court.circle, dir = court.dir) => ({ along: (p.y 
 export const toWorld = (l, c = court.circle, dir = court.dir) => ({ x: c.x + l.across * dir, y: c.y + l.along * dir });
 
 // The circle for the next mène (pure), in two steps (E10, E28). 1) The ring is placed around `jack` (centre within
-// JACK_TOL of it, at least COURT_MARGIN from the side strings and end lines) and play is turned toward the other end.
+// JACK_TOL of it, at least COURT_MARGIN from the end lines, on the court sideways: SIDE_MARGIN, F79) and play is turned toward the other end.
 // 2) The front of the ring (its edge facing the playing direction) must have at least FRONT_MIN to the far string; if
-// not, the ring is moved straight back, away from the far string, until FRONT_WANT remain (still inside the margins).
+// not, the ring is moved straight back, away from the far string, until FRONT_WANT remain (still inside the end margins).
 // Returns { circle: {x, y, r} (the final one), placed: {x, y, r} (step 1), moved, dir, front (metres from the front of
 // the final ring to the far string) }.
-export const FRONT_MIN = 10;
-export const FRONT_WANT = 11;
+// F80: the front is derived from the legal throw range (edge to edge, F75). A jack thrown the full JACK_MAX gap lies with its
+// centre JACK_MAX + circle.r + jack.r from the ring's centre and must still be more than JACK_END_MARGIN (its edge) before the
+// end string, i.e. its centre at least JACK_END_MARGIN + jack.r before it. The ring's front edge is circle.r nearer the string
+// than its centre, so: front >= JACK_MAX + JACK_END_MARGIN + 2 * jack.r (10.53 m). FRONT_WANT adds a metre of slack.
+export const JACK_MAX_GAP = C.jackMaxDist;
+export const JACK_END_EDGE = 0.5; // = rules.js JACK_END_MARGIN (not imported: rules.js imports this file; a test pins them equal)
+export const FRONT_MIN = JACK_MAX_GAP + JACK_END_EDGE + 2 * C.jack.r;
+export const FRONT_WANT = FRONT_MIN + 1;
 export function nextCircle(jack, dir = 1, { width = C.terrainW, length = C.terrainL } = {}) {
-  const lo = { x: COURT_MARGIN, y: COURT_MARGIN }, hi = { x: width - COURT_MARGIN, y: length - COURT_MARGIN };
+  const lo = { x: SIDE_MARGIN, y: COURT_MARGIN }, hi = { x: width - SIDE_MARGIN, y: length - COURT_MARGIN };
   const cl = (v, a, b) => Math.max(a, Math.min(b, v));
   const j = jack && Number.isFinite(jack.x) && Number.isFinite(jack.y) ? jack : DEFAULT_CIRCLE;
   const nd = dir > 0 ? -1 : 1;
