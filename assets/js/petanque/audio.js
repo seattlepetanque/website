@@ -457,6 +457,28 @@ export function createAudio(opts = {}) {
     try { click(ctx.currentTime + 0.005, SOUND.carreauAccent, 1); } catch (e) { /* ignore */ }
   }
 
+  // F61: a short synthesized fanfare for the CARREAU / BIBERON overlay (a rising arpeggio with a glittering top). Respects mute.
+  function fanfare(kind) {
+    if (!ctx || muted || held || ctx.state !== 'running') return;
+    try {
+      const t0 = ctx.currentTime + 0.02;
+      const notes = kind === 'carreau' ? [523.25, 659.25, 783.99, 1046.5] : [440, 554.37, 659.25, 880];
+      notes.forEach((f, i) => {
+        const t = t0 + i * 0.075;
+        const o = ctx.createOscillator();
+        o.type = 'triangle';
+        o.frequency.value = f;
+        o.connect(envGain(t, 0.14, 0.38, 0.01)).connect(master);
+        o.start(t); o.stop(t + 0.42);
+        const s = ctx.createOscillator(); // octave sparkle
+        s.type = 'sine';
+        s.frequency.value = f * 2;
+        s.connect(envGain(t, 0.05, 0.25, 0.005)).connect(master);
+        s.start(t); s.stop(t + 0.3);
+      });
+    } catch (e) { /* ignore */ }
+  }
+
   // Audition entry point. Ignores mute (explicit user action) but needs unlock().
   // names: land {speed}, jackLand {speed}, jackHit {speed}, roll {kind, speed, dur, decay},
   //        graze, direct, carreau, hit {speed, rel}
@@ -531,5 +553,5 @@ export function createAudio(opts = {}) {
     return btn;
   }
 
-  return { unlock, setPaused, handleEvents, update, accent, play, setMuted, isMuted, setAmbience, playAmbient, setEngine, createMuteButton };
+  return { unlock, setPaused, handleEvents, update, accent, fanfare, play, setMuted, isMuted, setAmbience, playAmbient, setEngine, createMuteButton };
 }

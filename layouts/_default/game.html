@@ -1,4 +1,8 @@
 {{ define "head" }}
+{{- /* F61: display font for the CARREAU / BIBERON overlay, game page only; only the glyphs it needs. CSS has a heavy fallback. */}}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik+Glitch&display=swap&text=CARUBIONT%20!">
 {{- with resources.Get "css/game.css" | minify | fingerprint }}
 <link rel="stylesheet" href="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}">
 {{- end }}

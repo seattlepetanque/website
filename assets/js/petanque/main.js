@@ -10,6 +10,8 @@ import { createRenderer } from './render.js';
 import {
   createMatch, defaultPlayers, teamNamesFor, validPartner, opponentIds, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm, deadJackText,
 } from './rules.js';
+import { detectAnnouncement } from './announce.js';
+import { createAnnouncer } from './announce-view.js';
 import { createHud, createHoldIcons } from './hud.js';
 import { settings } from './settings.js';
 import { chooseThrowAsync, chooseJackThrow, chooseJackPlacement, whoThrows } from './ai.js';
@@ -158,6 +160,13 @@ function boot() {
   const KEEP_YAW = 35 * DEG; // E12 (see setAdjust); the pan limits live in camera.js (VIEW_PAN, F48)
   let adjusting = false, viewAnim = 0;
   const audio = createAudio();
+  const announcer = createAnnouncer(root, { audio }); // F61
+  if (debug && ['carreau', 'biberon'].includes(params.get('announce'))) { // ?debug&announce=carreau|biberon: preview at page load, and again every 4 s
+    const kind = params.get('announce');
+    const go = () => announcer.show(kind, { force: true, still: params.has('still') });
+    setTimeout(go, 600);
+    if (!params.has('once')) setInterval(go, 4000);
+  }
   let thinkToken = 0; // bumped to drop stale partner-suggestion results
   let pierreChoice = null; // cached AI choice for Pierre while the chooser is open
   const pickHuman = params.get('humanturn'); // debug: stop at the human's first boule (or 'chooser')
@@ -2033,6 +2042,12 @@ function boot() {
     if (instant) markLandings(world.events);
     const snap = snapshot();
     const note = describe(was, evs);
+    if (was.kind === 'boule' && !instant) { // F61: CARREAU / BIBERON overlay (the sim keeps running)
+      try {
+        const kind = detectAnnouncement({ before: preThrow, bodies: world.bodies, shooterId: was.id, events: evs });
+        if (kind) announcer.show(kind);
+      } catch (err) { console.error('[announce]', err); }
+    }
     if (was.kind === 'jack') {
       const team = match.jackTeam;
       match = apply(match, { type: 'jackThrown', team, jack: snap.jack });
