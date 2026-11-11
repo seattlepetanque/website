@@ -22,7 +22,7 @@ import { createClock } from './clock.js';
 import * as THREE from '../vendor/three.module.js';
 import { createCharacter, releaseOffset, bendReach } from './character.js';
 import { planRoute, standPoint, pathLength } from './fetch.js';
-import { ringBlockers, ringGate, meneEndReady, atPlaces, steer, planGoals, BLOCK_FADE_S } from './crowd.js';
+import { meneEndReady, atPlaces, steer, planGoals, BLOCK_FADE_S } from './crowd.js';
 import { pickWaitingSlot, waitingSlots } from './waiting.js';
 import { attachModels } from './models.js';
 import { createGroundView } from './groundview.js';
@@ -1425,8 +1425,8 @@ function boot() {
     const g = apply(match, { type: 'nextMene' }).geometry;
     return { x: g.circle.x, y: g.circle.y };
   }
-  // The holder walks the ring to `to` and DROPS it (F53: it never waits for people, only for a boule lying in it, which is soon carried away;
-  // a click or key skips, and after RING_WAIT_MAX s it goes down anyway). The holder is free for their own boules after that.
+  // The holder walks the ring to `to` and DROPS it as soon as they arrive (nothing is waited for: boules are already in hands after Next).
+  // A click or key skips. The holder is free for their own boules after that.
   const RING_BOUNCE_T = 0.14; // s: the ring's one small bounce after it lands
   async function setRingDown(job, id, t, to) {
     const ch = cast.get(id), r = reachOf(ch);
@@ -1441,9 +1441,6 @@ function boot() {
     try {
       if (!ringCarry) { ringCarry = id; ch.setCarrying(true); followRing(); }
       await walkVia(job, id, { x: to.x - r.x, y: to.y - r.y, yaw: 0 });
-      if (t !== token) { ringCarry = null; renderer.setRingPose(null); return; }
-      let waited = 0;
-      while (!ringSkip && t === token && ringGate(ringBlockersAt(to, id), waited) === 'wait') { await sleep(200); waited += 0.2; }
       if (t !== token) { ringCarry = null; renderer.setRingPose(null); return; }
       if (ringSkip) { finish(); return; }
       // F53: the ring is dropped, not set down: the hand lets go over the spot and it falls flat with a small bounce (no leaning down)
@@ -1461,9 +1458,6 @@ function boot() {
       if (ringSkip && ringCarry) finish();
     } finally { ringCarry = null; ringSkipFn = null; ringHolder = null; }
   }
-  const ringBlockersAt = (spot, holder) => ringBlockers(spot,
-    world.bodies.filter((b) => b.kind === 'boule' && !b.dead && !(carry && carry.body === b)).map((b) => ({ id: b.id, x: b.x, y: b.y, r: b.r })),
-    [...cast.keys()].map((k) => { const q = cast.get(k).root.position; return { id: k, x: q.x, y: q.y }; }), holder);
   function markRingDown() { ringPlaced = true; if (collect && collect.plan) collect.plan.ringDown = true; } // F15: the next jack thrower may walk to the circle
   function dropDead(body, slot) { // set a dead ball down in the row (or its jack spot): out of play, nobody's
     const s = slot || (body.kind === 'jack' ? deadJackSpot() : deadRowSlot(rowCount()));

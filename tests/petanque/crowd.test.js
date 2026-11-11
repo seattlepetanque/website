@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { steer, stepAgents, planGoals, MIN_GAP } from '../../assets/js/petanque/crowd.js';
+import { steer, stepAgents, planGoals, meneEndReady, MIN_GAP } from '../../assets/js/petanque/crowd.js';
 import { createMatch, defaultPlayers, apply } from '../../assets/js/petanque/rules.js';
 import { court, setCourt, resetCourt } from '../../assets/js/petanque/court.js';
 import { waitingSlots } from '../../assets/js/petanque/waiting.js';
@@ -57,35 +57,6 @@ test('F15: the next circle and waiting slots are known from the mène result, be
   assert.deepEqual(plan.slots, after, 'the same slots as after the court moves');
   assert.ok(plan.thrower && next.players.some((p) => p.id === plan.thrower && p.team === next.jackTeam));
   resetCourt();
-});
-
-import { ringBlockers, ringGate, meneEndReady, RING_R, RING_WAIT_MAX, COLLECT_TIMEOUT } from '../../assets/js/petanque/crowd.js';
-import { CIRCLE_R } from '../../assets/js/petanque/court.js';
-
-test('F51: ring radius matches the court circle and the wait outlasts the collect fallback', () => {
-  assert.equal(RING_R, CIRCLE_R);
-  assert.ok(RING_WAIT_MAX > COLLECT_TIMEOUT);
-});
-
-test('F51/F53: ringBlockers finds boules in the ring, never people, not far things', () => {
-  const spot = { x: 3, y: 10 };
-  const clear = ringBlockers(spot, [{ id: 'a', x: 3.8, y: 10 }], [{ id: 'p', x: 4, y: 10 }, { id: 'h', x: 3, y: 10.1 }], 'h');
-  assert.deepEqual(clear, { boules: [], people: [], clear: true });
-  const bad = ringBlockers(spot, [{ id: 'in', x: 3.1, y: 10.1 }, { id: 'edge', x: 3.4, y: 10 }, { id: 'far', x: 3.9, y: 10 }], [{ id: 'p', x: 3.3, y: 10.2 }], 'h');
-  assert.deepEqual(bad.boules, ['in', 'edge']);
-  assert.deepEqual(bad.people, [], 'F53: the ring never waits for people');
-  assert.equal(bad.clear, false);
-  const onlyPeople = ringBlockers(spot, [], [{ id: 'p', x: 3, y: 10 }, { id: 'q', x: 3.05, y: 10.05 }], 'h');
-  assert.equal(onlyPeople.clear, true, 'people standing on the spot do not hold the ring');
-});
-
-test('F51: ringGate waits while blocked, goes when clear, forces after the wait or a skip', () => {
-  const blocked = { boules: ['x'], people: [], clear: false }, clear = { boules: [], people: [], clear: true };
-  assert.equal(ringGate(clear, 0), 'go');
-  assert.equal(ringGate(blocked, 0), 'wait');
-  assert.equal(ringGate(blocked, RING_WAIT_MAX - 0.1), 'wait');
-  assert.equal(ringGate(blocked, RING_WAIT_MAX), 'force');
-  assert.equal(ringGate(blocked, 0, { skipped: true }), 'force');
 });
 
 test('F51: the next mène needs both the ring down and everybody at their place', () => {

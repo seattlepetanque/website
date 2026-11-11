@@ -2,7 +2,7 @@
 //
 // `steer` gives one walker's velocity (a unit vector scaled 0..1) for this step: seek the target, be pushed sideways
 // (and a little away) by anybody within SEP_R, and slow to a stop behind anybody directly ahead. F60: after the result the boules
-// go into their owners' hands at once, the ring holder drops the ring, and everybody else walks to their
+// go into their owners' hands at once, the ring holder drops the ring on arrival, and everybody else walks to their
 // next-mene place (`planGoals`); the next mene starts when the ring is down and everybody is at a place (`meneEndReady`, `atPlaces`).
 
 import { waitingSlots } from './waiting.js';
@@ -11,10 +11,7 @@ export const SEP_R = 0.8; // m: others closer than this push a walker sideways
 export const MIN_GAP = 0.5; // m: walkers try never to come closer than this
 export const AHEAD_R = 1.3; // m: how far ahead a walker looks for somebody in the way
 export const BLOCK_FADE_S = 2; // s blocked on the way to the goal before a walker fades to it
-export const COLLECT_TIMEOUT = 14; // s: the ring holder waits this long (plus 4) at the spot before setting the ring down anyway
-export const BOULE_R = 0.0375;
 export const AT_PLACE = 0.6; // m: a player this close to their place is at it
-export const RING_R = 0.25; // m: the circle's radius (court.js CIRCLE_R; a test keeps them equal)
 
 
 // me, target: { x, y }; others: [{ x, y }] (everybody else, still or walking). -> { vx, vy, scale, blocked }
@@ -87,29 +84,9 @@ export function atPlaces(positions, places, tol = AT_PLACE) {
 
 // ---------------------------------------------------------------------------------------------------------------------
 // F51: at the end of a mène the ring is carried to its next spot while every player collects their boules. The spot is known
-// as soon as the result is (nextCircle), so the holder walks straight there; the ring goes down only when nothing lies in it
-// and nobody stands on it, and the next mène starts when the ring is down AND the collecting is over. Pure decisions here;
-// main.js runs the walks.
+// as soon as the result is (nextCircle), so the holder walks straight there and drops it; the next mène starts when the ring
+// is down AND the collecting is over. Pure decisions here; main.js runs the walks.
 // ---------------------------------------------------------------------------------------------------------------------
-export const RING_BOULE_CLEAR = 0.15; // m: a boule this much (edge to edge) outside the ring does not stop it going down
-export const RING_PERSON_CLEAR = 0; // m: F53: the ring never waits for people (it is dropped flat); only a boule in it stops it. > 0 brings the old person check back
-export const RING_WAIT_MAX = COLLECT_TIMEOUT + 4; // s the holder waits at the spot before putting it down anyway (the fallback has emptied the court by then)
-
-// What stops the ring being set down at `spot`: live boules (not the jack) lying in or against it, people other than the holder
-// standing on it. boules: [{ id, x, y, r? }]; people: [{ id, x, y }].
-// -> { boules: [id], people: [id], clear: boolean }
-export function ringBlockers(spot, boules = [], people = [], holder = null, { ringR = RING_R, bouleClear = RING_BOULE_CLEAR, personClear = RING_PERSON_CLEAR } = {}) {
-  const bs = boules.filter((b) => Math.hypot(b.x - spot.x, b.y - spot.y) < ringR + (b.r ?? BOULE_R) + bouleClear).map((b) => b.id);
-  const ps = personClear <= 0 ? [] : people.filter((p) => p.id !== holder && Math.hypot(p.x - spot.x, p.y - spot.y) < personClear).map((p) => p.id);
-  return { boules: bs, people: ps, clear: !bs.length && !ps.length };
-}
-
-// The holder is at the spot with the ring: 'go' (put it down), 'wait' (something is in it) or 'force' (waited too long, or skipped).
-export function ringGate(blockers, waited, { max = RING_WAIT_MAX, skipped = false } = {}) {
-  if (skipped) return 'force';
-  if (blockers.clear) return 'go';
-  return waited >= max ? 'force' : 'wait';
-}
 
 // The next mène may start (nextMene) when the ring is down and everybody is at their place (a skip puts everybody there at once).
 export const meneEndReady = ({ ringDown, collectDone }) => !!ringDown && !!collectDone;
