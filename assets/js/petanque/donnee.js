@@ -181,7 +181,7 @@ export const SKILL = Object.freeze({
 // The one difficulty scaling: multiplies an AI's lat/long/loft sigmas. D02 set 2.3 / 1.35 / 0.65; D22's balance runs
 // against the scripted pointer added x0.85 / x1.4 / x2.0 on top (tactics.js), folded in here: 1.955 / 1.89 / 1.3.
 // F23 re-measured with a stronger Pierre (win rate of the scripted pointer + Pierre): 3.0 / 1.6 / 1.3.
-export const difficultyScale = { easy: 3.0, medium: 1.6, hard: 1.3 }; // F23 (was 1.95 / 1.9 / 1.3) // plain object: tests pin the D02 values (see ai.test.js)
+export const difficultyScale = { easy: 3.4, medium: 1.6, hard: 1.3 }; // F23 (was 1.95 / 1.9 / 1.3; easy 3.0 -> 3.4) // plain object: tests pin the D02 values (see ai.test.js)
 const LONG_GROWTH = 1.85; // longitudinal sigma at LOFT_MAX relative to LOFT_MIN
 const LAT_GROWTH = 1.25; // lateral sigma at LOFT_MAX relative to LOFT_MIN
 // Near-max throws are less accurate: both sigmas are multiplied by 1 + ENERGY_K * max(0, energyFrac - ENERGY_KNEE)^2
