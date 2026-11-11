@@ -161,8 +161,8 @@ function boot() {
   let pierreChoice = null; // cached AI choice for Pierre while the chooser is open
   const pickHuman = params.get('humanturn'); // debug: stop at the human's first boule (or 'chooser')
 
-  // Controls (F32): a hamburger menu (Mode, TEMP demo buttons) top right; F48 hold-to-use view icons (pan, read the ground, overhead) under it; speaker,
-  // fullscreen and pause icons bottom right; Resume / New game / End game on the paused bar; no raw sliders
+  // Controls (F32): F48 hold-to-use view icons (pan, read the ground, overhead) top right; speaker,
+  // fullscreen and pause icons bottom right; Resume / New game / End game and the Mode (Slow / Quick) choice on the paused card; no raw sliders
   controls.textContent = '';
   const mkBtn = (parent, text, cls) => {
     const b = document.createElement('button');
@@ -170,8 +170,6 @@ function boot() {
     parent.append(b);
     return b;
   };
-  const bar = document.createElement('div');
-  bar.className = 'pc-bar';
   // F05 "Read the ground": slope arrows and a firmness wash, human turn only, shown while its icon is held (F48), can be disabled in settings
   const gv = createGroundView(terrain, { phone: isPhone(), reduced: () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) });
   renderer.addObject(gv.object);
@@ -181,71 +179,6 @@ function boot() {
     gv.setVisible(avail && gvOn);
     gv.update(dt);
   };
-  const modeBtn = mkBtn(bar, '', 'pc-mode'); // E01: Quick / Slow
-  const syncModeBtn = () => {
-    modeBtn.textContent = 'Mode: ' + (settings.mode === 'quick' ? 'Quick' : 'Slow');
-    modeBtn.title = 'Quick: no walking. Slow: people walk. Click to switch.';
-  };
-  syncModeBtn();
-  modeBtn.addEventListener('click', () => { settings.mode = settings.mode === 'quick' ? 'slow' : 'quick'; });
-  settings.onChange(syncModeBtn);
-  // TEMP F29: remove after review. Floatplane landing on demand, in the background with no camera change.
-  const landingBtn = mkBtn(bar, '✈ Landing', 'pc-landing');
-  landingBtn.setAttribute('aria-label', 'Start a floatplane landing');
-  landingBtn.title = 'Watch the floatplane come in to land (temporary)';
-  landingBtn.addEventListener('click', () => {
-    const fp = renderer.floatplane;
-    if (fp.active) return; // one plane at a time
-    fp.trigger('landing');
-  });
-  // END TEMP F29
-  // TEMP F36: remove after review. Floatplane takeoff from the lake on demand, ambient like the landing button.
-  const takeoffBtn = mkBtn(bar, '✈ Takeoff', 'pc-takeoff');
-  takeoffBtn.setAttribute('aria-label', 'Start a floatplane takeoff');
-  takeoffBtn.title = 'Watch the floatplane take off from the lake (temporary)';
-  takeoffBtn.addEventListener('click', () => {
-    const fp = renderer.floatplane;
-    if (fp.active) return; // one plane at a time
-    fp.trigger('takeoff');
-  });
-  // END TEMP F36
-  // F32 hamburger menu: every option button (Mode, the demo buttons; built above straight into the bar) moves into one dropdown. Enter, Space,
-  // click or ArrowDown opens it; arrows, Home and End move; Esc or Tab close it (Esc returns focus to the button);
-  // an outside press closes it.
-  const menuPanel = document.createElement('div');
-  menuPanel.className = 'pc-menu'; menuPanel.id = 'pc-menu'; menuPanel.setAttribute('role', 'menu'); menuPanel.setAttribute('aria-label', 'Game options');
-  menuPanel.hidden = true;
-  const menuItems = [...bar.querySelectorAll(':scope > button')];
-  const STAY_OPEN = new Set([modeBtn]); // the others close the menu so the court is clear
-  for (const it of menuItems) { it.setAttribute('role', 'menuitem'); it.tabIndex = -1; it.classList.add('pc-menu-item'); }
-  menuPanel.append(...menuItems);
-  const menuBtn = mkBtn(bar, '', 'pc-menu-btn');
-  menuBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
-  menuBtn.setAttribute('aria-label', 'Game options'); menuBtn.title = 'Game options';
-  menuBtn.setAttribute('aria-haspopup', 'menu'); menuBtn.setAttribute('aria-expanded', 'false'); menuBtn.setAttribute('aria-controls', 'pc-menu');
-  bar.append(menuPanel);
-  const liveItems = () => menuItems.filter((n) => !n.hidden && !n.disabled);
-  function setMenu(open, focus) {
-    menuPanel.hidden = !open;
-    menuBtn.setAttribute('aria-expanded', String(open));
-    if (open) { const f = liveItems(); if (focus === 'last') f[f.length - 1]?.focus(); else f[0]?.focus(); }
-    else if (focus === 'button') menuBtn.focus();
-  }
-  menuBtn.addEventListener('click', () => setMenu(menuPanel.hidden, menuPanel.hidden ? 'first' : 'button'));
-  menuBtn.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setMenu(true, 'first'); } else if (e.key === 'ArrowUp') { e.preventDefault(); setMenu(true, 'last'); }
-  });
-  menuPanel.addEventListener('keydown', (e) => {
-    const f = liveItems(), i = f.indexOf(document.activeElement);
-    if (e.key === 'Escape') { e.preventDefault(); setMenu(false, 'button'); } // preventDefault keeps Esc from also pausing
-    else if (e.key === 'Tab') setMenu(false);
-    else if (e.key === 'ArrowDown') { e.preventDefault(); f[(i + 1) % f.length]?.focus(); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); f[(i - 1 + f.length) % f.length]?.focus(); }
-    else if (e.key === 'Home') { e.preventDefault(); f[0]?.focus(); }
-    else if (e.key === 'End') { e.preventDefault(); f[f.length - 1]?.focus(); }
-  });
-  menuPanel.addEventListener('click', (e) => { const it = e.target.closest('.pc-menu-item'); if (it && !STAY_OPEN.has(it)) setMenu(false, 'button'); });
-  document.addEventListener('pointerdown', (e) => { if (!menuPanel.hidden && !bar.contains(e.target)) setMenu(false); });
   // E14/F32: the bottom-right icon cluster holds the speaker (mute), the fullscreen toggle (desktop only) and pause
   const corner = document.createElement('div');
   corner.className = 'pc-corner';
@@ -259,7 +192,7 @@ function boot() {
   exitBtn.title = 'Pause (Esc)';
   corner.append(muteBtn, fsBtn, exitBtn);
   root.append(corner);
-  // F48: Adjust view, Read the ground and View (overhead) are translucent press-and-hold icons under the hamburger button.
+  // F48: Adjust view, Read the ground and View (overhead) are translucent press-and-hold icons at the top right.
   const holdSvg = (inner) => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
   const holds = createHoldIcons([
     { cls: 'pc-pan', label: 'Adjust view: hold to pan up, down, left or right', title: 'Hold the arrows to look around the thrower (or hold Space, then use the arrow keys)',
@@ -275,7 +208,6 @@ function boot() {
   root.append(holds.el);
   holds.buttons[1].hidden = !settings.groundView; // the hidden kill switch for slow devices (localStorage petanque-groundview=off)
   root.append(gv.legend);
-  controls.append(bar);
   if (debug && params.has('sounds')) {
     // ?debug&sounds panel sits in a collapsible drawer: below the game on the page, an overlay while playing
     const drawer = document.createElement('details');
@@ -1106,12 +1038,12 @@ function boot() {
     else tryFullscreen();
   });
   exitBtn.hidden = true;
-  function pauseGame() { if (!playing || !match || userPaused) return; setMenu(false); userPaused = true; syncPausedUI(); }
+  function pauseGame() { if (!playing || !match || userPaused) return; userPaused = true; syncPausedUI(); }
   function resumeGame() { userPaused = false; if (playing) { syncPausedUI(); if (exitBtn.offsetParent) exitBtn.focus(); } else setPlaying(true); }
   function endGame() { userPaused = false; setPlaying(false); } // leaves the full-window view; the page keeps Resume and New game
   exitBtn.addEventListener('click', pauseGame);
   window.addEventListener('keydown', (e) => {
-    // Esc pauses (and resumes while paused), unless the browser is in fullscreen (it handles that Esc) or a menu or toss used the key
+    // Esc pauses (and resumes while paused), unless the browser is in fullscreen (it handles that Esc) or a toss used the key
     if (e.key !== 'Escape' || !playing || e.defaultPrevented || document.fullscreenElement) return;
     if (userPaused) resumeGame(); else pauseGame();
   });
@@ -1707,8 +1639,11 @@ function boot() {
     gateSince = 0;
   }
   // E01: switching to quick mid-game finishes any walk in progress at once (switching to slow starts at the next action)
-  settings.onChange((m) => {
-    if (m !== 'quick' || !match) return;
+  // F32: the Mode choice lives on the pause card; switching to quick while paused is applied on Resume (the cast is frozen meanwhile)
+  let quickPending = false;
+  function applyQuick() {
+    quickPending = false;
+    if (!match) return;
     if (placing) skipPlacement();
     const fj = fetchJob, jf = jackFetch;
     if (fj) { cancelFetch(); if (!fj.jack || !jf) sendHome(fj.id); }
@@ -1718,7 +1653,8 @@ function boot() {
     if (deadTargets().length) dropAllDead();
     for (const [id, ch] of cast) if (id !== inCircle && ch.busy && !(carry && carry.id === id)) sendHome(id);
     gateSince = 0;
-  });
+  }
+  settings.onChange((m) => { if (m !== 'quick') { quickPending = false; return; } if (isPaused()) quickPending = true; else applyQuick(); });
   const skipEvent = (ev) => {
     if (holdSim && !isPaused() && (ev.type === 'pointerdown' || ev.key === 'Enter' || ev.key === ' ')) { nextMene(); return; } // F56: a click or key at the outcome view is Next
     if (isPaused()) return; // a drag to orbit the paused scene (or Esc) is not a skip
@@ -2180,9 +2116,9 @@ function boot() {
       const card = root.querySelector('.pt-overlay.pt-mene-end .pt-card');
       // F62: measured from the DOM now and on every resize: the top score bar, the card, and the right-hand icon cluster
       const vis = (n) => { const r = n.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(n).visibility !== 'hidden' ? rel(r) : null; };
-      const bars = [...root.querySelectorAll('.pt-board, .pc-bar')].map(vis).filter(Boolean);
+      const bars = [...root.querySelectorAll('.pt-board')].map(vis).filter(Boolean);
       const cr = card ? rel(card.getBoundingClientRect()) : null;
-      const icons = [...root.querySelectorAll('button, .pc-corner')].filter((n) => !(card && card.contains(n)) && !n.closest('.pc-menu, .pt-overlay')).map(vis).filter(Boolean);
+      const icons = [...root.querySelectorAll('button, .pc-corner')].filter((n) => !(card && card.contains(n)) && !n.closest('.pt-overlay, .pt-paused')).map(vis).filter(Boolean);
       const free = freeViewRect({ W: cv.width, H: cv.height, bars, card: cr, icons });
       return { free, card: cr };
     });
@@ -2384,7 +2320,6 @@ function boot() {
   // later), physics, characters, camera transitions and audio; the scene goes sepia with a free orbit camera, and the
   // game widgets (not the page's paused bar) go sepia and inert. ?debug&paused holds off until the human's turn.
   let pauseHold = debug && params.has('paused');
-  if (debug && params.has('menu')) setTimeout(() => setMenu(true), 2500); // ?debug&play&humanturn&menu: screenshot with the options menu open
   const isPaused = () => !pauseHold && (!playing || userPaused) && !!match;
   let pausedNow = false, tossPhase = 'off', pausedTok = 0;
   function syncPause() {
@@ -2396,6 +2331,7 @@ function boot() {
     if (p) { clock.pause(); pausedTok = token; tossPhase = toss.getPhase() === 'toss' ? 'aim' : toss.getPhase(); toss.setPhase('off'); } else { if (!holdSim) clock.resume(); toss.setPhase(pausedTok === token ? tossPhase : 'off'); } // a New game while paused leaves the toss off
     audio.setPaused(p);
     renderer.setPaused(p);
+    if (!p && quickPending && settings.mode === 'quick') applyQuick();
   }
 
   // Fixed timestep loop (?debug&timerframes drives it from timers, for headless screenshots under virtual time)
@@ -2439,10 +2375,11 @@ function boot() {
     syncGv(pausedNow ? 0 : dt);
     { // F19: the floatplane keeps game time (none while paused or between games) and feeds its engine to the ambience
       const fp = renderer.floatplane;
-      // F37: random planes are scheduled in slow mode only (quick mode: none). The demo buttons trigger directly, in either mode.
+      // F37: random planes are scheduled in slow mode only (quick mode: none).
       fp.schedule(match && !pausedNow && playing ? dt : 0, match, reduceMotion() || settings.mode !== 'slow');
       const en = fp.engine;
       audio.setAmbientState({ busy: !!(pending || flying), slow: settings.mode !== 'quick' });
+      renderer.butterflies.busy = !!(pending || flying); // F81
       audio.setEngine(en.on && !pausedNow, en.level, en.pan, en.rev, en.dist);
     }
     renderer.setDaylight(goldenParam !== null ? goldenParam : reduceMotion() ? REDUCED_PROGRESS : golden.step(match, pausedNow || !playing ? 0 : dt)); // F71

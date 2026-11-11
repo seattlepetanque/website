@@ -482,7 +482,7 @@ export const SCORING_FIT = Object.freeze({
 });
 
 // The free rectangle {l,t,r,b} of a W x H viewport. bars: wide HUD rects at the top (score board); card: the result card
-// rect at the bottom (or null); icons: small controls hugging the right edge (hamburger column, bottom-right buttons). All rects {l,t,r,b}.
+// rect at the bottom (or null); icons: small controls hugging the right edge (hold-icon column at the top, bottom-right buttons). All rects {l,t,r,b}.
 export function freeViewRect({ W, H, bars = [], card = null, icons = [], gap = 8 } = {}) {
   const f = { l: 0, t: 0, r: W, b: H };
   for (const q of bars) if (q.b > q.t && q.t < H * 0.4 && q.r - q.l > W * 0.3) f.t = Math.max(f.t, q.b + gap);

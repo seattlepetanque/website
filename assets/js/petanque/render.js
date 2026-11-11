@@ -1709,7 +1709,7 @@ export function createRenderer(canvas, terrain) {
     if (!reduce()) lake.update(dt);
     floatplane.update(dt, camera, reduce());
     sailboats.update(dt, reduce(), floatplane, edgeZ); // F64
-    butterflies.update(dt, reduce()); // F67
+    butterflies.update(dt, reduce(), butterflies.busy); // F67, F81
     clouds.update(dt, reduce()); // F68
     updatePreview();
     updateJackMark(dt);
@@ -1741,5 +1741,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { setDaylight, sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  return { butterflies, setDaylight, sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
 }

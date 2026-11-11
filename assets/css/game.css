@@ -41,9 +41,6 @@
   color: var(--red, #8a1c2b); background: transparent; border: 2px solid var(--red, #8a1c2b); border-radius: 4px;
 }
 .pc-bar button[hidden] { display: none; }
-/* F32: the options live in a hamburger menu; on the normal page (before a game, or after End game) the bar is not shown */
-.pc-bar:not(.pc-sounds) { display: none; }
-.pc-menu[hidden] { display: none; }
 .pc-bar button.is-on { color: var(--paper, #fffaf0); background: var(--red, #8a1c2b); }
 .pc-bar button:focus-visible { outline: 3px solid var(--navy, #14284b); outline-offset: 2px; }
 .petanque-controls { display: grid; gap: .75rem; }
@@ -158,11 +155,11 @@
 .pc-debug > summary { cursor: pointer; font-weight: 700; min-height: 1.75rem; }
 .pc-debug > summary:focus-visible { outline: 3px solid var(--navy, #14284b); outline-offset: 2px; }
 .pc-corner { display: none; }
-.pc-corner button, .pc-bar .pc-menu-btn {
+.pc-corner button {
   display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem; padding: 0; cursor: pointer;
   color: var(--red, #8a1c2b); background: var(--paper, #fffaf0); border: 1px solid var(--red, #8a1c2b); border-radius: 4px;
 }
-.pc-corner button svg, .pc-bar .pc-menu-btn svg { width: 1.25rem; height: 1.25rem; display: block; }
+.pc-corner button svg { width: 1.25rem; height: 1.25rem; display: block; }
 .pc-corner button[hidden] { display: none; }
 .pc-corner button:focus-visible { outline: 3px solid var(--navy, #14284b); outline-offset: 2px; }
 
@@ -186,7 +183,7 @@ html.petanque-playing main { overflow: visible; }
 .petanque.is-playing canvas { position: absolute; inset: 0; width: 100%; height: 100%; aspect-ratio: auto; z-index: 0; }
 .petanque.is-playing .petanque-hud, .petanque.is-playing .petanque-controls { display: contents; }
 .petanque.is-playing .pt-paused[hidden] { display: none; }
-/* F32: paused in the full-window view: Resume / New game / End game in a card centred on the court (End game only
+/* F32: paused in the full-window view: Resume / New game / End game and the Mode choice in a card centred on the court (End game only
    makes sense here; on the page the view has already been left) */
 .petanque:not(.is-playing) .pt-paused-end { display: none; }
 .petanque.is-playing .pt-paused {
@@ -195,6 +192,8 @@ html.petanque-playing main { overflow: visible; }
   background: var(--paper, #fffaf0); box-shadow: 0 .4rem 1.4rem rgba(0, 0, 0, .35);
 }
 .petanque.is-playing .pt-paused-text { flex: 1 1 100%; text-align: center; font-size: 1.1rem; }
+.pt-paused-modes { flex: 1 1 100%; justify-content: center; margin: 0; }
+.pt-paused-modes .pt-legend { flex: 0 0 auto; }
 
 /* scoreboard bar */
 .petanque.is-playing .pt-board {
@@ -214,22 +213,6 @@ html.petanque-playing main { overflow: visible; }
 .petanque.is-playing .pt-dot { width: .55rem; height: .55rem; border-width: 1.5px; }
 .petanque.is-playing .pt-mene { font-size: .8rem; line-height: 1.2; padding: 0 .25rem; }
 
-/* options menu button (top right of the court row) and its dropdown */
-.petanque.is-playing .pc-bar:not(.pc-sounds) {
-  display: flex; grid-row: 2; justify-self: end; align-self: start; position: relative; z-index: 5;
-  justify-content: flex-end; gap: .3rem; max-width: 100%;
-}
-.petanque.is-playing .pc-bar .pc-menu-btn { min-height: 0; width: 2.25rem; height: 2.25rem; padding: 0; background: var(--pt-glass); border-width: 1px; }
-.petanque.is-playing .pc-bar .pc-menu-btn[aria-expanded="true"] { color: var(--paper, #fffaf0); background: var(--red, #8a1c2b); }
-.petanque.is-playing .pc-menu {
-  position: absolute; top: calc(100% + .3rem); right: 0; z-index: 5; display: flex; flex-direction: column; gap: .2rem;
-  min-width: 12rem; max-width: calc(100vw - 1rem); padding: .3rem; background: var(--pt-glass); border: 1px solid var(--line, #d9ccb0);
-  border-radius: 6px; box-shadow: 0 .3rem 1rem rgba(0, 0, 0, .3);
-}
-.petanque.is-playing .pc-bar .pc-menu button { width: 100%; min-height: 2.4rem; padding: .2rem .7rem; font-size: .9rem; text-align: left; border-color: transparent; background: transparent; }
-.petanque.is-playing .pc-bar .pc-menu button:hover { border-color: var(--red, #8a1c2b); }
-.petanque.is-playing .pc-bar .pc-menu button.is-on { background: var(--red, #8a1c2b); }
-.petanque.is-playing .pc-bar:not(.pc-sounds) button { background: var(--pt-glass); border-width: 1px; }
 .petanque.is-playing .pc-sounds button { min-height: 2.25rem; padding: .2rem .6rem; font-size: .8rem; background: var(--pt-glass); border-width: 1px; }
 .petanque.is-playing .pc-bar button.is-on { background: var(--red, #8a1c2b); }
 /* E30/E33: bottom-right icons (fullscreen toggle and pause) are an overlay on the court row, anchored to its bottom
@@ -318,7 +301,6 @@ html.petanque-playing main { overflow: visible; }
   .petanque.is-playing { font-size: .85rem; gap: .25rem; padding-top: calc(var(--st) + .25rem); padding-bottom: calc(var(--sb) + .25rem); }
   .petanque.is-playing .pt-team-head { font-size: .8rem; }
   .petanque.is-playing .pt-score { font-size: 1.2rem; }
-  .petanque.is-playing .pc-bar .pc-menu button { min-height: 2.1rem; font-size: .8rem; }
   .petanque.is-playing .petanque-status { max-height: 3.4em; font-size: .78rem; line-height: 1.2; }
   .petanque.is-playing .pt-hint { padding: .2rem .5rem; }
   .petanque.is-playing .pt-hint-text { flex-basis: 20rem; }
@@ -373,7 +355,7 @@ html.petanque-playing main { overflow: visible; }
   filter: sepia(.9) saturate(.85) brightness(.95); pointer-events: none;
 }
 /* F32: while paused only Resume / New game / End game remain: no option buttons, icon cluster, status strip or turn banner */
-.petanque.is-paused .pc-bar:not(.pc-sounds), .petanque.is-playing.is-paused .pc-corner, .petanque.is-paused .pt-dock { display: none; }
+.petanque.is-playing.is-paused .pc-corner, .petanque.is-paused .pt-dock { display: none; }
 .petanque.is-paused canvas { cursor: grab; touch-action: none; }
 .petanque.is-paused canvas:active { cursor: grabbing; }
 @media (prefers-reduced-motion: reduce) {
@@ -381,11 +363,11 @@ html.petanque-playing main { overflow: visible; }
 }
 
 /* F48: hold-to-use view icons (hud.js createHoldIcons): pan, read the ground, overhead view. A translucent column on the
-   right edge of the court row, just under the hamburger button, clear of the bottom-right cluster, the mene-end bar (which
+   right edge of the court row, at its top, clear of the bottom-right cluster, the mene-end bar (which
    only shows when no throw is pending) and the toss area in the middle. Only built while it is the human's turn. */
 .pc-holds { display: none; }
 .petanque.is-playing .pc-holds {
-  display: flex; flex-direction: column; gap: .35rem; grid-row: 2 / 3; position: absolute; right: 0; top: 2.75rem; z-index: 4;
+  display: flex; flex-direction: column; gap: .35rem; grid-row: 2 / 3; position: absolute; right: 0; top: 0; z-index: 4;
 }
 .petanque.is-playing .pc-holds[hidden], .petanque.is-paused .pc-holds { display: none; }
 .pc-hold {
@@ -400,7 +382,7 @@ html.petanque-playing main { overflow: visible; }
 .pc-hold[hidden] { display: none; }
 @media (max-height: 500px) {
   .pc-hold { width: 2.25rem; height: 2.25rem; }
-  .petanque.is-playing .pc-holds { top: 2.5rem; gap: .25rem; }
+  .petanque.is-playing .pc-holds { gap: .25rem; }
 }
 
 /* ---- F11: "who holds the point" banner (hud.js showHolding / hideHolding, shown before each aim). In the playing

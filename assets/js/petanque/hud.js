@@ -125,7 +125,11 @@ export function createHud(root, hudEl, cb) {
   pausedEl.setAttribute('aria-label', 'Game paused');
   // F32: three actions only: Resume, New game (back to setup) and End game (leave the full-window view for the page)
   const resumeBtn = button('Resume', 'pt-btn pt-resume', () => cb.onResume && cb.onResume());
-  pausedEl.append(el('span', 'pt-paused-text', 'Game paused.'), resumeBtn,
+  pausedEl.append(el('span', 'pt-paused-text', 'Game paused.'));
+  // Mode (Slow / Quick) lives here; main.js applies a change to Quick on Resume, Slow from the next action
+  const pausedMode = radioGroup(pausedEl, 'Mode', 'pt-paused-mode', [['slow', 'Slow'], ['quick', 'Quick']], settings.mode,
+    (v) => { settings.mode = v; }, 'pt-modes pt-paused-modes');
+  pausedEl.append(resumeBtn,
     button('New game', 'pt-btn pt-btn-alt pt-paused-new', () => cb.onNewGame && cb.onNewGame()),
     button('End game', 'pt-btn pt-btn-alt pt-paused-end', () => cb.onEndGame && cb.onEndGame()));
   // F11: "who holds the point" banner, shown before each aim (main.js drives its 2 s hold on the game clock)
@@ -332,6 +336,7 @@ export function createHud(root, hudEl, cb) {
 
   function showPaused(on) {
     pausedEl.hidden = !on;
+    for (const i of pausedMode.querySelectorAll('input')) i.checked = i.value === settings.mode;
     if (on) focusSoon(resumeBtn);
   }
 
