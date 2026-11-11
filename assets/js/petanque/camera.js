@@ -298,42 +298,83 @@ export function viewPoint(p, frame, { aspect = 1.5, fov = 50 } = {}) {
   return { x: dx / fwd / (t * aspect), y: up / fwd / t };
 }
 
-// ---- F38: the occasional plane shot ----
-// While a floatplane flies and the human is not busy, the camera cuts (render.js, mode 'plane') to a spectator beside the court
-// looking down the lake at the plane, then goes back to whatever it was doing. The spectator stands on the side away from the
-// plane, so the court (its near corner and side) lies across the foreground, and the frame is aimed a little below the plane
-// so the lake and shore sit in the lower part of the picture. Pure: the renderer passes the plane position and a groundAt().
-export const PSHOT = Object.freeze({
-  y: 3, eye: 1.7, // where the spectator stands: along the court, and eye height above the ground
-  size: 16, // m: the plane with its wake, to keep in the picture
-  fill: 0.22, // the plane's angular size as a fraction of the horizontal view
-  minFovK: 0.4, maxFovK: 0.9,
-  lower: 0.3, // aim this fraction of the half-view below the plane, for lake and shore
-  follow: 1.8, // 1/s: how closely the frame tracks the plane
+// ---- F38: the plane as a background element ----
+// While a floatplane flies and the human is not busy, whatever camera is running (follow, observer, broadcast, TV, wide) keeps its
+// subject and is nudged so the plane also falls inside the frame, high up behind the subject: a small pan (yaw), tilt (pitch) and
+// widening of the field of view. The solver is pure and works on the final camera: pos/tgt (the subject is what the camera aims at),
+// the plane position and the field of view. It searches a clamped grid for the smallest deviation that puts the plane in the upper
+// part of the frame while the subject stays in the lower/central part and at least ~80% of its normal size. No fit: no change.
+export const PBG = Object.freeze({
+  maxYaw: 0.5, maxPitch: 0.5, minPitch: -0.12, // rad: the clamp on the deviation (pitch up is positive)
+  maxFovK: 1.25, // widening: the subject keeps at least 1/1.25 = 80% of its size (never below 60%)
+  step: 0.025, fovSteps: 6,
+  planeX: 0.88, planeLo: 0.18, planeHi: 0.88, // the plane's allowed screen box: |x| <= planeX, planeLo <= y <= planeHi (y up)
+  subjX: 0.6, subjLo: -0.85, subjHi: 0.3, // the subject's allowed screen box: central/lower part
+  w: { yaw: 1.2, pitch: 1.6, fov: 1.5 }, // cost weights per unit of deviation (an even tilt costs more than a pan)
+  ease: 1.6, // 1/s: how fast the deviation eases in and out
 });
 
-// plane: { x, y, z } (world position); opts: { dt, aspect, fov (vertical degrees), groundAt, width }; prev: the last result (null to snap).
-// Returns { pos, tgt, yaw, pitch, fovK, side } (feed `prev` back).
-export function framePlane(plane, opts, prev) {
-  const W = opts.width || C.terrainW, groundAt = opts.groundAt || (() => 0);
-  const side = prev ? prev.side : (plane.x >= W / 2 ? -1 : 1);
-  const px = side < 0 ? -OBS.side : W + OBS.side;
-  const pos = { x: px, y: PSHOT.y, z: groundAt(px, PSHOT.y) + PSHOT.eye };
-  const dx = plane.x - pos.x, dy = plane.y - pos.y, dh = Math.max(1, Math.hypot(dx, dy)), dist = Math.hypot(dh, plane.z - pos.z);
-  const baseFov = (opts.fov || 50) * Math.PI / 180, aspect = opts.aspect || 1.5;
-  const wantFovK = clamp(2 * Math.atan(PSHOT.size / 2 / dist) / (2 * Math.atan(Math.tan(baseFov / 2) * aspect) * PSHOT.fill), PSHOT.minFovK, PSHOT.maxFovK);
-  const wantYaw = Math.atan2(dx, dy);
-  const wantPitch = Math.atan2(plane.z - pos.z, dh) - PSHOT.lower * baseFov * wantFovK / 2;
-  let yaw = wantYaw, pitch = wantPitch, fovK = wantFovK;
-  const dt = clamp(opts.dt || 0, 0, 0.1);
-  if (prev) {
-    const k = 1 - Math.exp(-dt * PSHOT.follow);
-    yaw = prev.yaw + wrapAngle(wantYaw - prev.yaw) * k;
-    pitch = prev.pitch + (wantPitch - prev.pitch) * k;
-    fovK = prev.fovK + (wantFovK - prev.fovK) * k;
+// Normalised screen position of point p for a camera at pos looking by (yaw, pitch) (yaw 0 looks along +y) with vertical fov (rad).
+function screenOf(p, pos, yaw, pitch, tanV, aspect) {
+  const dx = p.x - pos.x, dy = p.y - pos.y, dz = (p.z || 0) - pos.z;
+  const sy = Math.sin(yaw), cy = Math.cos(yaw), sp = Math.sin(pitch), cp = Math.cos(pitch);
+  const fwd = dx * sy * cp + dy * cy * cp + dz * sp;
+  if (fwd <= 0.05) return null;
+  const right = dx * cy - dy * sy;
+  const up = -dx * sy * sp - dy * cy * sp + dz * cp;
+  return { x: right / fwd / (tanV * aspect), y: up / fwd / tanV };
+}
+
+// cam: { pos, tgt, fov (vertical degrees), aspect }; subjects: [{x, y, z}] points that must stay in the lower/central frame
+// (default: the aim point); plane: { x, y, z }. Returns { fit, dyaw, dpitch, fovK } (all zero / 1 when nothing is needed or nothing fits).
+export function solvePlaneFraming(cam, subjects, plane) {
+  const none = { fit: false, dyaw: 0, dpitch: 0, fovK: 1 };
+  const { pos, tgt } = cam, aspect = cam.aspect || 1.5, fov = (cam.fov || 50) * Math.PI / 180;
+  const dx = tgt.x - pos.x, dy = tgt.y - pos.y, dz = tgt.z - pos.z;
+  const yaw0 = Math.atan2(dx, dy), pitch0 = Math.atan2(dz, Math.hypot(dx, dy));
+  const subs = subjects && subjects.length ? subjects : [tgt];
+  const tan0 = Math.tan(fov / 2);
+  const inBox = (s, x, lo, hi) => s && Math.abs(s.x) <= x && s.y >= lo && s.y <= hi;
+  const ok = (dyaw, dpitch, k) => {
+    const pitch = pitch0 + dpitch;
+    if (Math.abs(pitch) > 1.3) return false;
+    const tanV = tan0 * k;
+    if (!inBox(screenOf(plane, pos, yaw0 + dyaw, pitch, tanV, aspect), PBG.planeX, PBG.planeLo, PBG.planeHi)) return false;
+    for (const s of subs) if (!inBox(screenOf(s, pos, yaw0 + dyaw, pitch, tanV, aspect), PBG.subjX, PBG.subjLo, PBG.subjHi)) return false;
+    return true;
+  };
+  if (!subs.every((s) => inBox(screenOf(s, pos, yaw0, pitch0, tan0, aspect), 1, -1, 1))) return none; // the subject is not in the picture to begin with
+  if (ok(0, 0, 1)) return { fit: true, dyaw: 0, dpitch: 0, fovK: 1 };
+  let best = null, bestCost = Infinity;
+  const ny = Math.round(PBG.maxYaw / PBG.step), np0 = Math.round(PBG.minPitch / PBG.step), np1 = Math.round(PBG.maxPitch / PBG.step);
+  for (let fi = 0; fi <= PBG.fovSteps; fi++) {
+    const k = 1 + (PBG.maxFovK - 1) * fi / PBG.fovSteps;
+    const cf = PBG.w.fov * (k - 1);
+    if (cf >= bestCost) break;
+    for (let iy = -ny; iy <= ny; iy++) {
+      const dyaw = iy * PBG.step, cy = PBG.w.yaw * Math.abs(dyaw);
+      if (cf + cy >= bestCost) continue;
+      for (let ip = np0; ip <= np1; ip++) {
+        const dpitch = ip * PBG.step, cost = cf + cy + PBG.w.pitch * Math.abs(dpitch);
+        if (cost < bestCost && ok(dyaw, dpitch, k)) { bestCost = cost; best = { fit: true, dyaw, dpitch, fovK: k }; }
+      }
+    }
   }
-  const cp = Math.cos(pitch);
-  return { pos, tgt: { x: pos.x + Math.sin(yaw) * cp * 50, y: pos.y + Math.cos(yaw) * cp * 50, z: pos.z + Math.sin(pitch) * 50 }, yaw, pitch, fovK, side };
+  return best || none;
+}
+
+// Applies a deviation to a camera: returns { tgt, fovK } with the aim point rotated about the camera (same distance).
+export function applyPlaneFraming(cam, dev) {
+  const { pos, tgt } = cam;
+  const dx = tgt.x - pos.x, dy = tgt.y - pos.y, dz = tgt.z - pos.z, len = Math.hypot(dx, dy, dz);
+  const yaw = Math.atan2(dx, dy) + dev.dyaw, pitch = Math.atan2(dz, Math.hypot(dx, dy)) + dev.dpitch, cp = Math.cos(pitch);
+  return { tgt: { x: pos.x + Math.sin(yaw) * cp * len, y: pos.y + Math.cos(yaw) * cp * len, z: pos.z + Math.sin(pitch) * len }, fovK: dev.fovK };
+}
+
+// Eases a current deviation toward a wanted one (the identity when nothing fits). Returns a new { dyaw, dpitch, fovK }.
+export function easePlaneFraming(cur, want, dt) {
+  const k = 1 - Math.exp(-clamp(dt, 0, 0.1) * PBG.ease);
+  return { dyaw: cur.dyaw + (want.dyaw - cur.dyaw) * k, dpitch: cur.dpitch + (want.dpitch - cur.dpitch) * k, fovK: cur.fovK + (want.fovK - cur.fovK) * k };
 }
 
 // ---- E27: TV-presentation cameras for AI turns ----

@@ -60,7 +60,7 @@ export function createDirector({ later, show, reduced = () => false }) {
   };
 }
 
-// F38 (reworked): when to cut to a flying floatplane. A match gets one flight, so the shot must happen reliably: once the plane is
+// F38 (reworked): when to bring a flying floatplane into the background of the current camera (render.js nudges it, camera.js solves). A match gets one flight, so the shot must happen reliably: once the plane is
 // visible (opacity > 0.5) the next quiet moment (main.js `eligible`: no boule in flight or just landed, not the human's turn or walk;
 // AI walks and the gaps between AI throws count) starts a shot of 4-7 s. At most two per flight: 90% chance for the first, 50% for a
 // second after a pause. A shot ends early only when the human becomes busy (`busy`), the plane fades or the player clicks (skip()).

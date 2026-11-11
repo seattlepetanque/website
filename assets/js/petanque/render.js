@@ -7,7 +7,7 @@ import { court } from './court.js';
 import { JACK_END_MARGIN } from './rules.js';
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
-import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, framePlane, frameCourtWide } from './camera.js';
+import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, solvePlaneFraming, applyPlaneFraming, easePlaneFraming } from './camera.js';
 import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeSkyPanorama, makeLake, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 import { createFloatplane } from './floatplane.js'; // F19
 
@@ -383,7 +383,7 @@ export function createRenderer(canvas, terrain) {
   bouleGeo.rotateX(Math.PI / 2); // texture poles along z; any orientation is fine
   const jackGeo = new THREE.SphereGeometry(1, 20, 12);
   const meshes = new Map(); // id -> { mesh, body, fade, ... }
-  const tmpQ = new THREE.Quaternion(), tmpV = new THREE.Vector3();
+  const tmpQ = new THREE.Quaternion(), tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3();
 
   function sync(world) {
     const bodies = Array.isArray(world) ? world : (world.bodies || []);
@@ -1282,25 +1282,13 @@ export function createRenderer(canvas, terrain) {
 
   let bcFrame = null; // F01: camera.js state of the current broadcast shot (a new shot is a cut)
   let tvFrame = null, tvPending = null; // E27: the TV shot's state, and a camera request held until the shot has played out
-  // F38: a plane shot overlays the current camera. Requests made meanwhile are remembered and replayed when it ends, except the
-  // human's own cameras (aim, shoulder, inspect), which end it at once.
-  let planeSaved = null, planeFrame = null;
-  function setPlaneShot(on) {
-    if (on === !!planeSaved) return;
-    if (on) {
-      planeSaved = [mode, opts, false]; planeFrame = null;
-      from.pos.copy(cur.pos); from.tgt.copy(cur.tgt);
-      mode = 'plane'; opts = {}; trans = 1; computeGoal(0, true);
-    } else {
-      const [m, o, f] = planeSaved; planeSaved = null; planeFrame = null;
-      mode = m; opts = o; setCamera(m, o, f);
-    }
-  }
+  // F38: the plane is a background element. While `planeOn`, updateCamera nudges whatever camera is running (camera.js solver) so the
+  // floatplane also falls into the upper part of the frame; the deviation eases in and out and is zero when it cannot fit.
+  let planeOn = false, planeDev = { dyaw: 0, dpitch: 0, fovK: 1 };
+  const PLANE_ID = { dyaw: 0, dpitch: 0, fovK: 1 };
+  function setPlaneShot(on) { planeOn = !!on; }
   function setCamera(m, o = {}, flush = false) {
-    if (planeSaved) {
-      if (m === 'aim' || m === 'shoulder' || m === 'inspect') setPlaneShot(false);
-      else { planeSaved = [m, o, flush]; return; }
-    }
+    if (m === 'aim' || m === 'shoulder' || m === 'inspect') { planeOn = false; planeDev = PLANE_ID; } // the human's own cameras: no bias at all
     if (mode === 'tv' && m !== 'tv' && m !== 'flight' && !flush && !o.now) { // let the boule settle on screen before the next cut
       if (tvFrame && tvFrame.restT < (TV.hold[tvFrame.variant] || 0) && !reduce()) { tvPending = [m, o]; return; }
     }
@@ -1344,12 +1332,6 @@ export function createRenderer(canvas, terrain) {
       goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
     } else if (mode === 'wide') { // F57: the whole court from behind the near end, Rainier in the background
       const f = frameCourtWide({ width: C.terrainW, length: C.terrainL, aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50, groundAt: (x, y) => terrain.sample(x, y).h });
-      goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
-      goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
-    } else if (mode === 'plane') { // F38: a spectator's view of the floatplane
-      const pp = floatplane.pos;
-      const f = framePlane({ x: pp.x, y: pp.y, z: pp.z }, { dt, aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50, groundAt: (x, y) => terrain.sample(x, y).h, width: C.terrainW }, planeFrame);
-      planeFrame = f;
       goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
       goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
     } else if (mode === 'broadcast') { // F01: a director's shot (opts.shot: prep | throw | reaction | flight)
@@ -1544,7 +1526,6 @@ export function createRenderer(canvas, terrain) {
       fov = baseFov * (1 - 0.32 * focusK * Math.max(0, Math.min(1, (d - 3) / 5)));
     }
     if (mode === 'observer' && obsFrame) fov *= obsFrame.fovK; // E11: the spectator's slow zoom
-    if (mode === 'plane' && planeFrame) fov *= planeFrame.fovK; // F38
     if (Math.abs(fov - camera.fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
     if (trans < 1) {
       trans = Math.min(1, trans + dt / TRANSITION);
@@ -1559,7 +1540,19 @@ export function createRenderer(canvas, terrain) {
       cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
     }
     camera.position.copy(cur.pos);
-    camera.lookAt(cur.tgt);
+    let lookAt = cur.tgt;
+    if (planeOn || planeDev.dyaw || planeDev.dpitch || planeDev.fovK !== 1) { // F38: the plane in the background
+      const cam = { pos: cur.pos, tgt: cur.tgt, fov, aspect: camera.aspect };
+      const pp = floatplane.pos;
+      const want = planeOn && !reduce() && !paused && mode !== 'aim' && mode !== 'shoulder' && mode !== 'inspect'
+        ? solvePlaneFraming(cam, [cur.tgt], { x: pp.x, y: pp.y, z: pp.z }) : PLANE_ID;
+      planeDev = easePlaneFraming(planeDev, want, dt);
+      if (!planeOn && Math.abs(planeDev.dyaw) + Math.abs(planeDev.dpitch) + Math.abs(planeDev.fovK - 1) < 1e-3) planeDev = PLANE_ID;
+      const a = applyPlaneFraming(cam, planeDev);
+      lookAt = tmpV2.set(a.tgt.x, a.tgt.y, a.tgt.z);
+      if (a.fovK !== 1) { camera.fov = fov * a.fovK; camera.updateProjectionMatrix(); }
+    }
+    camera.lookAt(lookAt);
     // shadow frustum follows what we look at
     aimSun(cur.tgt);
   }

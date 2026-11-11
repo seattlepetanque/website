@@ -148,7 +148,7 @@ function boot() {
   const watchCircle = () => observerView([{ x: court.circle.x, y: court.circle.y }, ahead(5)]); // somebody about to throw
   const aimView = () => (observing() && match ? watchCircle() : shoulderView());
   // F38: the plane shot (decision in director.js, framing in camera.js, the overlay in render.js). It starts at a quiet moment of AI
-  // play (no boule in flight or in the last second, nobody of the human's side busy) and may interrupt the F57 walker follow or the
+  // play (no boule in flight or in the last second, nobody of the human's side busy) and may overlay the F57 walker follow or the
   // wide hold; it ends early only when the human becomes busy (their walk, aim, throw, a turn pending, toss, mène end card).
   const planeCuts = createPlaneCuts();
   let planeClock = 0, lastFlightAt = -99;
