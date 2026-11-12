@@ -62,7 +62,8 @@ function play(seed) {
         seen.menes++;
         const prevJack = match.jack, prevDir = court.dir;
         match = apply(match, { type: 'nextMene' });
-        const nc = nextCircle(prevJack, prevDir, { width: match.geometry.width, length: match.geometry.length });
+        const ringJack = prevJack && prevJack.dead && prevJack.spot ? prevJack.spot : prevJack; // F88/F88b: a dead or knocked jack returns to its pre-throw spot
+        const nc = nextCircle(ringJack, prevDir, { width: match.geometry.width, length: match.geometry.length });
         assert.equal(match.geometry.dir, nc.dir, 'the rules flip the direction like the court');
         assert.ok(Math.abs(match.geometry.circle.y - nc.circle.y) < 1e-9);
         setCourt(match.geometry.circle, match.geometry.dir);
