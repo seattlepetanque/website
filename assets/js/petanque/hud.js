@@ -369,7 +369,7 @@ export function createHud(root, hudEl, cb) {
     const c = card(info.text, 'pt-gameover');
     if (info.detail) c.append(el('p', 'pt-blurb', info.detail));
     const again = button('Play again', 'pt-btn pt-again', cb.onPlayAgain);
-    c.append(again);
+    c.append(again, button('Exit', 'pt-btn pt-btn-alt pt-exit', () => cb.onExit && cb.onExit())); // F93
     say(info.text + (info.detail ? (/[.!?]$/.test(info.text) ? ' ' : '. ') + info.detail : ''));
     focusSoon(again);
   }

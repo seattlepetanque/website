@@ -489,6 +489,7 @@ function boot() {
     onResume: () => resumeGame(),
     onNewGame: () => { userPaused = false; setPlaying(true); toSetup(); },
     onEndGame: () => endGame(),
+    onExit: () => endGame(), // F93: the game-over card's Exit leaves the same way as End game
     onChoose: (id) => beginTurn(id),
     onHintDismiss: () => store(HINT_KEY, '1'),
   });
@@ -2405,6 +2406,7 @@ function boot() {
   if (debug) { // F86: ?debug&pausegame=MS / &endgame=MS pause / end the game after MS of wall time (screenshots)
     if (params.has('pausegame')) setTimeout(() => pauseGame(), +params.get('pausegame') || 0);
     if (params.has('endgame')) setTimeout(() => endGame(), +params.get('endgame') || 0);
+    if (params.has('exitclick')) { const t0 = Date.now(), iv = setInterval(() => { const b = document.querySelector('.pt-exit'); if (b && Date.now() - t0 > (+params.get('exitclick') || 0)) { clearInterval(iv); b.click(); } }, 200); } // F93: ?debug&exitclick=MS presses Exit once the game-over card is up (and MS have passed)
     window.__petanque = {
       world, terrain, renderer, seed, reset: toSetup, startGame, court,
       audio,
