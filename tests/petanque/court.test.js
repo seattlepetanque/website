@@ -208,3 +208,18 @@ test('F24: after a mène the court circle and dir are exactly nextCircle of the 
     }
   } finally { resetCourt(); }
 });
+
+test('F89: sweeping the jack along every string, the ring centre is on the court, may straddle a string, and keeps FRONT_MIN', () => {
+  let straddled = 0;
+  for (const dir of [1, -1]) {
+    for (let x = -0.5; x <= 4.5; x += 0.25) {
+      for (let y = -0.5; y <= 15.5; y += 0.5) {
+        const n = nextCircle({ x, y }, dir);
+        assert.ok(n.circle.x >= 0 && n.circle.x <= 4 && n.circle.y >= 1 && n.circle.y <= 14, `centre ${n.circle.x},${n.circle.y}`);
+        assert.ok(n.front >= FRONT_MIN - 1e-9 || n.circle.y === 1 || n.circle.y === 14);
+        if (n.circle.x - n.circle.r < 0 || n.circle.x + n.circle.r > 4) straddled++;
+      }
+    }
+  }
+  assert.ok(straddled > 0, 'straddling a side string is allowed (Art. 6: the circle is not an out of bounds area)');
+});
