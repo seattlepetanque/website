@@ -4,3 +4,11 @@ Require all denied
 <FilesMatch "^(deploy|oauth)\.php$">
     Require all granted
 </FilesMatch>
+
+# DreamHost's ModSecurity (OWASP CRS) blocks GitHub's push payload as an "OS file access
+# attempt" when the commit file lists mention names like package.json or .htaccess, so
+# the deploy webhook never reached deploy.php (HTTP 500, "An exception occurred" in GitHub).
+# deploy.php already verifies GitHub's HMAC signature, so the firewall adds nothing here.
+<IfModule mod_security2.c>
+    SecRuleEngine Off
+</IfModule>

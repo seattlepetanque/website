@@ -176,3 +176,13 @@ What an attacker could do with each one, and how to recover:
   that editor can write to, not just this one. Editors should log out of `/admin/` on shared
   computers. Anyone can revoke a token under GitHub > Settings > Applications > Authorized OAuth Apps.
 
+
+## Webhook blocked by ModSecurity (HTTP 500 from Apache)
+
+Symptom: GitHub shows "An exception occurred" for a push delivery and the response is Apache's generic
+500 page. The host's `~/logs/seattlepetanque.org/https/error.log` has `ModSecurity: Access denied with code 418`
+with rule 930120 ("OS File Access Attempt") matching a file name such as `package.json` in the payload.
+The `.htaccess` in `deploy/hooks/` turns ModSecurity off for `_hooks/` only (the HMAC check in `deploy.php`
+is the protection). After changing it, run `sh ~/site-src/deploy/setup-host.sh` on the host (or edit
+`~/seattlepetanque.org/_hooks/.htaccess` by hand), then redeliver the push in GitHub: expect 200 `deploy started`.
+If DreamHost rejects `SecRuleEngine Off` (500 on every request to `_hooks/`), replace it with `SecRuleRemoveById 930120`.
