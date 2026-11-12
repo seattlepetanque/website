@@ -1351,3 +1351,29 @@ F83 REVERTED (user: could not see the roll guide in the real game, asked to reve
 User: Pause menu -> End game currently shows another "Resume / New game" style view. It should just return to the normal /game landing page (the page as it first loads: setup dialog over the idle court). Owner: main.js end-game handler and hud.js pause/game-over card.
 
 F86 outcome (not committed): End game on the pause card now calls toSetup() then setPlaying(false) (main.js endGame), the same path a fresh load uses: match null, timers/token invalidated, world and cast reset, hold icons and controls off, pause sepia gone, setup card ("Set up your game", partner/difficulty defaults, Mode kept in settings) over the idle court, and no Resume button (Resume only shows when a match exists). toSetup also now resets the golden-hour drift and hides the who-holds banner. The page scrolls back to where it was before play. The game-over card (Play again -> toSetup) already used this path. Debug-only helpers: ?debug&pausegame=MS and &endgame=MS, and pauseGame/endGame on window.__petanque. Seen at 1200x800 and 500x900 (paused card, then ended view equals plain-load view): scratchpad f86-paused-*.png, f86-ended-*.png, f86-load-*.png. No pure logic added, so no new node test.
+
+## Post-launch backlog (added after the first deploy)
+
+### F87 AI sometimes believes the jack is farther back than it is (user)
+Rare. Suspected case: the jack was struck by a boule but did not move (or moved less than the AI's stored position), so the AI's remembered jack position is stale. Investigate how ai.js/tactics.js read the jack position (live world body versus match state `jack` set at jackThrown/placed), whether a nudged jack updates the match state after each throw settles, and whether a hit with no displacement leaves any cached value. Most jack/boule physics works well, so this is an edge-case hunt: log AI-believed versus actual jack position after each throw in seeded matches and find disagreements.
+
+### F88 A jack knocked out of bounds returns to its previous spot for the next mène (user)
+When a boule knocks the jack out of bounds, the jack should be put back where it was before the knock, and the next mène should start from that spot. Currently the next mène seems to start near the knocked jack's resting place. Check rules.js/main.js dead-jack handling (F10 'ring at the dead jack's last in-bounds spot', F74/F75 first-boule alternation) and record the pre-impact jack position per throw (the position before the throw that moved it).
+
+### F89 Review ring placement when the jack is near the string (user, rules review)
+The ring (throwing circle) is sometimes placed partly out of bounds when the jack is near the boundary string. Review the FIPJP rules in petanque-rules.txt (circle placement relative to the lines, minimum distance from the edge, the circle must be fully in-bounds? and the allowed 'placed cochonnet' positions) and RULES-AUDIT.md, decide the correct behaviour, then fix court.js/rules.js placement (clamp or shift the circle so it is fully inside, keeping the 6-10 m jack range) and the overlay drawing. Deliver a short decision note first.
+
+### F90 Out-of-bounds check should not fire while the thrown object is still leaving the hand (user)
+Rare: when the ring is near the string, a thrown boule or cochonnet is marked out of bounds because its position was out of bounds while still in the player's hand. Suggested fix: delay the OOB check for a thrown boule or jack until its first contact with another object (ground, boule, jack); check this against the physics landing events and add a test with a ring near the string.
+
+### F91 Top-view (overhead hold icon) shows rank labels on boules (user)
+When the human uses the overhead hold icon, label each boule with its rank by distance to the jack (1 closest, 2, 3...), like the scoring badges. Reuse the F61/F82 badge drawing; make the labels readable at overhead scale and hidden on release.
+
+### F92 iOS Safari: donnée spots and boule shadows cut off with sharp edges (user)
+Seen on iOS Safari; unknown on other platforms. Likely shadow-map or decal/texture issues: sprite/texture size or clipping (polygon offset/render order, premultiplied alpha, mediump precision in the shader, shadow-camera frustum texel snap from F40, or the donnée spot's quad hitting a depth/clipping limit). Reproduce with Safari/WebKit device emulation if possible; otherwise add a ?debug rendering switch for the suspects and ask the user to test on the device.
+
+### F93 End of game: an exit option beside New game (user)
+At the end of a game, the only option is New game. Add an exit option (go back to the landing page the way End game does, F86: the setup dialog on the idle court, full-window view left). Owner: hud.js game-over card and main.js.
+
+### F94 iOS: audio failed to play in one game (user)
+One-off on iOS, worth investigating: iOS Safari requires the AudioContext to be created/resumed in a user gesture, suspends it when the tab or screen is backgrounded or interrupted, and mute-switch/silent mode affects Web Audio. Review audio.js/ambient.js resume logic (resume on touchend/click, on visibilitychange, on 'statechange' interrupted), add a safe resume-on-gesture path and a debug log of the context state.
