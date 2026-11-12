@@ -541,8 +541,8 @@ function boot() {
     ch.setPlacement(x, y, yaw);
     ch.root.position.z = terrain.sample(x, y).h;
   }
-  // Waiting players cast no shadow: the low sun would throw theirs into the shoulder view
-  const shadow = (id, on) => cast.get(id).root.traverse((o) => { if (o.isMesh) o.castShadow = on; });
+  // F95b: every player always casts a shadow (the on/off argument is ignored)
+  const shadow = (id, on) => cast.get(id).root.traverse((o) => { if (o.isMesh) o.castShadow = true; });
   // E02: in slow mode a returning player takes the nearest free waiting slot (waiting.js); quick mode uses HOME.
   // `claims` holds where each waiting player stands or is heading, so slots never overlap.
   const claims = new Map();
