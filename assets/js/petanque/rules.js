@@ -188,7 +188,7 @@ export function nextTeam(match) {
 // Both teams holding boules or neither: void. Only one team: that team scores them.
 export function deadJackText(inHand, teamNames = teamNamesFor('pierre'), reason = 'out') {
   const [h0, h1] = inHand;
-  const what = reason === 'knocked' ? 'The cochonnet was knocked out and goes back to where it lay (the next mène starts there)' : reason === 'close' ? 'The cochonnet is too close to the circle (less than 3 m): dead jack' : 'The cochonnet went out';
+  const what = reason === 'knocked' ? 'The cochonnet was knocked out and goes back to where it lay (the next mène starts there)' : reason === 'close' ? 'The cochonnet is too close to the circle (less than 3 m), so it is dead and goes back to where it lay (the next mène starts there)' : 'The cochonnet went out';
   if (h0 > 0 && h1 > 0) return `${what}: both teams still have boules, so the mène is void.`;
   if (h0 === 0 && h1 === 0) return `${what} and neither team has boules left, so the mène is void.`;
   const team = h0 > 0 ? 0 : 1;
@@ -270,7 +270,9 @@ export function apply(match, event) {
         jack.spot = { x: match.jack.x, y: match.jack.y }; jack.replaced = true;
       }
       if (jackTooClose(jack, match.geometry)) { // F76, Art. 9.3: knocked to less than 3 m from the circle: dead where it lies
-        jack.dead = true; jack.reason = 'close'; delete jack.replaced; jack.spot = { x: jack.x, y: jack.y };
+        jack.dead = true; jack.reason = 'close'; jack.spot = { x: jack.x, y: jack.y };
+        // F88b: rules slightly ambiguous, so treat it like the out-of-bounds jack: back to its pre-throw spot (reason stays 'close')
+        if (match.jack && !match.jack.dead && Number.isFinite(match.jack.x) && Number.isFinite(match.jack.y)) { jack.spot = { x: match.jack.x, y: match.jack.y }; jack.replaced = true; } else delete jack.replaced;
       }
       const boules = event.boules.map((b) => ({ ...b }));
       const none = boulesInHand(match, 0) + boulesInHand(match, 1) === 0;

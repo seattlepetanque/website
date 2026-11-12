@@ -486,7 +486,8 @@ test('F76: a settled live jack with an edge gap under 3 m is dead; 3.01 m stays 
   assert.equal(JACK_DEAD_DIST, 3);
   assert.equal(near.phase, 'meneEnd');
   assert.ok(near.jack.dead && near.jack.reason === 'close');
-  assert.deepEqual(near.jack.spot, { x: 2, y: 1 + 2.99 + K }, 'the ring goes where it lies (F10 spot)');
+  assert.deepEqual(near.jack.spot, { x: 2, y: 8 }, 'F88b: the ring goes at the pre-throw spot');
+  assert.ok(near.jack.replaced);
   assert.equal(near.result.jackReason, 'close');
   assert.ok(near.result.void, 'both teams hold boules: void mène');
   assert.equal(edge.phase, 'play');
@@ -508,9 +509,16 @@ test('F76: a too-close jack follows the dead-jack scoring and the next ring goes
   assert.equal(m.phase, 'meneEnd');
   assert.equal(m.result.team, 0);
   assert.equal(m.result.points, left, 'only team 0 holds boules: it scores them');
-  assert.match(deadJackText(m.result.inHand, ['A', 'B'], m.result.jackReason), /too close to the circle \(less than 3 m\): dead jack with only A holding boules/);
+  assert.match(deadJackText(m.result.inHand, ['A', 'B'], m.result.jackReason), /too close to the circle \(less than 3 m\), so it is dead and goes back to where it lay \(the next mène starts there\) with only A holding boules/);
   const n = apply(m, { type: 'nextMene' });
   assert.ok(Math.hypot(n.geometry.circle.x - 2.2, n.geometry.circle.y - (1 + 2.5 + K)) <= 0.25 + 1e-9 || n.geometry.circle.y !== m.geometry.circle.y);
+});
+
+test('F88b: a thrown jack that lands too close (no pre-throw spot) is not replaced', () => {
+  const m = apply(started({}), { type: 'bouleThrown', playerId: 'x' });
+  assert.ok(m); // jackThrown path never calls jackTooClose: thrown jacks keep their own rules
+  const t = apply(started({}), { type: 'jackThrown', team: 0, jack: { x: 2, y: 1 + 2.5 + K } });
+  assert.ok(!t.jack || !t.jack.replaced);
 });
 
 // --- F77: one tie tolerance ---
