@@ -188,7 +188,7 @@ export function nextTeam(match) {
 // Both teams holding boules or neither: void. Only one team: that team scores them.
 export function deadJackText(inHand, teamNames = teamNamesFor('pierre'), reason = 'out') {
   const [h0, h1] = inHand;
-  const what = reason === 'close' ? 'The cochonnet is too close to the circle (less than 3 m): dead jack' : 'The cochonnet went out';
+  const what = reason === 'knocked' ? 'The cochonnet was knocked out and goes back to where it lay (the next mène starts there)' : reason === 'close' ? 'The cochonnet is too close to the circle (less than 3 m): dead jack' : 'The cochonnet went out';
   if (h0 > 0 && h1 > 0) return `${what}: both teams still have boules, so the mène is void.`;
   if (h0 === 0 && h1 === 0) return `${what} and neither team has boules left, so the mène is void.`;
   const team = h0 > 0 ? 0 : 1;
@@ -202,7 +202,8 @@ function endMene(match, jack, boules) {
     // inHand is the count at the moment the jack died (kept on the result for the message, deadJackText).
     const h0 = boulesInHand(match, 0);
     const h1 = boulesInHand(match, 1);
-    const inHand = [h0, h1], jackReason = jack.reason || 'out'; // 'close': F76, less than 3 m from the circle
+    const inHand = [h0, h1], jackReason = jack.reason || (jack.replaced ? 'knocked' : 'out'); // 'knocked': F88, put back at its pre-throw spot
+    // 'close': F76, less than 3 m from the circle
     if (h0 > 0 && h1 > 0) result = { void: true, inHand, jackReason };
     else if (h0 > 0) result = { team: 0, points: h0, measured: [], inHand, jackReason };
     else if (h1 > 0) result = { team: 1, points: h1, measured: [], inHand, jackReason };
@@ -263,8 +264,13 @@ export function apply(match, event) {
       if (match.phase !== 'play') return match;
       const jack = { x: event.jack.x, y: event.jack.y, dead: !!event.jack.dead };
       if (jack.dead && event.jack.spot) jack.spot = { x: event.jack.spot.x, y: event.jack.spot.y };
+      // F88: a jack a boule knocked out of bounds is put back where it lay before that throw; the next mène starts there
+      // (the state's jack is the pre-throw position; the throw's own last-in-bounds spot is only the fallback)
+      if (jack.dead && match.jack && !match.jack.dead && Number.isFinite(match.jack.x) && Number.isFinite(match.jack.y)) {
+        jack.spot = { x: match.jack.x, y: match.jack.y }; jack.replaced = true;
+      }
       if (jackTooClose(jack, match.geometry)) { // F76, Art. 9.3: knocked to less than 3 m from the circle: dead where it lies
-        jack.dead = true; jack.reason = 'close'; jack.spot = { x: jack.x, y: jack.y };
+        jack.dead = true; jack.reason = 'close'; delete jack.replaced; jack.spot = { x: jack.x, y: jack.y };
       }
       const boules = event.boules.map((b) => ({ ...b }));
       const none = boulesInHand(match, 0) + boulesInHand(match, 1) === 0;

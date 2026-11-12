@@ -562,3 +562,29 @@ test('F80: the front covers a full 10 m throw: a legal jack at the maximum alway
   assert.ok(!keep.moved);
   assert.ok(nextCircle({ x: 2, y: FRONT_MIN + CIRCLE_R - 0.01 }, 1).moved);
 });
+
+test('F88: a jack knocked out of bounds returns to its pre-throw spot, and the next mène starts there', () => {
+  let m = started();
+  assert.equal(m.phase, 'play');
+  const before = { x: m.jack.x, y: m.jack.y };
+  const p = m.players.find((q) => q.team === 0);
+  m = apply(m, { type: 'bouleThrown', playerId: p.id });
+  m = apply(m, { type: 'throwSettled', jack: { x: -1, y: 12, dead: true, spot: { x: 0.02, y: 11 } }, boules: [] });
+  assert.equal(m.phase, 'meneEnd');
+  assert.deepEqual(m.jack.spot, before);
+  assert.equal(m.result.jackReason, 'knocked');
+  assert.match(deadJackText(m.result.inHand, undefined, m.result.jackReason), /goes back to where it lay/);
+  const n = apply(m, { type: 'nextMene' });
+  const want = nextCircle(before, m.geometry.dir ?? 1, { width: m.geometry.width, length: m.geometry.length });
+  assert.deepEqual(n.geometry.circle, { x: want.circle.x, y: want.circle.y });
+});
+
+test('F88: with no known pre-throw spot the physics last-in-bounds spot (F10) is used', () => {
+  let m = started();
+  const p = m.players.find((q) => q.team === 0);
+  m = apply(m, { type: 'bouleThrown', playerId: p.id });
+  m = { ...m, jack: null };
+  m = apply(m, { type: 'throwSettled', jack: { x: -1, y: 12, dead: true, spot: { x: 0.02, y: 11 } }, boules: [] });
+  assert.deepEqual(m.jack.spot, { x: 0.02, y: 11 });
+  assert.equal(m.result.jackReason, 'out');
+});
