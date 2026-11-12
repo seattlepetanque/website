@@ -90,3 +90,29 @@ export function atPlaces(positions, places, tol = AT_PLACE) {
 
 // The next mène may start (nextMene) when the ring is down and everybody is at their place (a skip puts everybody there at once).
 export const meneEndReady = ({ ringDown, collectDone }) => !!ringDown && !!collectDone;
+
+// ---------------------------------------------------------------------------------------------------------------------
+// F97: a dead jack is fetched by one player and carried back to jack.spot; the ring carrier (a different player) waits for it.
+// ---------------------------------------------------------------------------------------------------------------------
+
+// The jack carrier: the player nearest the dead jack's resting place who is neither the ring holder nor the ring carrier
+// (they are the same person in main.js; both are excluded). Ties go to the smaller id, so the choice is deterministic.
+// players: [{ id }]; positions: Map or object id -> { x, y }; -> id, or null when nobody else is there.
+export function pickJackCarrier(players, positions, jackPos, { ringHolder = null, ringCarrier = null } = {}) {
+  const get = (id) => (positions instanceof Map ? positions.get(id) : positions[id]);
+  const pool = players.filter((p) => p.id !== ringHolder && p.id !== ringCarrier);
+  const dist = (p) => { const q = get(p.id); return q ? Math.hypot(q.x - jackPos.x, q.y - jackPos.y) : Infinity; };
+  pool.sort((a, b) => dist(a) - dist(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return pool.length ? pool[0].id : null;
+}
+
+// Where the ring carrier waits while the jack is still being brought: `gap` metres short of the ring's destination on the line from
+// where they are (never on the spot itself); they are already closer than `gap`: they stay where they are.
+export function ringStagePoint(from, to, gap = 1.6) {
+  const dx = from.x - to.x, dy = from.y - to.y, d = Math.hypot(dx, dy);
+  if (d <= gap) return { x: from.x, y: from.y };
+  return { x: to.x + dx / d * gap, y: to.y + dy / d * gap };
+}
+
+// The ring may be dropped when no jack task is running or it has finished (the jack is down at jack.spot).
+export const ringMayDrop = ({ jackTask, jackDone }) => !jackTask || !!jackDone;

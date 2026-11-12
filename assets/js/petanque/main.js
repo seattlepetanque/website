@@ -25,7 +25,7 @@ import { createDrift, REDUCED_PROGRESS } from './daylight.js'; // F71
 import * as THREE from '../vendor/three.module.js';
 import { createCharacter, releaseOffset, bendReach } from './character.js';
 import { planRoute, standPoint, pathLength } from './fetch.js';
-import { meneEndReady, atPlaces, steer, planGoals, BLOCK_FADE_S } from './crowd.js';
+import { meneEndReady, atPlaces, steer, planGoals, pickJackCarrier, ringStagePoint, ringMayDrop, BLOCK_FADE_S } from './crowd.js';
 import { pickWaitingSlot, waitingSlots } from './waiting.js';
 import { attachModels } from './models.js';
 import { createGroundView } from './groundview.js';
@@ -815,7 +815,7 @@ function boot() {
   let bcastDelay = 1800; // ms from the stop to the next turn (longer when a reaction shot plays)
 
   function clearWorld() {
-    releaseHold(); cancelFetch(); carry = null; jackFetch = null; placing = null; gateSince = 0; lastThrowerId = null; ringTask = null; jackTask = null; jackFetcher = null; ringHolder = null; ringCarry = null; ringPlaced = false; collect = null; // D11, F07, F02
+    releaseHold(); cancelFetch(); carry = null; jackFetch = null; placing = null; gateSince = 0; lastThrowerId = null; ringTask = null; jackTask = null; jackFetcher = null; jackDone = true; jackSnapFn = null; ringHolder = null; ringCarry = null; ringPlaced = false; collect = null; // D11, F07, F02
     world.bodies.length = 0;
     world.events.length = 0;
     terrain.resetDivots();
@@ -1298,7 +1298,7 @@ function boot() {
   };
   // F10 (slow mode): a dead cochonnet is walked back to its last in-bounds spot by the idle player nearest to it
   // (not the ring holder); the ring holder waits for that before bringing the ring (jackTask is the promise)
-  let jackTask = null, jackFetcher = null;
+  let jackTask = null, jackFetcher = null, jackDone = true, jackSnapFn = null; // F97: jackDone once the jack is down at jack.spot
   const ringWho = () => {
     const last = match.players.find((p) => p.id === lastThrowerId) || match.players.find((p) => p.team === match.jackTeam);
     return last.id;
@@ -1307,25 +1307,35 @@ function boot() {
   function startJackReturn() { // from endOfMene (after startRingPickup), slow mode only
     const j = jackBody(), spot = ringJackSpot();
     if (!slow() || jackTask || !match || !j || !j.dead || !spot || match.phase !== 'meneEnd') return;
-    const cands = match.players.filter((p) => p.id !== ringHolder && p.id !== ringWho());
-    const pool = cands.length ? cands : match.players.filter((p) => p.id !== ringHolder);
-    if (!pool.length) return;
-    const dist = (p) => { const q = cast.get(p.id).root.position; return Math.hypot(q.x - j.x, q.y - j.y); };
-    pool.sort((a, b) => dist(a) - dist(b));
-    jackFetcher = pool[0].id;
+    const posOf = new Map(match.players.map((p) => { const q = cast.get(p.id).root.position; return [p.id, { x: q.x, y: q.y }]; }));
+    const who = pickJackCarrier(match.players, posOf, { x: j.x, y: j.y }, { ringHolder, ringCarrier: ringWho() }); // F97: never the ring carrier
+    if (!who) return;
+    jackFetcher = who; jackDone = false;
     const t = token, job = { id: jackFetcher, tok: t, cancelled: false, scripted: false, jack: true, obstacles: () => obstaclesExcept(j) };
+    // F97: a skip (click, key) or the fallback timer: the jack is down at its spot at once and the carrier stands by it
+    jackSnapFn = () => {
+      if (jackDone) return;
+      job.cancelled = true; jackDone = true;
+      const c = cast.get(job.id), r = reachOf(c);
+      c.setCarrying(false);
+      if (carry && carry.body === j) carry = null;
+      placeDeadBall(world, j, spot.x, spot.y); j.slotted = true;
+      placeAt(job.id, spot.x - r.x, spot.y - r.y, 0);
+    };
     jackTask = (async () => {
       await sleep(900);
       if (inCircle === job.id) inCircle = null;
       const ch = cast.get(job.id);
       ch.setHolding(false); ch.setHeldBoules(null); ch.setStance('watch');
-      if (!(await pickUp(job, j))) return;
+      if (!(await pickUp(job, j))) return; // walks to where it lies (round the outside of the timbers if it is out), bends, takes it
       const r = reachOf(ch);
-      await walkVia(job, job.id, { x: spot.x - r.x, y: spot.y - r.y, yaw: 0 }, true);
+      await walkVia(job, job.id, { x: spot.x - r.x, y: spot.y - r.y, yaw: 0 }, true); // carried back, in the hand, to the spot
       if (!fetchAlive(job)) return;
       await ch.playBend({ kind: 'putdown', onAct: () => { ch.setCarrying(false); placeDeadBall(world, j, spot.x, spot.y); j.slotted = true; if (carry && carry.body === j) carry = null; } });
     })().catch((err) => console.error(err)).then(() => {
       if (carry && carry.body === j) { placeDeadBall(world, j, spot.x, spot.y); j.slotted = true; carry = null; cast.get(job.id).setCarrying(false); }
+      if (Math.hypot(j.x - spot.x, j.y - spot.y) > 0.01) { placeDeadBall(world, j, spot.x, spot.y); j.slotted = true; } // (a cancelled walk: the jack still ends at its spot)
+      jackDone = true; jackSnapFn = null;
     });
   }
   function startRingPickup() { // from endOfMene, after the throw settled
@@ -1358,6 +1368,7 @@ function boot() {
   }
   // The holder walks the ring to `to` and DROPS it as soon as they arrive (nothing is waited for: boules are already in hands after Next).
   // A click or key skips. The holder is free for their own boules after that.
+  const JACK_WAIT_GAP = 1.6, JACK_WAIT_MAX = 90; // F97: the ring carrier waits this far (m) from the spot, for at most this long (s) for the jack
   const RING_BOUNCE_T = 0.14; // s: the ring's one small bounce after it lands
   async function setRingDown(job, id, t, to) {
     const ch = cast.get(id), r = reachOf(ch);
@@ -1368,9 +1379,15 @@ function boot() {
       renderer.setRingPose({ x: to.x, y: to.y, z: terrain.sample(to.x, to.y).h + 0.006 });
       ringAt = { x: to.x, y: to.y }; markRingDown();
     };
-    ringSkipFn = () => { ringSkip = true; placeAt(id, to.x - r.x, to.y - r.y, 0); };
+    ringSkipFn = () => { ringSkip = true; if (jackSnapFn) jackSnapFn(); placeAt(id, to.x - r.x, to.y - r.y, 0); };
     try {
       if (!ringCarry) { ringCarry = id; ch.setCarrying(true); followRing(); }
+      if (!ringMayDrop({ jackTask, jackDone })) { // F97: the jack is still being carried back: wait short of the spot, ring in hand, until it is down
+        const p = ch.root.position, st = ringStagePoint({ x: p.x, y: p.y }, to, JACK_WAIT_GAP);
+        await walkVia(job, id, { x: st.x - r.x, y: st.y - r.y, yaw: 0 });
+        for (let n = 0; n < JACK_WAIT_MAX * 10 && !ringMayDrop({ jackTask, jackDone }) && !ringSkip && t === token; n++) await sleep(100);
+        if (t === token && !ringMayDrop({ jackTask, jackDone }) && jackSnapFn) jackSnapFn(); // fallback: the jack goes down at its spot
+      }
       await walkVia(job, id, { x: to.x - r.x, y: to.y - r.y, yaw: 0 });
       if (t !== token) { ringCarry = null; renderer.setRingPose(null); return; }
       if (ringSkip) { finish(); return; }
@@ -1671,6 +1688,7 @@ function boot() {
     }
     else if (!placing && gateSince && fetchJob) skipFetchWait();
     else if (ringSkipFn && !ringSkip) ringSkipFn(); // F07: the ring walk
+    if (jackSnapFn) jackSnapFn(); // F97: the jack is down at its spot at once
     skipCollect(); // F02: the players have their boules at once
   };
   window.addEventListener('keydown', skipEvent);
@@ -2164,7 +2182,7 @@ function boot() {
       // F51: the ring has been on its way since the result (setRingDown) beside the boule collection; the mène starts when both are done
       ringBusy = true;
       try {
-        if (jackTask) await jackTask; // F10
+        if (jackTask) { await Promise.race([jackTask, sleep(JACK_WAIT_MAX * 1000)]); if (jackSnapFn) jackSnapFn(); } // F10, F97: the fallback snaps the jack to its spot
         if (!ringTask && !ringPlaced) startRingPickup();
         if (ringTask && !ringPlaced) say2('The circle is moved to where the cochonnet finished…');
         if (ringTask) await ringTask;
@@ -2179,7 +2197,7 @@ function boot() {
       ringBusy = false;
       if (t !== token) return;
     }
-    jackTask = null; jackFetcher = null;
+    jackTask = null; jackFetcher = null; jackDone = true; jackSnapFn = null;
     match = next;
     applyCourt(to, g.dir ?? 1, !slow() && !instant);
     if (slow()) walkToSpots(next);
@@ -2463,6 +2481,17 @@ function boot() {
     lastThrowerId = 'marcel';
     for (const id of cast.keys()) placeAt(id, homeAt(id).x, homeAt(id).y, homeYaw(id));
     setPlaying(true);
+    if (params.has('deadjack')) { // &deadjack (with &ringcarry&slow): the jack went out beyond the side string; F97: someone carries it back to its pre-throw spot, the ring waits
+      world.bodies.length = 0;
+      const jd = createBody('jack', { team: -1, x: C.terrainW + 1.4, y: 8.4 }); jd.z = terrain.sample(jd.x, jd.y).h + jd.r; jd.dead = true; jd.ghost = true; world.add(jd);
+      for (const [t, x, y] of [[0, 1.2, 6.6], [1, 3.2, 7.0]]) { const b = createBody('boule', { team: t, x, y }); b.z = b.r; world.add(b); }
+      renderer.sync(world);
+      match = { ...match, jack: { x: jd.x, y: jd.y, dead: true, spot: { x: 2.3, y: 9.2 }, replaced: true } };
+      lastThrowerId = 'marcel';
+      renderer.setCamera('head', { target: { x: 3.4, y: 8.8 }, points: [{ x: -0.5, y: 5 }, { x: C.terrainW + 2, y: 12 }] });
+      startRingPickup(); startJackReturn();
+      return;
+    }
     if (params.has('f02')) { // &f02 (with &ringcarry&slow): the mène is over with twelve boules scattered; the players gather, then collect their own (&f02at=seconds freezes the frame)
       world.bodies.length = 0;
       const jb2 = createBody('jack', { team: -1, x: 2.3, y: 9.2 }); jb2.z = jb2.r; world.add(jb2);
