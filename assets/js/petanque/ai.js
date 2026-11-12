@@ -203,7 +203,11 @@ export function situationKey({ match, bodies, player, difficulty }) {
 export const forgetAdvice = () => adviceMemo.clear();
 export const peekAdvice = (team) => adviceMemo.get(team) || null;
 
-function* decide({ world, match, player, difficulty = 'medium', rand, from = FROM, advice = false }) {
+function* decide({ world: liveWorld, match, player, difficulty = 'medium', rand, from = FROM, advice = false }) {
+  // F87: one source of truth for the court. The planner yields between sims (chooseThrowAsync), and every sim, the situation and the
+  // aim read the world again later; a jack or boule the live world moves meanwhile would make the plan inconsistent with itself
+  // (planned for one jack, simulated against another). Plan on a frozen copy taken now.
+  const world = liveWorld.clone();
   const dk = DIFFICULTY[difficulty] ? difficulty : 'medium';
   const nSims = AI.sims[dk] ?? AI.sims.medium;
   const team = player.team;
