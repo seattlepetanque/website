@@ -15,6 +15,29 @@ function makeCanvas(w, h) {
 }
 
 // Small viewports or dense screens get fewer tufts
+// F92: ?debug&NAME=value switches (stripped from production builds with the build-time define, see layouts/_default/game.html)
+export function dbgParam(name) {
+  try { return globalThis.__DEBUG__ !== false && typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug') ? new URLSearchParams(location.search).get(name) : null; } catch (e) { return null; }
+}
+
+// F92: a soft round decal texture whose alpha is exactly 0 well inside the quad edge (a 4 px margin), so the quad's
+// straight edge can never show. ?debug&blobs=nomip (no mipmaps, plain linear), =premul (premultiplied alpha),
+// =hard (a flat disc, to see the quad), =nodepth (decal ignores depth, to rule out terrain clipping).
+export function makeBlobTexture(size, stops) {
+  const cv = makeCanvas(size, size), g = cv.getContext('2d'), c = size / 2, R = c - 4;
+  g.clearRect(0, 0, size, size);
+  const grad = g.createRadialGradient(c, c, 2, c, c, R);
+  for (const [at, col] of stops) grad.addColorStop(at, col);
+  g.fillStyle = grad; g.fillRect(0, 0, size, size);
+  const mode = dbgParam('blobs');
+  if (mode === 'hard') { g.clearRect(0, 0, size, size); g.fillStyle = 'rgba(0,0,0,0.6)'; g.fillRect(0, 0, size, size); }
+  const tex = new THREE.CanvasTexture(cv);
+  if (mode === 'nomip') { tex.generateMipmaps = false; tex.minFilter = THREE.LinearFilter; }
+  if (mode === 'premul') tex.premultiplyAlpha = true;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
+}
+
 export function isPhone() {
   try { return Math.min(window.innerWidth, window.innerHeight) < 600 || (window.devicePixelRatio || 1) > 2; } catch (e) { return false; }
 }
@@ -290,12 +313,8 @@ export function treeShadowDecal(x, y, height, radius, sunOffset, outside, clear 
 // F73: soft dark ellipses on the grass for every tree, aligned with the sun and independent of the camera (the shadow
 // map re-centres on the look target, so real tree shadows entered and left it as the camera moved). One instanced mesh.
 export function makeTreeShadows(terrain, sunOffset) {
-  const cv = makeCanvas(64, 64), g = cv.getContext('2d');
-  const grad = g.createRadialGradient(32, 32, 2, 32, 32, 31);
-  grad.addColorStop(0, 'rgba(0,0,0,0.9)'); grad.addColorStop(0.6, 'rgba(0,0,0,0.6)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
-  g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
-  const tex = new THREE.CanvasTexture(cv);
-  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.4, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, color: '#0b1a05' });
+  const tex = makeBlobTexture(64, [[0, 'rgba(0,0,0,0.9)'], [0.6, 'rgba(0,0,0,0.6)'], [1, 'rgba(0,0,0,0)']]); // F92: alpha 0 at 28 px of 32
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.4, depthWrite: false, depthTest: dbgParam('blobs') !== 'nodepth', polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, color: '#0b1a05' });
   const list = TREES;
   const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), mat, list.length);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3(), z = new THREE.Vector3(0, 0, 1);

@@ -12,7 +12,7 @@ import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvV
 import { makeButterflies } from './butterflies.js'; // F67
 import { makeCloudShadows } from './cloudshadows.js'; // F68
 import { daylightAt, SUN_DISTANCE, SHADOW_NEAR, SHADOW_FAR } from './daylight.js';
-import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeTreeShadows, makeSkyPanorama, makeLake, makeSailboats, skyColor, SKY_HAZE, isPhone } from './scenery.js';
+import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeTreeShadows, makeBlobTexture, dbgParam, makeSkyPanorama, makeLake, makeSailboats, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 import { createFloatplane } from './floatplane.js'; // F19
 
 const TRANSITION = 0.6; // seconds for camera moves
@@ -193,8 +193,13 @@ export function createRenderer(canvas, terrain) {
   // The shadow box follows the look target. It is wide enough to take in the trees (within ~15 m of the court) and
   // their shadows, which fall away from the sun: desktop gets a 2048 map over +-14 m (texels ~1.4 cm), phones keep
   // a 1024 map over +-10 m. The depth range is 60 m, so the bias is scaled to match the old 25 m setting.
-  const phoneShadows = isPhone(), shadowHalf = phoneShadows ? 10 : 14;
-  sun.shadow.mapSize.set(phoneShadows ? 1024 : 2048, phoneShadows ? 1024 : 2048);
+  const phoneShadows = isPhone(), shadowHalf = Number(dbgParam('shadowhalf')) || (phoneShadows ? 10 : 14);
+  // F92: clamp to what the GPU supports; ?debug&shadowmap=N forces a size, &shadowtype=basic|pcf|soft picks the filter, &shadowhalf=M the half-width in metres
+  const dbgMap = Number(dbgParam('shadowmap')) || 0;
+  const mapSize = Math.max(256, Math.min(dbgMap || (phoneShadows ? 1024 : 2048), renderer.capabilities.maxTextureSize || 2048));
+  sun.shadow.mapSize.set(mapSize, mapSize);
+  const st = dbgParam('shadowtype');
+  if (st) renderer.shadowMap.type = { basic: THREE.BasicShadowMap, pcf: THREE.PCFShadowMap, soft: THREE.PCFSoftShadowMap }[st] ?? renderer.shadowMap.type;
   const sc = sun.shadow.camera;
   sc.left = -shadowHalf; sc.right = shadowHalf; sc.top = shadowHalf; sc.bottom = -shadowHalf; sc.near = SHADOW_NEAR; sc.far = SHADOW_FAR; // F95: near is negative so players upsun of the target keep their shadow
   sc.updateProjectionMatrix();
@@ -509,19 +514,11 @@ export function createRenderer(canvas, terrain) {
 
   // Divot decals: a pool of soft dark discs just above the ground, reused in a ring
   const DIVOTS = 48;
-  const divotTex = (() => {
-    const cv = makeCanvas(64, 64), g = cv.getContext('2d');
-    const gr = g.createRadialGradient(32, 32, 4, 32, 32, 31);
-    const dc = grey ? '40,46,58' : '60,44,24';
-    gr.addColorStop(0, `rgba(${dc},0.55)`);
-    gr.addColorStop(0.65, `rgba(${dc},0.3)`);
-    gr.addColorStop(1, `rgba(${dc},0)`);
-    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
-    return new THREE.CanvasTexture(cv);
-  })();
+  const dc = grey ? '40,46,58' : '60,44,24';
+  const divotTex = makeBlobTexture(64, [[0, `rgba(${dc},0.55)`], [0.65, `rgba(${dc},0.3)`], [1, `rgba(${dc},0)`]]); // F92: alpha 0 with a 4 px margin
   const divotGeo = new THREE.PlaneGeometry(2, 2);
   const divotMat = new THREE.MeshBasicMaterial({
-    map: divotTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    map: divotTex, transparent: true, depthWrite: false, depthTest: dbgParam('blobs') !== 'nodepth', polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
   });
   const divotMeshes = [];
   for (let i = 0; i < DIVOTS; i++) {

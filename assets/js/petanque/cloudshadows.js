@@ -78,7 +78,7 @@ float cloudShadowAt(vec2 q) {
   #endif
   vCsXY = (modelMatrix * csw).xy; }`);
         sh.fragmentShader = sh.fragmentShader
-          .replace('#include <common>', '#include <common>\n' + glsl)
+          .replace('#include <common>', '#include <common>\nprecision highp float;\n' + glsl)
           .replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
   diffuseColor.rgb *= 1.0 - cloudShadowAt(vCsXY) * vec3(${CLOUD.strength.map(f).join(', ')});`);
       };
