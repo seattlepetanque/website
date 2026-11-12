@@ -51,6 +51,17 @@ collections:
           - { label: "Photo", name: "image", widget: "image", choose_url: false, hint: "Click 'Choose an image', then 'Upload' to add a photo from your computer." }
           - { label: "Description", name: "alt", widget: "string", hint: "Describe the photo for people using screen readers, e.g. 'Players lined up at Lake Union Park'." }
           - { label: "Caption", name: "caption", widget: "string", required: false, hint: "Optional. Shown under the photo, e.g. 'Photo by Jeff Brann'." }
+      - label: "Attachments"
+        name: "attachments"
+        widget: "list"
+        required: false
+        collapsed: false
+        label_singular: "attachment"
+        summary: "{{fields.title}}"
+        hint: "Optional. PDF files (flyers, rules, registration forms) shown as download links under the event details."
+        fields:
+          - { label: "Link text", name: "title", widget: "string", hint: "What the link says, e.g. 'Tournament flyer (PDF)'." }
+          - { label: "PDF file", name: "file", widget: "file", media_folder: "/static/files", public_folder: "/files", choose_url: false, hint: "Click 'Choose a file', then 'Upload' to add a PDF from your computer." }
       - { label: "Short summary", name: "summary", widget: "string", required: false, hint: "Optional. One line shown in event listings." }
       - { label: "Recurring schedule", name: "recurring", widget: "string", required: false, hint: "Leave blank for one-time events. For repeating events, describe the schedule, e.g. Every Saturday 10am." }
       - { label: "Details", name: "body", widget: "markdown" }

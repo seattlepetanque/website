@@ -7,6 +7,13 @@
   {{- with .Params.end_date }}<br>Ends: <time datetime="{{ . }}">{{ (. | time.AsTime).Format "Monday, January 2, 2006" }}{{ $e := . | time.AsTime }}{{ if not (and (eq $e.Hour 0) (eq $e.Minute 0)) }} at {{ $e.Format "3:04 PM" }}{{ end }}</time>{{ end }}</p>
   {{ with .Params.location }}<p class="meta where">Location: {{ if $.Params.map_url }}<a href="{{ $.Params.map_url }}">{{ . }}</a>{{ else }}{{ . }}{{ end }}</p>{{ end }}
   {{ .Content }}
+  {{- with .Params.attachments }}
+  <ul class="attachments">
+    {{- range . }}{{ if .file }}
+    <li><a href="{{ .file }}">{{ .title | default "Download" }}</a></li>
+    {{- end }}{{ end }}
+  </ul>
+  {{- end }}
   {{- with .Params.photos }}
   <div class="gallery gallery-{{ len . }}">
     {{- range $i, $p := . }}{{ with $p.image }}

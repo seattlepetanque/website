@@ -72,6 +72,14 @@
           mapUrl ? h('a', { href: mapUrl }, location) : location));
       }
       kids.push(this.props.widgetFor('body'));
+      var atts = data(entry, 'attachments');
+      atts = atts && atts.toJS ? atts.toJS() : [];
+      atts = atts.filter(function (a) { return a && a.file; });
+      if (atts.length) {
+        kids.push(h('ul', { className: 'attachments' }, atts.map(function (a, i) {
+          return h('li', { key: i }, h('a', { href: imgUrl(getAsset, a.file) }, a.title || 'Download'));
+        })));
+      }
       if (photos.length) {
         kids.push(h('div', { className: 'gallery gallery-' + photos.length },
           photos.map(function (p, i) {
