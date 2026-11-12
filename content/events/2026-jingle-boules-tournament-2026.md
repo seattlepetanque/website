@@ -17,7 +17,7 @@ Teams of two, $50 per team, 24 team limit, cash payout, prize amounts tbd.
 
 Three seeding games in the am, 55 minutes each with a tie-breaker end if necessary, all teams play at least four games (playoff format tbd).
 
-Registration form attached, pay using Venmo (@seattlepetanqueclub), hand Patrick Trompeter or Jeff Brann a check, or mail registration form & check to SPC attn Jeff Brann @ 6561 4th Ave NE, #201, Seattle 98115. Email completed registration form to [seattlepetanqueclub@gmail.com](mailto:seattlepetanqueclub@gmail.com) if paying via Venmo.
+Registration form attached, pay using Venmo (@seattlepetanqueclub) or hand Patrick Trompeter or Jeff Brann a check. Email completed registration form to [seattlepetanqueclub@gmail.com](mailto:seattlepetanqueclub@gmail.com) if paying via Venmo.
 
 Coffee and light snacks provided in the am, bring your own lunch and beverages.
 
