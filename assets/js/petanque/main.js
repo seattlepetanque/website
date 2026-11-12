@@ -206,7 +206,7 @@ function boot() {
       onHold: () => { gvOn = true; syncGv(0); }, onRelease: () => { gvOn = false; syncGv(0); } },
     { cls: 'pc-headview', label: 'View: hold for the overhead view', title: 'Hold for the view from above; let go to return to the shoulder view',
       svg: holdSvg('<circle cx="7" cy="6.5" r="2.2"/><path d="M3 20v-4.5a4 4 0 0 1 8 0V20"/><path d="M14 8h7M14 8l2-2M14 8l2 2"/><circle cx="17.5" cy="16.5" r="3"/><circle cx="17.5" cy="16.5" r=".6" fill="currentColor"/>'),
-      onHold: () => setView('head'), onRelease: () => { if (pending && !flying) setView('shoulder'); else view = 'shoulder'; } },
+      onHold: () => setView('head'), onRelease: () => { if (pending && !flying) setView('shoulder'); else { view = 'shoulder'; renderer.setRankLabels(null); } } }, // F91
   ]);
   root.append(holds.el);
   holds.buttons[1].hidden = !settings.groundView; // the hidden kill switch for slow devices (localStorage petanque-groundview=off)
@@ -396,6 +396,7 @@ function boot() {
   function setView(v) {
     if (v !== 'shoulder' && adjusting) setAdjust(false);
     view = v;
+    renderer.setRankLabels(v === 'head' ? world.bodies : null); // F91: rank labels only while the overhead view is held
     if (v === 'shoulder') shoulderView();
     else {
       const j = jackBody();

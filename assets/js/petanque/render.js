@@ -5,6 +5,7 @@ import { C } from './constants.js';
 import { jackMaterialParams } from './terrain.js';
 import { court } from './court.js';
 import { JACK_END_CENTRE, JACK_CENTRE_SHIFT } from './rules.js';
+import { rankBoules, layoutBadges } from './ranklabels.js'; // F91
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
 import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, scoringTargetBox } from './camera.js';
@@ -724,6 +725,49 @@ export function createRenderer(canvas, terrain) {
     const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthTest: false, transparent: true, fog: false }));
     spr.renderOrder = 6; spr.scale.set(0.15, 0.15, 1);
     return spr;
+  }
+  // F91: overhead-hold rank labels. setRankLabels(world bodies array | () => bodies | null); while set, every frame ranks the live
+  // boules by gap to the jack (ranklabels.js) and draws a scoring-style badge beside each, sized to ~26 px on screen.
+  const rankGroup = new THREE.Group();
+  scene.add(rankGroup);
+  const RANK_PX = 26, rankSprites = new Map(), rankTex = new Map();
+  let rankSrc = null;
+  function rankBadge(rank, team) {
+    const key = rank + ':' + team;
+    const ink = team === 0 ? ['#2f5fb8', '#16315f'] : ['#d9893a', '#8a4a0c']; // the scoring view's team inks (main.js)
+    if (!rankTex.has(key)) { const t = badgeSprite(String(rank), ink[0], '#fff'); t.material.map.colorSpace = THREE.SRGBColorSpace; rankTex.set(key, t.material.map); t.material.dispose(); }
+    const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: rankTex.get(key), depthTest: false, transparent: true, fog: false }));
+    spr.renderOrder = 7; spr.userData.key = key;
+    return spr;
+  }
+  function setRankLabels(src) {
+    rankSrc = src || null;
+    if (!rankSrc) updateRankLabels();
+  }
+  function updateRankLabels() {
+    const bodies = typeof rankSrc === 'function' ? rankSrc() : rankSrc;
+    const items = rankSrc ? rankBoules(bodies) : [];
+    const jack = items.length ? bodies.find((b) => b.kind === 'jack') : null;
+    const seen = new Set();
+    if (jack) {
+      const H = canvas.clientHeight || 1;
+      const dist = camera.position.distanceTo(new THREE.Vector3(jack.x, jack.y, jack.z || 0));
+      const size = Math.max(0.05, dist * 2 * Math.tan(camera.fov * Math.PI / 360) * RANK_PX / H); // badge diameter in metres
+      const L = layoutBadges(items, jack, size / 2);
+      items.forEach((it, i) => {
+        seen.add(it.id);
+        const key = it.rank + ':' + (it.team ? 1 : 0);
+        let spr = rankSprites.get(it.id);
+        if (spr && spr.userData.key !== key) { rankGroup.remove(spr); spr.material.dispose(); spr = null; }
+        if (!spr) { spr = rankBadge(it.rank, it.team ? 1 : 0); rankSprites.set(it.id, spr); rankGroup.add(spr); }
+        spr.scale.set(size, size, 1);
+        spr.position.set(L[i].x, L[i].y, it.z + it.r + size * 0.1);
+      });
+    }
+    for (const [id, spr] of rankSprites) {
+      if (seen.has(id)) continue;
+      rankGroup.remove(spr); spr.material.dispose(); rankSprites.delete(id);
+    }
   }
   // D07 mène end: soft disc on the jack holding every scoring boule, numbered badges and distance labels.
   // o: { radius, fill, edge, items: [{ x, y, n }], rival: { x, y, r, label } | null } (the rival gets a label only)
@@ -1715,6 +1759,7 @@ export function createRenderer(canvas, terrain) {
     clouds.update(dt, reduce()); // F68
     updatePreview();
     updateJackMark(dt);
+    if (rankSrc) updateRankLabels(); // F91
     renderScene();
   }
 
@@ -1743,5 +1788,5 @@ export function createRenderer(canvas, terrain) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { butterflies, setDaylight, sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  return { butterflies, setDaylight, sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, setRankLabels, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
 }
