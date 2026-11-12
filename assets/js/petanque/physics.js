@@ -28,6 +28,7 @@ export function launch(body, p, from = p.from || court.throwFrom) {
   body.vx = p.speed * cl * dx; body.vy = p.speed * cl * dy; body.vz = p.speed * sl;
   body.wx = bs * dy; body.wy = -bs * dx; body.wz = p.sidespin || 0;
   body.state = 'airborne'; body.dead = false; body.ghost = false; body.ghostT = 0; body.restT = 0;
+  body.fresh = true; // F90: no out-of-bounds judgement until the first contact (the hand/release point may be beyond a string)
   body.hx = dx; body.hy = dy; body.rev = 0;
   return body;
 }
@@ -70,6 +71,7 @@ function boxContact(w, b, bx) {
     dx = m[1]; dy = m[2]; dz = m[3]; pen = m[0] + b.r;
   }
   b.x += dx * pen; b.y += dy * pen; b.z += dz * pen;
+  b.fresh = false; // F90
   const vn = b.vx * dx + b.vy * dy + b.vz * dz;
   if (vn < 0) {
     const e = vn < -0.3 ? C.lumberRestitution : 0;
@@ -137,6 +139,7 @@ function toTangent(b, s) {
 
 // Airborne body reaches the ground: normal restitution + Coulomb friction impulse
 function land(w, b, s) {
+  b.fresh = false; // F90
   b.z = s.h + b.r;
   // the ball lands on a random pebble face: the effective normal tilts a little (the jack more than a boule)
   const tilt = C.landTilt * Math.sqrt(Math.min(2.25, C.stoneMassRef / b.m));
@@ -202,6 +205,7 @@ function stepAirborne(w, b, dt) {
   if (b.state === 'airborne' && b.z - b.r < 0.3) capReverse(b, dt);
   if (b.z - b.r > C.lowAirZ + C.maxHeight) return;
   const hit = stoneContacts(w, b);
+  if (hit) b.fresh = false; // F90
   const s = w.terrain.sample(b.x, b.y);
   if (b.z - b.r <= s.h) {
     land(w, b, s);
@@ -301,6 +305,7 @@ function collide(w, a, b) {
   const R = a.r + b.r;
   const d2 = dx * dx + dy * dy + dz * dz;
   if (d2 >= R * R) return;
+  a.fresh = false; b.fresh = false; // F90
   const d = Math.sqrt(d2) || 1e-9;
   dx /= d; dy /= d; dz /= d;
   const pen = R - d;
@@ -390,6 +395,7 @@ export function lastInBounds(b) {
 }
 
 function checkDead(w, b) {
+  if (b.fresh) return; // F90: still in flight from the release, nothing touched yet
   const m = b.r + C.deadMargin;
   if (b.x < -m || b.x > C.terrainW + m || b.y > C.terrainL + m || b.y < -m) {
     b.dead = true; b.ghost = true; b.ghostT = 0;
