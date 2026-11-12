@@ -1377,3 +1377,6 @@ At the end of a game, the only option is New game. Add an exit option (go back t
 
 ### F94 iOS: audio failed to play in one game (user)
 One-off on iOS, worth investigating: iOS Safari requires the AudioContext to be created/resumed in a user gesture, suspends it when the tab or screen is backgrounded or interrupted, and mute-switch/silent mode affects Web Audio. Review audio.js/ambient.js resume logic (resume on touchend/click, on visibilitychange, on 'statechange' interrupted), add a safe resume-on-gesture path and a debug log of the context state.
+
+### F95 Player shadows come and go (user)
+Player (character) shadows appear and disappear during play. Likely related to the earlier flickering/disappearing tree shadows (F40 texel-snapped shadow frustum, F71 golden-hour sun drift recomputing the shadow axes, per-frame frustum fitting that excludes characters, the shadow camera bounds not following walking players, or the characters' frustum culling / castShadow flags toggling during pose changes). Investigate in render.js (setDaylight, shadow frustum, character castShadow) and character.js; reproduce by following a walking player in slow mode and sampling shadow visibility over time; fix and add a test for the pure frustum-bounds logic if possible.
