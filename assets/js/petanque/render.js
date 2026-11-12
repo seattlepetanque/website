@@ -270,9 +270,25 @@ export function createRenderer(canvas, terrain) {
     map: gravel, vertexColors: true, roughness: 0.95, metalness: 0, envMapIntensity: 0.4,
   }));
   terrainMesh.receiveShadow = true;
+  // F96: the height of the terrain MESH under (x, y), triangle by triangle as the mesh is indexed. The mesh is built once
+  // from the undented ground, but terrain.sample() includes the divots physics stamps into the ground (up to 2 cm) and the
+  // 1.5 mm jitter, so decals placed with sample().h ended up under the mesh and only showed where the triangles dipped:
+  // soft dark blobs cut by straight, grid-aligned edges. Every decal lying on the ground now takes its height from here.
+  const surfH = (x, y) => {
+    const fx = Math.max(0, Math.min(gw - 1.0001, (x - grid.x0) / grid.step)), fy = Math.max(0, Math.min(gh - 1.0001, (y - grid.y0) / grid.step));
+    const i = Math.floor(fx), j = Math.floor(fy), tx = fx - i, ty = fy - j, k = j * gw + i, d = grid.data;
+    return tx >= ty ? d[k] + (d[k + 1] - d[k]) * tx + (d[k + gw + 1] - d[k + 1]) * ty
+      : d[k] + (d[k + gw + 1] - d[k + gw]) * tx + (d[k + gw] - d[k]) * ty;
+  };
   const grass = grassTexture();
   blendGrassIntoTerrain(terrainMesh.material, grass);
   const clouds = makeCloudShadows(1); // F68
+  // F96 debug (dev builds): ?debug&hideshadows=trees,players,clouds,decals,all (comma list) switches shadow sources off, to tell
+  // which one a cut-off dark shape belongs to: trees = tree blob decals, players = the sun's shadow map (people and boules),
+  // clouds = cloud shading, decals = divot discs, the donnee marker and the throw-preview fans
+  const hideSh = new Set(String(dbgParam('hideshadows') || '').split(',').filter(Boolean));
+  const hides = (k) => hideSh.has(k) || hideSh.has('all');
+  if (hides('clouds')) clouds.patch = () => {};
   clouds.patch(terrainMesh.material); // F68
   scene.add(terrainMesh);
 
@@ -291,6 +307,8 @@ export function createRenderer(canvas, terrain) {
   scene.add(trees);
   const treeShadows = makeTreeShadows(terrain, sunOffset); // F73: blob shadows for the trees outside the shadow map's job
   scene.add(treeShadows);
+  if (hides('trees')) treeShadows.visible = false;
+  if (hides('players')) sun.castShadow = false;
   let swayT = 0; // D15: a slow lean of each tree about its foot; frozen when paused (render dt 0), none under reduced motion
 
   // Lumber surround: weathered 6x6 timbers, one mesh per board section (long sides split with butt joints,
@@ -531,9 +549,19 @@ export function createRenderer(canvas, terrain) {
   let divotNext = 0;
   function addDivot(x, y, r = 0.06) {
     const m = divotMeshes[divotNext++ % DIVOTS];
+    if (hides('decals')) return;
     // F34: lay the disc on the slope (tangent to the ground there) so its whole span stays above it
-    const s = terrain.sample(x, y), up = new THREE.Vector3(0, 0, 1), n = new THREE.Vector3(s.nx || 0, s.ny || 0, s.nz || 1).normalize();
-    m.position.set(x, y, s.h + 0.004);
+    // F96: the plane is tangent to the MESH (surfH), then lifted until it clears the mesh at the centre and a ring of points
+    // around it (the mesh is 5 cm triangles; the dented ground that terrain.sample() reports is up to 2 cm below it)
+    const up = new THREE.Vector3(0, 0, 1), e = 0.05, hs = Math.max(0.03, r * 1.6) * 1.5;
+    const z0 = surfH(x, y), gx = (surfH(x + e, y) - surfH(x - e, y)) / (2 * e), gy = (surfH(x, y + e) - surfH(x, y - e)) / (2 * e);
+    const n = new THREE.Vector3(-gx, -gy, 1).normalize();
+    let lift = 0;
+    for (let a = 0; a < 8; a++) {
+      const px = hs * Math.cos(a * Math.PI / 4), py = hs * Math.sin(a * Math.PI / 4);
+      lift = Math.max(lift, surfH(x + px, y + py) - (z0 + gx * px + gy * py));
+    }
+    m.position.set(x, y, z0 + lift + 0.004);
     m.quaternion.setFromUnitVectors(up, n);
     m.rotateZ((x * 977 + y * 331) % 6.283);
     m.scale.setScalar(Math.max(0.03, r * 1.6));
@@ -564,7 +592,7 @@ export function createRenderer(canvas, terrain) {
       const a = a0 + (a1 - a0) * i / n;
       for (const r of [rad - w / 2, rad + w / 2]) {
         const x = c.x + r * Math.sin(a), y = zoneY(c.y + court.dir * r * Math.cos(a));
-        pos.push(x, y, terrain.sample(x, y).h + zoff);
+        pos.push(x, y, surfH(x, y) + zoff);
       }
       if (i < n) idx.push(2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 1, 2 * i + 3, 2 * i + 2);
     }
@@ -583,7 +611,7 @@ export function createRenderer(canvas, terrain) {
       const r = r0 + (r1 - r0) * j / rows, [a0, a1] = zoneArc(r);
       for (let i = 0; i <= cols; i++) {
         const a = a0 + (a1 - a0) * i / cols, x = c.x + r * Math.sin(a), y = zoneY(c.y + court.dir * r * Math.cos(a));
-        pos.push(x, y, terrain.sample(x, y).h + zoff);
+        pos.push(x, y, surfH(x, y) + zoff);
       }
     }
     const row = cols + 1;
@@ -681,7 +709,7 @@ export function createRenderer(canvas, terrain) {
       const r = r0 + (r1 - r0) * i / rows;
       for (let k = 0; k < segs; k++) {
         const a = k / segs * Math.PI * 2, x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
-        pos.push(x, y, terrain.sample(x, y).h + zoff);
+        pos.push(x, y, surfH(x, y) + zoff);
       }
     }
     for (let i = 0; i < rows; i++) for (let k = 0; k < segs; k++) {
@@ -702,7 +730,7 @@ export function createRenderer(canvas, terrain) {
     const dx = (b.x - a.x) / len, dy = (b.y - a.y) / len, nx = -dy * w / 2, ny = dx * w / 2;
     const n = Math.max(2, Math.ceil((len - ra - rb) / 0.04)), pos = [], idx = [];
     for (let i = 0; i <= n; i++) {
-      const t = ra + (len - ra - rb) * i / n, x = a.x + dx * t, y = a.y + dy * t, z = terrain.sample(x, y).h + zoff;
+      const t = ra + (len - ra - rb) * i / n, x = a.x + dx * t, y = a.y + dy * t, z = surfH(x, y) + zoff;
       pos.push(x + nx, y + ny, z, x - nx, y - ny, z);
       if (i < n) idx.push(2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 1, 2 * i + 3, 2 * i + 2);
     }
@@ -1027,7 +1055,7 @@ export function createRenderer(canvas, terrain) {
       for (let i = 0; i < m; i++) {
         const q = pts[i];
         r.pts[n * 3] = q.x; r.pts[n * 3 + 1] = q.y;
-        r.pts[n * 3 + 2] = ground ? terrain.sample(q.x, q.y).h + 0.012 : q.z;
+        r.pts[n * 3 + 2] = ground ? surfH(q.x, q.y) + 0.012 : q.z;
         n++;
       }
       if (close && n < r.cap && Math.hypot(pts[0].x - pts[m - 1].x, pts[0].y - pts[m - 1].y) > 1e-3) {
@@ -1164,10 +1192,10 @@ export function createRenderer(canvas, terrain) {
     const m = pts.length - 1; // the closing point repeats the first
     let cx = 0, cy = 0;
     for (let i = 0; i < m; i++) { cx += pts[i].x / m; cy += pts[i].y / m; }
-    f.pos[0] = cx; f.pos[1] = cy; f.pos[2] = terrain.sample(cx, cy).h + 0.01;
+    f.pos[0] = cx; f.pos[1] = cy; f.pos[2] = surfH(cx, cy) + 0.01;
     for (let i = 0; i < f.cap; i++) {
       const q = pts[Math.min(m - 1, Math.round(i * m / f.cap))];
-      f.pos[3 + i * 3] = q.x; f.pos[4 + i * 3] = q.y; f.pos[5 + i * 3] = terrain.sample(q.x, q.y).h + 0.01;
+      f.pos[3 + i * 3] = q.x; f.pos[4 + i * 3] = q.y; f.pos[5 + i * 3] = surfH(q.x, q.y) + 0.01;
     }
     f.mesh.geometry.attributes.position.needsUpdate = true;
     f.mesh.visible = true;
@@ -1227,7 +1255,7 @@ export function createRenderer(canvas, terrain) {
           for (let sd = 0; sd < 2; sd++) {
             const k = sd ? -1 : 1, x = pts[i].x - ty * hw * k, y = pts[i].y + tx * hw * k;
             const o = (i * 2 + sd) * 3;
-            st.pos[o] = x; st.pos[o + 1] = y; st.pos[o + 2] = terrain.sample(x, y).h + 0.014;
+            st.pos[o] = x; st.pos[o + 1] = y; st.pos[o + 2] = surfH(x, y) + 0.014;
           }
         }
         st.mesh.geometry.attributes.position.needsUpdate = true;
@@ -1328,12 +1356,12 @@ export function createRenderer(canvas, terrain) {
     setRoll(p.roll);
     if (p.donnee) {
       const s = terrain.sample(p.donnee.x, p.donnee.y);
-      marker.position.set(p.donnee.x, p.donnee.y, s.h + 0.014);
+      marker.position.set(p.donnee.x, p.donnee.y, surfH(p.donnee.x, p.donnee.y) + 0.014); // F96: the mesh height, not the dented ground
       nrm.set(s.nx || 0, s.ny || 0, s.nz || 1).normalize();
       marker.quaternion.setFromUnitVectors(upZ, nrm);
       plainRing.visible = !p.snapped;
       snapRing.visible = !!p.snapped;
-      marker.visible = true;
+      marker.visible = !hides('decals');
     } else marker.visible = false;
     if (p.legalZone) jackZone.visible = true;
   }
