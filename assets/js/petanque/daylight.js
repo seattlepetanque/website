@@ -9,6 +9,22 @@ const mixRgb = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
 
 export const REDUCED_PROGRESS = 0.3; // reduced motion: a fixed mid-afternoon light
 export const SUN_DISTANCE = 10.5; // length of the sun offset vector used by the shadow frustum
+// F95: the shadow camera is orthographic, sits SUN_DISTANCE from its target and looks along -sunDir. With near = 1 anything
+// more than SUN_DISTANCE - 1 m toward the sun from the target was clipped out of the shadow map, so a player 10+ m
+// "upsun" of the look target (e.g. the head view of the far end of the court) lost their shadow. Ortho cameras accept a
+// negative near, so the box now reaches well behind the light position as well.
+export const SHADOW_NEAR = -30, SHADOW_FAR = 60;
+// does the shadow box (half-width `half`, centred on `target`, sun along unit-ish vector sunDir) take in point p?
+export function shadowBoxCovers(p, target, sunDir, half, near = SHADOW_NEAR, far = SHADOW_FAR, dist = SUN_DISTANCE) {
+  const l = Math.hypot(sunDir[0], sunDir[1], sunDir[2]) || 1;
+  const z = [sunDir[0] / l, sunDir[1] / l, sunDir[2] / l];
+  const xl = Math.hypot(z[0], z[2]) || 1, x = [z[2] / xl, 0, -z[0] / xl]; // (0,1,0) x z, as in render.js
+  const y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
+  const d = [p[0] - target[0], p[1] - target[1], p[2] - target[2]];
+  const dot = (a) => d[0] * a[0] + d[1] * a[1] + d[2] * a[2];
+  const depth = dist - dot(z); // distance from the light along its view direction
+  return Math.abs(dot(x)) <= half && Math.abs(dot(y)) <= half && depth >= near && depth <= far;
+}
 export const SKY_HAZE_HEX = '#d6e5f3'; // the horizon haze at progress 0 (same as scenery.js SKY_HAZE)
 export const PEACH = [0.965, 0.81, 0.70]; // warm horizon colour, linear-free sRGB 0..1
 

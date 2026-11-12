@@ -10,7 +10,7 @@ import { LUMBER } from './physics.js';
 import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, scoringTargetBox } from './camera.js';
 import { makeButterflies } from './butterflies.js'; // F67
 import { makeCloudShadows } from './cloudshadows.js'; // F68
-import { daylightAt, SUN_DISTANCE } from './daylight.js';
+import { daylightAt, SUN_DISTANCE, SHADOW_NEAR, SHADOW_FAR } from './daylight.js';
 import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeTreeShadows, makeSkyPanorama, makeLake, makeSailboats, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 import { createFloatplane } from './floatplane.js'; // F19
 
@@ -195,9 +195,9 @@ export function createRenderer(canvas, terrain) {
   const phoneShadows = isPhone(), shadowHalf = phoneShadows ? 10 : 14;
   sun.shadow.mapSize.set(phoneShadows ? 1024 : 2048, phoneShadows ? 1024 : 2048);
   const sc = sun.shadow.camera;
-  sc.left = -shadowHalf; sc.right = shadowHalf; sc.top = shadowHalf; sc.bottom = -shadowHalf; sc.near = 1; sc.far = 60;
+  sc.left = -shadowHalf; sc.right = shadowHalf; sc.top = shadowHalf; sc.bottom = -shadowHalf; sc.near = SHADOW_NEAR; sc.far = SHADOW_FAR; // F95: near is negative so players upsun of the target keep their shadow
   sc.updateProjectionMatrix();
-  sun.shadow.bias = -0.00017;
+  sun.shadow.bias = -0.00017 * 60 / (SHADOW_FAR - SHADOW_NEAR); // scaled to the depth range
   sun.shadow.normalBias = 0.01;
   scene.add(sun, sun.target);
   // F40: aim the sun at p, snapped to the shadow map's texel grid in light space. Without this the frustum slides
