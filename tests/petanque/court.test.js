@@ -5,7 +5,7 @@ import { createTerrain } from '../../assets/js/petanque/terrain.js';
 import { mulberry32 } from '../../assets/js/petanque/rng.js';
 import { createBody, launch, createWorld, simulate, deadRowSlot, deadJackSpot } from '../../assets/js/petanque/physics.js';
 import { createMatch, apply, jackValid, jackPlaceValid, jackFault, DEFAULT_GEOMETRY } from '../../assets/js/petanque/rules.js';
-import { court, setCourt, resetCourt, nextCircle, ahead, farLine, farGap, toLocal, toWorld, baseYaw, forward, JACK_TOL, FRONT_MIN, FRONT_WANT } from '../../assets/js/petanque/court.js';
+import { court, setCourt, resetCourt, nextCircle, CIRCLE_R, ahead, farLine, farGap, toLocal, toWorld, baseYaw, forward, JACK_TOL, FRONT_MIN, FRONT_WANT } from '../../assets/js/petanque/court.js';
 import { AI, chooseThrow, chooseJackThrow, chooseJackPlacement } from '../../assets/js/petanque/ai.js';
 import { waitingSlots } from '../../assets/js/petanque/waiting.js';
 import { difficultyScale } from '../../assets/js/petanque/donnee.js';
@@ -58,10 +58,10 @@ test('nextCircle: a jack that finished 4 m from an end gets a ring with FRONT_WA
 
 test('nextCircle: jack in the margin or beyond the string clamps to legal ground', () => {
   const n = nextCircle({ x: -0.4, y: 14.8 }, 1);
-  assert.deepEqual([n.placed.x, n.placed.y], [0, 14]);
+  assert.deepEqual([n.placed.x, n.placed.y], [CIRCLE_R, 14]);
   assert.equal(n.dir, -1);
   const m = nextCircle({ x: 5, y: 0.2 }, -1);
-  assert.deepEqual([m.placed.x, m.placed.y], [4, 1]);
+  assert.deepEqual([m.placed.x, m.placed.y], [4 - CIRCLE_R, 1]);
   assert.equal(m.dir, 1);
   assert.ok(nextCircle(null, 1).circle);
 });
@@ -209,17 +209,16 @@ test('F24: after a mène the court circle and dir are exactly nextCircle of the 
   } finally { resetCourt(); }
 });
 
-test('F89: sweeping the jack along every string, the ring centre is on the court, may straddle a string, and keeps FRONT_MIN', () => {
-  let straddled = 0;
+test('F89b: sweeping the jack along every string and corner, the whole ring is in bounds and keeps FRONT_MIN', () => {
   for (const dir of [1, -1]) {
     for (let x = -0.5; x <= 4.5; x += 0.25) {
       for (let y = -0.5; y <= 15.5; y += 0.5) {
-        const n = nextCircle({ x, y }, dir);
-        assert.ok(n.circle.x >= 0 && n.circle.x <= 4 && n.circle.y >= 1 && n.circle.y <= 14, `centre ${n.circle.x},${n.circle.y}`);
-        assert.ok(n.front >= FRONT_MIN - 1e-9 || n.circle.y === 1 || n.circle.y === 14);
-        if (n.circle.x - n.circle.r < 0 || n.circle.x + n.circle.r > 4) straddled++;
+        const n = nextCircle({ x, y }, dir), c = n.circle;
+        assert.ok(c.x - CIRCLE_R >= -1e-9 && c.x + CIRCLE_R <= 4 + 1e-9, `ring ${c.x} inside the side strings`);
+        assert.ok(c.y - CIRCLE_R >= 0 && c.y + CIRCLE_R <= 15, `ring ${c.y} inside the end strings`);
+        assert.ok(c.y >= 1 && c.y <= 14, 'end margin kept');
+        assert.ok(n.front >= FRONT_MIN - 1e-9 || c.y === 1 || c.y === 14);
       }
     }
   }
-  assert.ok(straddled > 0, 'straddling a side string is allowed (Art. 6: the circle is not an out of bounds area)');
 });

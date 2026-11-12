@@ -11,6 +11,10 @@ export const COURT_MARGIN = 1; // circle centre at least this far from the end l
 // F79: no margin from the side strings (the rule's 1 m is from obstacles; strings are not obstacles): the ring may touch or
 // straddle a string. Only its centre must stay on the court, which also keeps it clear of the timbers (C.lumberGap outside).
 export const SIDE_MARGIN = 0;
+// F89b (user decision): the whole ring is placed in bounds even though Art. 6 would allow straddling a string, so the ring
+// centre keeps CIRCLE_R from each side string. Separate from SIDE_MARGIN (the jack's own bound, which may lie on the string).
+// End strings: COURT_MARGIN (1 m) > CIRCLE_R, so the whole ring is already inside there.
+export const CIRCLE_SIDE_MARGIN = CIRCLE_R;
 
 export const court = {
   circle: { x: DEFAULT_CIRCLE.x, y: DEFAULT_CIRCLE.y, r: CIRCLE_R },
@@ -44,7 +48,7 @@ export const toLocal = (p, c = court.circle, dir = court.dir) => ({ along: (p.y 
 export const toWorld = (l, c = court.circle, dir = court.dir) => ({ x: c.x + l.across * dir, y: c.y + l.along * dir });
 
 // The circle for the next mène (pure), in two steps (E10, E28). 1) The ring is placed around `jack` (centre within
-// JACK_TOL of it, at least COURT_MARGIN from the end lines, on the court sideways: SIDE_MARGIN, F79) and play is turned toward the other end.
+// JACK_TOL of it, at least COURT_MARGIN from the end lines, whole ring inside sideways: CIRCLE_SIDE_MARGIN, F89b) and play is turned toward the other end.
 // 2) The front of the ring (its edge facing the playing direction) must have at least FRONT_MIN to the far string; if
 // not, the ring is moved straight back, away from the far string, until FRONT_WANT remain (still inside the end margins).
 // Returns { circle: {x, y, r} (the final one), placed: {x, y, r} (step 1), moved, dir, front (metres from the front of
@@ -58,7 +62,7 @@ export const JACK_END_EDGE = 0.5; // = rules.js JACK_END_MARGIN (not imported: r
 export const FRONT_MIN = JACK_MAX_GAP + JACK_END_EDGE + 2 * C.jack.r;
 export const FRONT_WANT = FRONT_MIN + 1;
 export function nextCircle(jack, dir = 1, { width = C.terrainW, length = C.terrainL } = {}) {
-  const lo = { x: SIDE_MARGIN, y: COURT_MARGIN }, hi = { x: width - SIDE_MARGIN, y: length - COURT_MARGIN };
+  const lo = { x: CIRCLE_SIDE_MARGIN, y: COURT_MARGIN }, hi = { x: width - CIRCLE_SIDE_MARGIN, y: length - COURT_MARGIN };
   const cl = (v, a, b) => Math.max(a, Math.min(b, v));
   const j = jack && Number.isFinite(jack.x) && Number.isFinite(jack.y) ? jack : DEFAULT_CIRCLE;
   const nd = dir > 0 ? -1 : 1;

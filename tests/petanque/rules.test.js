@@ -4,7 +4,7 @@ import {
   createMatch, apply, nextTeam, meneResult, holdingTeam, jackValid, jackFault, jackPlaceValid, jackPlaceFault, playersWithBoules, deadJackText,
   jackGap, jackTooClose, jackCentreRange, TIE_EPS, JACK_END_MARGIN, JACK_R, JACK_DEAD_DIST, JACK_CENTRE_SHIFT,
 } from '../../assets/js/petanque/rules.js';
-import { FRONT_MIN, FRONT_WANT, nextCircle, CIRCLE_R } from '../../assets/js/petanque/court.js';
+import { FRONT_MIN, FRONT_WANT, nextCircle, CIRCLE_R, SIDE_MARGIN } from '../../assets/js/petanque/court.js';
 import { C } from '../../assets/js/petanque/constants.js';
 
 const K = JACK_CENTRE_SHIFT; // centre distance = edge gap + K (circle radius 0.25 + jack radius 0.015)
@@ -546,8 +546,11 @@ test('F79: the ring may sit against or across a side string, but stays on the co
     }
   }
   assert.equal(nextCircle({ x: 0.3, y: 7 }, 1).circle.x, 0.3, 'no longer pushed out to 1 m');
-  assert.equal(nextCircle({ x: 3.8, y: 7 }, 1).circle.x, 3.8);
-  assert.equal(nextCircle({ x: 0, y: 7 }, 1).circle.x, 0);
+  assert.equal(nextCircle({ x: 3.7, y: 7 }, 1).circle.x, 3.7);
+  // F89b: the ring centre keeps CIRCLE_R from each side string (whole ring in bounds); the jack's own bound stays at the string
+  assert.equal(nextCircle({ x: 0, y: 7 }, 1).circle.x, CIRCLE_R);
+  assert.equal(nextCircle({ x: 4, y: 7 }, 1).circle.x, 4 - CIRCLE_R);
+  assert.equal(SIDE_MARGIN, 0);
   assert.equal(nextCircle({ x: 2, y: 0.2 }, -1).circle.y, 1, 'end margin unchanged');
 });
 
