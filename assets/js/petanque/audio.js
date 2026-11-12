@@ -23,6 +23,7 @@
 //             Poisson-ish scheduling on AudioContext time; rate and level follow speed. No noise floor.
 //   stone     one slightly louder pebble tick when the physics reports a stone contact
 
+import { createAudioUnlock } from './audio-unlock.js'; // F94: iOS resume/interrupted/silent-switch lifecycle
 import { createAmbient } from './ambient.js'; // F12: park ambience (birds, breeze, airplane)
 
 // All tuning numbers live here. Gains are linear (0..1 before the compressor).
@@ -169,9 +170,22 @@ export function createAudio(opts = {}) {
     if (!ctx) return;
     try {
       if (held && ctx.state === 'running' && ctx.suspend) ctx.suspend().catch(() => {});
-      else if (!held && ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(() => {});
+      else if (!held && (ctx.state === 'suspended' || ctx.state === 'interrupted') && ctx.resume) ctx.resume().catch(() => {});
     } catch (e) { /* ignore */ }
   }
+
+  // F94: resumes on every gesture / visibilitychange / pageshow / focus while the context is not running (and not muted or paused).
+  // The state-change log exists only in ?debug builds (the production build drops it).
+  const stateLog = (typeof debug !== 'undefined' && debug)
+    ? (state, why) => console.log('[audio] ctx ' + state + ' (' + why + ')') : null;
+  const resumer = createAudioUnlock({
+    doc: typeof document !== 'undefined' ? document : null,
+    win: typeof window !== 'undefined' ? window : null,
+    nav: typeof navigator !== 'undefined' ? navigator : null,
+    getContext: () => ctx, create: () => unlock(),
+    isMuted: () => muted, isHeld: () => held, onState: stateLog,
+  });
+  if (typeof document !== 'undefined') resumer.attach();
 
   // Create the AudioContext on first call. Safe to call again.
   function unlock() {
@@ -181,7 +195,7 @@ export function createAudio(opts = {}) {
         else if (Ctor) setup(new Ctor());
         else return;
       }
-      if (!held && ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(() => {});
+      resumer.gesture();
     } catch (e) {
       ctx = null;
       master = null;
@@ -422,7 +436,7 @@ export function createAudio(opts = {}) {
   function handleEvents(events, bodiesById) {
     if (!ctx || muted || !events || !events.length) return;
     if (ctx.state !== 'running') {
-      if (!held && ctx.state === 'suspended') ctx.resume().catch(() => {});
+      resumer.resume('event');
       return;
     }
     const t = ctx.currentTime + 0.005;
@@ -526,6 +540,7 @@ export function createAudio(opts = {}) {
     saveMuted(muted);
     syncButtons();
     syncAmb();
+    if (!muted) resumer.resume('unmute');
   }
 
   // F12: audition ('bird' | 'breeze' | 'plane' | 'floatplane' | 'cicada' | 'bell') ignores mute.
