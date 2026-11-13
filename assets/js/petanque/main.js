@@ -33,6 +33,7 @@ import { isPhone } from './scenery.js';
 import { probeGpu, assessGpu, weakDevice, browserName, gpuMessage } from './gpuinfo.js'; // F102
 import { classifyBootError } from './boot-error.js'; // F114
 import { LEVELS, levelSettings, initialLevel, wantAntialias, createAutoQuality } from './quality.js'; // F103
+import { describe as describeText, quip as quipText, faultText, spotText as spotTextOf, ownerName as ownerNameOf, gapText as gapTextOf, meneWinNote } from './commentary-text.js';
 import { PERSONALITIES, CAST_IDS, specFor, pickStance, stanceFor, STAND_BEYOND, createCommentary, whoKind, composeSuggestion } from './personalities.js';
 
 let TEAM_NAMES = teamNamesFor('pierre'); // F45: reset in startGame for the chosen partner
@@ -1196,16 +1197,7 @@ function boot() {
     shoulderCam.yaw = aimYaw;
   }
 
-  // Status line while an AI shows its spot: the factual label, then the player's own line.
-  function spotText(player, choice, kind) {
-    const key = choice.labelKey || { event: kind === 'jack' ? 'spotJack' : 'spotPoint' };
-    const target = key.target === 'jack' ? 'the jack' : player.team === 1 ? 'your boule' : 'their boule';
-    const facts = (choice.label || `${player.name} picks ${player.id === 'odette' ? 'her' : 'his'} spot`) + '.';
-    // the tactical reason (D13) first, then the generic line for the event
-    const why = choice.why;
-    const quip = (why && why.code !== 'mistake' && talk.say(player.id, 'why.' + why.code, { target, ...why })) || talk.say(player.id, key.event, { target });
-    return quip ? `${facts} ${quip}` : facts;
-  }
+  const spotText = (player, choice, kind) => spotTextOf(player, choice, kind, talk);
 
   async function aiBoule(player) {
     hideHolding(); // F11: aiming starts, so the who-holds banner goes
@@ -1793,7 +1785,7 @@ function boot() {
   function snapshot() {
     const j = jackBody();
     return {
-      jack: { x: j.x, y: j.y, dead: j.dead, spot: j.dead && Number.isFinite(j.outX) ? { x: j.outX, y: j.outY } : null },
+      jack: j ? { x: j.x, y: j.y, dead: j.dead, spot: j.dead && Number.isFinite(j.outX) ? { x: j.outX, y: j.outY } : null } : null,
       boules: world.bodies.filter((b) => b.kind === 'boule').map((b) => ({
         id: b.id, team: b.team, owner: b.owner, x: b.x, y: b.y, dead: b.dead,
       })),
@@ -1803,75 +1795,20 @@ function boot() {
   // Commentary for the throw that just settled; evs = its physics events
   let lastKind = null; // 'dead' | 'carreau' | 'great' | null, set by describe() for the personality lines
   function describe(was, evs) {
-    const j = jackBody();
-    lastKind = null;
-    if (j && j.dead) return 'The jack is out: dead jack.';
-    if (was.kind === 'jack') return `Jack is ${jackGap(was, match && match.geometry).toFixed(1)} m out.`; // F75: edge to edge
-    if (j && match && jackTooClose(j, match.geometry)) return 'The jack is too close: less than 3 m from the circle, dead jack.'; // F76, Art. 9.3
-    if (was.dead) lastKind = 'dead';
-    if (was.dead) return `${ownerName(was)} boule is out: dead boule.`;
-    const gap = Math.hypot(was.x - j.x, was.y - j.y) - was.r - j.r;
-    const base = `${ownerName(was)} boule is ${gapText(was, j)} from the jack.`;
-    // carreau: the shooter hit an opposing boule, knocked it away and took its place
-    for (const ev of evs) {
-      if (ev.type !== 'hit' || (ev.a !== was.id && ev.b !== was.id)) continue;
-      const tid = ev.a === was.id ? ev.b : ev.a;
-      const t = world.bodies.find((b) => b.id === tid), from = preThrow.get(tid);
-      if (!t || t.kind !== 'boule' || t.team === was.team || !from) continue;
-      const moved = t.dead || Math.hypot(t.x - from.x, t.y - from.y) > 0.15;
-      if (moved && Math.hypot(was.x - from.x, was.y - from.y) < 0.3) {
-        lastKind = 'carreau';
-        return `Carreau! ${ownerName(was)} boule replaces the target.`;
-      }
-    }
-    if (gap < 0.02) lastKind = 'great';
-    if (gap < 0.02) return `Biberon! ${ownerName(was)} boule is touching the jack.`;
-    return base;
+    const r = describeText(was, evs, { jack: jackBody(), match, bodies: world.bodies, preThrow });
+    lastKind = r.kind;
+    return r.text;
   }
-  // F06: edge-to-edge gap, the same figure as every measuring label, card and status line
-  const gapText = (b, j) => fmtCm(gapM(b, j));
-  const ownerName = (b) => {
-    const p = match && match.players.find((q) => q.id === b.owner);
-    return p ? (p.isHuman ? 'Your' : p.name + "'s") : 'The';
-  };
+  const gapText = gapTextOf;
+  const ownerName = (b) => ownerNameOf(b, match && match.players);
 
-  // One or two personality lines for the throw that just settled (null when nothing fits)
   const pick = (team) => {
     const ids = match.players.filter((p) => p.team === team && !p.isHuman).map((p) => p.id);
     return ids[Math.floor(chance() * ids.length)] || null;
   };
-  function quip(was, prevHold) {
-    const j = jackBody(), now = holdingTeam(match.jack, match.boules);
-    const gap = j ? Math.hypot(was.x - j.x, was.y - j.y) - was.r - j.r : 9;
-    const owner = match.players.find((p) => p.id === was.owner);
-    if (!owner) return '';
-    const gained = now === was.team && prevHold !== was.team;
-    let ev = lastKind;
-    if (!ev) ev = gained || gap < 0.25 ? 'good' : now !== was.team && gap > 0.6 ? 'miss' : null;
-    if (!ev) return '';
-    const out = [];
-    if (owner.isHuman) { // you have no catchphrases: your partner cheers your points, a neutral line otherwise
-      const cheer = gained || ev === 'great' || ev === 'carreau';
-      out.push(cheer ? talk.say(partner, 'ownScores') : talk.line('you', ev));
-    } else out.push(talk.say(owner.id, ev));
-    if (gained && chance() < 0.5) { // the other side reacts to losing the point
-      const foe = pick(1 - was.team);
-      if (foe && foe !== owner.id) out.push(talk.say(foe, 'oppScores'));
-    }
-    return out.filter(Boolean).join(' ');
-  }
+  const quip = (was, prevHold) => quipText(was, prevHold, { jack: jackBody(), match, kind: lastKind, talk, partner, chance });
 
   // ---- Invalid jack: the other team places it by hand ----
-  function faultText(f) {
-    if (!f) return '';
-    const d = f.dist.toFixed(1);
-    if (f.reason === 'short') return `Too short: ${d} m.`;
-    if (f.reason === 'far') return `Too far: ${d} m.`;
-    if (f.reason === 'line') return `Out over the ${f.side} line.`;
-    if (f.reason === 'end') return `Too close to the end string: ${f.gap.toFixed(1)} m, it needs ${f.margin} m.`;
-    if (f.back) return 'Went over a line and came back.';
-    return 'Out of bounds.';
-  }
   // Wide view over the whole 6 to 10 m zone, with the legal-zone arcs
   function placeView() {
     renderer.showJackZone(true, 'place');
@@ -2140,8 +2077,7 @@ function boot() {
     else if (!jackOut && !r.void && r.measured && r.measured.length) {
       // report the winning boule's gap, the figure on its measuring label
       const win = world.bodies.find((b) => b.id === r.measured[0].id);
-      const special = /^(Carreau|Biberon)/.test(note) ? note + ' ' : '';
-      if (win) note = `${closeCall ? 'Close call! ' : ''}${special}Closest: ${ownerName(win)} boule, ${gapText(win, j)} from the jack.`;
+      if (win) note = meneWinNote({ note, closeCall, win, jack: j, players: match.players });
     }
     refreshHud(null);
     // F56: in a slow mène the outcome view and the card wait for the click (the sim clock is held); the ring, jack return, gathering and
