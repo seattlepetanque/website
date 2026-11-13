@@ -37,7 +37,7 @@ export function engineGain(level, rev, E) {
 }
 
 export function createAmbient(ctx, dest) {
-  if (!ctx || !dest) return { setActive() {}, audition() {}, engine() {}, setState() {} };
+  if (!ctx || !dest) return { setActive() {}, audition() {}, engine() {}, setState() {}, setScale() {} };
   const A = AMBIENT;
   const bus = ctx.createGain(); // follows the on/off + mute state
   bus.gain.value = 0;
@@ -66,6 +66,7 @@ export function createAmbient(ctx, dest) {
   const setPan = (n, v, t, tc) => { if (n.pan) n.pan.setTargetAtTime(v, t, tc); };
 
   let active = false, timer = 0;
+  let scale = 1; // F103: low graphics turn the ambience down (and thin the birdsong)
   let nextBird = 0, nextGust = 0, nextPlane = 0;
   let sched = createAmbientSchedule((Math.random() * 4294967296) >>> 0);
   let ctl = { busy: false, slow: true }; // from the game: a human aim/throw moment, slow mode
@@ -128,11 +129,11 @@ export function createAmbient(ctx, dest) {
   }
   function birdEvent(t, dest2) {
     for (let i = birdEnds.length - 1; i >= 0; i--) if (birdEnds[i] < ctx.currentTime) birdEnds.splice(i, 1);
-    if (birdEnds.length >= A.bird.maxVoices) return;
+    if (birdEnds.length >= (scale < 1 ? 2 : A.bird.maxVoices)) return;
     const sp = NAMES[Math.floor(Math.random() * NAMES.length)];
     const pan = rnd(-0.9, 0.9), dist = rnd(0.05, 1), pitch = rnd(0.92, 1.08);
     const dur = bird(t, dest2, sp, pan, dist, pitch);
-    if (Math.random() < A.bird.answerChance && birdEnds.length < A.bird.maxVoices) { // answer from the other side
+    if (Math.random() < A.bird.answerChance && birdEnds.length < (scale < 1 ? 2 : A.bird.maxVoices)) { // answer from the other side
       bird(t + dur + rr(A.bird.answerDelay), dest2, sp, -Math.sign(pan || 1) * rnd(0.3, 0.9), rnd(0.2, 1), pitch * rnd(1.04, 1.14));
     }
   }
@@ -356,7 +357,7 @@ export function createAmbient(ctx, dest) {
       active = on;
       const t = ctx.currentTime;
       bus.gain.cancelScheduledValues(t);
-      bus.gain.setTargetAtTime(on ? A.level : 0, t, on ? 1.5 : 0.15);
+      bus.gain.setTargetAtTime(on ? A.level * scale : 0, t, on ? 1.5 : 0.15);
       if (on) {
         startBreeze(t);
         nextGust = t + rr(A.breeze.first);
@@ -403,5 +404,9 @@ export function createAmbient(ctx, dest) {
   // F66: the game's moment: busy = a human aim/throw is on, slow = slow mode (quick mode plays quieter and rarer)
   function setState(st) { ctl = { busy: !!(st && st.busy), slow: !st || st.slow !== false }; }
 
-  return { setActive, audition, engine, setState };
+  function setScale(k) { // F103
+    scale = Math.max(0, Math.min(1, k));
+    if (active) { const t = ctx.currentTime; bus.gain.cancelScheduledValues(t); bus.gain.setTargetAtTime(A.level * scale, t, 0.3); }
+  }
+  return { setActive, audition, engine, setState, setScale };
 }

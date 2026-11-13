@@ -4,7 +4,10 @@
 const KEY = 'petanque-mode';
 const MODES = ['quick', 'slow'];
 const PARTNERS = ['pierre', 'marcel', 'odette'];
+const GKEY = 'petanque-graphics'; // F104: 'high' | 'auto' (default) | 'low'
+const GRAPHICS = ['high', 'auto', 'low'];
 const listeners = new Set();
+const gListeners = new Set();
 
 function load() {
   try { const v = localStorage.getItem(KEY); if (MODES.includes(v)) return v; } catch (e) { /* storage blocked */ }
@@ -12,6 +15,7 @@ function load() {
 }
 
 let mode = load();
+let graphics = (() => { try { const v = localStorage.getItem(GKEY); if (GRAPHICS.includes(v)) return v; } catch (e) { /* storage blocked */ } return 'auto'; })();
 
 export const settings = {
   get mode() { return mode; },
@@ -21,6 +25,15 @@ export const settings = {
     try { localStorage.setItem(KEY, v); } catch (e) { /* storage blocked */ }
     for (const fn of [...listeners]) fn(v);
   },
+  // F104: the Graphics choice on the pause card (see quality.js); applied at once, remembered
+  get graphics() { return graphics; },
+  set graphics(v) {
+    if (!GRAPHICS.includes(v) || v === graphics) return;
+    graphics = v;
+    try { localStorage.setItem(GKEY, v); } catch (e) { /* storage blocked */ }
+    for (const fn of [...gListeners]) fn(v);
+  },
+  onGraphicsChange(fn) { gListeners.add(fn); return () => gListeners.delete(fn); },
   // E27 (hidden): the TV camera variant for AI turns in quick mode: '' (off) | 'a' | 'b' | 'c'. Set it from the console:
   // localStorage.setItem('petanque-tvcam', 'b'). ?debug&tvcam=a|b|c overrides it.
   get tvcam() { try { const v = localStorage.getItem('petanque-tvcam'); return ['a', 'b', 'c'].includes(v) ? v : ''; } catch (e) { return ''; } },

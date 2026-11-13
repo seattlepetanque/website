@@ -129,7 +129,14 @@ export function createHud(root, hudEl, cb) {
   // Mode (Slow / Quick) lives here; main.js applies a change to Quick on Resume, Slow from the next action
   const pausedMode = radioGroup(pausedEl, 'Mode', 'pt-paused-mode', [['slow', 'Slow'], ['quick', 'Quick']], settings.mode,
     (v) => { settings.mode = v; }, 'pt-modes pt-paused-modes');
-  pausedEl.append(resumeBtn,
+  // F104: Graphics (High / Auto / Low) beside it; applied at once. The note shows only when antialiasing (fixed when the
+  // context was created) would differ from the choice: it takes effect after a reload.
+  const pausedGfx = radioGroup(pausedEl, 'Graphics', 'pt-paused-gfx', [['high', 'High'], ['auto', 'Auto'], ['low', 'Low']], settings.graphics,
+    (v) => { settings.graphics = v; syncGfxNote(); }, 'pt-modes pt-paused-modes pt-paused-gfx');
+  const gfxNote = el('p', 'pt-gfx-note', 'Smooth edges change after you reload the page.');
+  gfxNote.hidden = true;
+  const syncGfxNote = () => { gfxNote.hidden = !(cb.needsReload && cb.needsReload()); };
+  pausedEl.append(gfxNote, resumeBtn,
     button('New game', 'pt-btn pt-btn-alt pt-paused-new', () => cb.onNewGame && cb.onNewGame()),
     button('End game', 'pt-btn pt-btn-alt pt-paused-end', () => cb.onEndGame && cb.onEndGame()));
   // F11: "who holds the point" banner, shown before each aim (main.js drives its 2 s hold on the game clock)
@@ -337,6 +344,8 @@ export function createHud(root, hudEl, cb) {
   function showPaused(on) {
     pausedEl.hidden = !on;
     for (const i of pausedMode.querySelectorAll('input')) i.checked = i.value === settings.mode;
+    for (const i of pausedGfx.querySelectorAll('input')) i.checked = i.value === settings.graphics;
+    syncGfxNote();
     if (on) focusSoon(resumeBtn);
   }
 

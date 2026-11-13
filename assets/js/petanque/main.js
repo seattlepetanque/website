@@ -30,6 +30,8 @@ import { pickWaitingSlot, waitingSlots } from './waiting.js';
 import { attachModels } from './models.js';
 import { createGroundView } from './groundview.js';
 import { isPhone } from './scenery.js';
+import { probeGpu, assessGpu, weakDevice, browserName, gpuMessage } from './gpuinfo.js'; // F102
+import { LEVELS, levelSettings, initialLevel, wantAntialias, createAutoQuality } from './quality.js'; // F103
 import { PERSONALITIES, CAST_IDS, specFor, pickStance, stanceFor, STAND_BEYOND, createCommentary, whoKind, composeSuggestion } from './personalities.js';
 
 let TEAM_NAMES = teamNamesFor('pierre'); // F45: reset in startGame for the chosen partner
@@ -79,9 +81,18 @@ function boot() {
   const seedParam = params.get('seed');
   const seed = seedParam !== null && seedParam !== '' && !isNaN(+seedParam)
     ? +seedParam : Math.floor(Math.random() * 1e9);
+  // F102: the game needs hardware WebGL. Production always enforces it; ?debug skips the check (headless Chrome uses SwiftShader),
+  // and ?debug&fakegpu=SwiftShader|none forces the message path.
+  const fakeGpu = debug ? params.get('fakegpu') : null;
+  const gpuCheck = assessGpu(fakeGpu ? { hasContext: fakeGpu !== 'none', renderer: fakeGpu === 'none' ? '' : fakeGpu } : probeGpu(document));
+  if (!gpuCheck.ok && !(debug && !fakeGpu)) { showGpuMessage(gpuCheck); return; }
+  // F102/F104: soft hints (little memory or few cores) start Auto in Low graphics; ?debug&weak forces the hint, &gfx=high|auto|low the setting
+  const weak = weakDevice(navigator) || !!(debug && params.has('weak'));
+  if (debug && ['high', 'auto', 'low'].includes(params.get('gfx'))) settings.graphics = params.get('gfx');
+  let level = initialLevel(settings.graphics, weak);
   const terrain = createTerrain(seed);
   const world = createWorld(terrain, mulberry32(seed ^ 0x9e3779b9));
-  const renderer = createRenderer(canvas, terrain);
+  const renderer = createRenderer(canvas, terrain, { antialias: wantAntialias(settings.graphics, weak), quality: levelSettings(level) });
   const aiRand = mulberry32(seed ^ 0x51ed270b);
   const stanceRand = mulberry32(seed ^ 0x6a09e667); // the AI's crouch-or-stand pick, one per throw
   const talk =createCommentary(mulberry32(seed ^ 0x7a1c0de5)); // personality lines, seeded like everything else
@@ -154,6 +165,7 @@ function boot() {
   const KEEP_YAW = 35 * DEG; // E12 (see setAdjust); the pan limits live in camera.js (VIEW_PAN, F48)
   let adjusting = false, viewAnim = 0;
   const audio = createAudio();
+  audio.setAmbientScale(levelSettings(level).ambient);
   const announcer = createAnnouncer(root, { audio }); // F61
   if (debug && ['carreau', 'biberon'].includes(params.get('announce'))) { // ?debug&announce=carreau|biberon: preview at page load, and again every 4 s
     const kind = params.get('announce');
@@ -503,6 +515,7 @@ function boot() {
     onExit: () => endGame(), // F93: the game-over card's Exit leaves the same way as End game
     onChoose: (id) => beginTurn(id),
     onHintDismiss: () => store(HINT_KEY, '1'),
+    needsReload: () => wantAntialias(settings.graphics, weak) !== renderer.antialias, // F104: antialiasing is fixed at context creation
   });
   const say2 = hud.say;
 
@@ -2381,6 +2394,17 @@ function boot() {
     if (!p && quickPending && settings.mode === 'quick') applyQuick();
   }
 
+  // F103/F104: graphics quality. High = level 0, Low = the last level, Auto starts at 0 (Low on a weak device) and the
+  // controller steps down one level when frames stay slow; never back up. Changing the setting applies at once.
+  let auto = settings.graphics === 'auto' ? createAutoQuality(level) : null, qLast = 0;
+  function applyLevel(l) { level = l; const s = levelSettings(l); renderer.setQuality(s); audio.setAmbientScale(s.ambient); }
+  settings.onGraphicsChange((g) => { auto = g === 'auto' ? createAutoQuality(initialLevel(g, weak)) : null; applyLevel(initialLevel(g, weak)); });
+  function qualityTick(now) {
+    const ms = now - qLast; qLast = now;
+    if (!auto) return;
+    const next = auto.frame(ms, !pausedNow && !document.hidden);
+    if (next !== null) { applyLevel(next); if (debug) console.info('[quality] auto stepped down to', next, LEVELS[next].name); }
+  }
   // Fixed timestep loop (?debug&timerframes drives it from timers, for headless screenshots under virtual time)
   const nextFrame = debug && params.has('timerframes') ? (f) => setTimeout(() => f(performance.now()), 16) : requestAnimationFrame;
   // E21 hard cap: a throw that hasn't settled after hardCapSeconds of game time (the clock stops while paused) has
@@ -2397,6 +2421,7 @@ function boot() {
     last = now;
     if (pauseHold && ((pending && now > 1500) || now > 3500)) { pauseHold = false; if (playing) userPaused = true; syncPausedUI(); }
     syncPause();
+    qualityTick(now);
     clock.tick(dt * 1000);
     acc += dt;
     if ((!playing || userPaused) && match) acc = 0; // paused: the game waits
@@ -2452,6 +2477,7 @@ function boot() {
       audio,
       setPlaying, clock, pauseGame, endGame,
       get paused() { return pausedNow; },
+      get quality() { return level; },
       get pending() { return pending; },
       cast,
       get aimYaw() { return aimYaw; },
@@ -2776,6 +2802,33 @@ function showFallback(err) {
   a.textContent = 'read up on pétanque and find a real court on our Links page';
   p.append(a, '.');
   box.append(h, p);
+  root.insertBefore(box, root.firstChild);
+}
+
+// F102: the hardware-WebGL requirement message, in the game area: what is needed, what was detected, how to fix it
+function showGpuMessage(a) {
+  const m = gpuMessage(a, browserName(navigator.userAgent));
+  say(m.title + '. ' + m.lead);
+  if (!root) return;
+  for (const el of root.querySelectorAll('canvas, .petanque-hud, .petanque-controls')) el.hidden = true;
+  const box = document.createElement('div');
+  box.className = 'petanque-fallback petanque-gpu';
+  const h = document.createElement('p');
+  h.className = 'petanque-fallback-title';
+  h.textContent = m.title;
+  const lead = document.createElement('p');
+  lead.textContent = m.lead;
+  const det = document.createElement('p');
+  det.className = 'petanque-gpu-detected';
+  det.textContent = m.detected;
+  const ul = document.createElement('ul');
+  for (const t of m.howto) { const li = document.createElement('li'); li.textContent = t; ul.append(li); }
+  const p = document.createElement('p');
+  const link = document.createElement('a');
+  link.href = root.dataset.linksUrl || '/links/';
+  link.textContent = 'read up on pétanque and find a real court on our Links page';
+  p.append('In the meantime, ', link, '.');
+  box.append(h, lead, det, ul, p);
   root.insertBefore(box, root.firstChild);
 }
 

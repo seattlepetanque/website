@@ -14,6 +14,7 @@
   border-radius: 4px;
 }
 .petanque-fallback-title { margin: 0 0 .5rem; font-size: 1.3rem; font-weight: 700; }
+.petanque-gpu ul { max-width: 44rem; margin: 0 auto 1rem; text-align: left; }
 .petanque-fallback a { color: inherit; font-weight: 700; text-decoration: underline; }
 .petanque canvas {
   display: block;
@@ -195,6 +196,8 @@ html.petanque-playing main { overflow: visible; }
 .petanque.is-playing .pt-paused-text { flex: 1 1 100%; text-align: center; font-size: 1.1rem; }
 .pt-paused-modes { flex: 1 1 100%; justify-content: center; margin: 0; }
 .pt-paused-modes .pt-legend { flex: 0 0 auto; }
+.pt-gfx-note { flex: 1 1 100%; margin: 0; text-align: center; font-size: .85rem; font-style: italic; }
+.pt-gfx-note[hidden] { display: none; }
 
 /* scoreboard bar */
 .petanque.is-playing .pt-board {
