@@ -420,14 +420,13 @@ html.petanque-playing main { overflow: visible; }
   .petanque.is-playing .pt-holding { margin-top: 2.1rem; }
 }
 
-/* F61: CARREAU ! / BIBERON ! announcement. Above the canvas, below the cards (.pt-overlay is z-index 2), never takes clicks. */
+/* F61: CARREAU ! / BIBERON ! announcement. Above the canvas AND above the cards (.pt-overlay is z-index 2): F125, a biberon/carreau on the last boule of a mène is announced in the same tick the mène-end card opens, so it must show over that card. Never takes clicks. */
 .pt-announce {
-  position: absolute; inset: 0; z-index: 1; pointer-events: none; overflow: hidden;
+  position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: hidden;
   display: flex; align-items: center; justify-content: center;
   container-type: inline-size;
 }
-.petanque.is-paused .pt-announce,
-.petanque:has(.pt-overlay.is-active) .pt-announce:not([data-force]) { display: none; }
+.petanque.is-paused .pt-announce { display: none; } /* F125: no longer hidden by an open card: announcer.show() already declines when a card is open at the call */
 .pt-announce-word {
   font-family: 'Rubik Glitch', 'Arial Black', Impact, system-ui, sans-serif; font-weight: 900; font-display: swap;
   font-size: clamp(2.2rem, 15cqi, 9rem); line-height: 1; letter-spacing: .02em; white-space: nowrap;
