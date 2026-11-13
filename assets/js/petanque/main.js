@@ -54,7 +54,7 @@ const useMeshes = params.get('figures') === 'mesh'; // stick figures by default;
 const AI_MIN_THINK = 800; // ms: the AI never answers faster than this
 const HINT_KEY = 'petanque-hint-seen';
 const HINT_TEXT = 'Drag sideways to turn. Press on the court where you want the boule to land, pull down to throw ' +
-  'higher, release to throw; drag back up to cancel. Press near a boule to shoot it.';
+  'higher, release to throw; drag back up to cancel. Press on a boule to shoot it.';
 // Where waiting players stand: behind the circle and beside the court, out of the shoulder camera's view
 // F45: the slots belong to the seats: your partner stands in Pierre's slot and the opponents in Marcel's and Odette's, whoever they are
 const HOME_LOCAL = { you: { x: -0.9, y: -0.4 }, pierre: { x: -1.5, y: 0.7 }, marcel: { x: 6.0, y: 0.0 }, odette: { x: 6.8, y: 0.8 } };
@@ -139,8 +139,9 @@ function boot() {
   // E11 / E27: the camera style is read here and nowhere else. Slow mode watches from the side like a spectator
   // ('observer'); the human's own turn (shoulder view) and quick mode keep the game cameras. ?debug&cam=tv|game overrides.
   // E27: the TV variant (?debug&tvcam=a|b|c, else the hidden setting); a debug tvcam also turns TV on in slow mode
-  const tvVar = () => tvVariant((debug && params.get('tvcam')) || settings.tvcam);
-  const camStyle = (human = false) => cameraStyle({ slow: slow(), human, override: (debug && params.get('cam')) || settings.camStyle || (debug && params.has('tvcam') ? 'tv' : null), tv: tvVar() }); // F01: settings.camStyle (hidden) or ?debug&cam=broadcast
+  const quickDefault = () => !slow() && !debug; // F123: quick mode ignores the hidden tvcam / camStyle settings (debug overrides only): every thrower gets the shoulder view and the same follow
+  const tvVar = () => quickDefault() ? '' : tvVariant((debug && params.get('tvcam')) || settings.tvcam);
+  const camStyle = (human = false) => cameraStyle({ slow: slow(), human, override: quickDefault() ? null : (debug && params.get('cam')) || settings.camStyle || (debug && params.has('tvcam') ? 'tv' : null), tv: tvVar() }); // F01: settings.camStyle (hidden) or ?debug&cam=broadcast
   const observing = () => camStyle() === 'observer';
   const broadcasting = () => camStyle() === 'broadcast'; // F01
   const observerView = (points, extra) => { if (wideHold) return; if (humanWalk && !(extra && extra.follow)) humanWalk.cam = false; renderer.setCamera('observer', { points, ...extra }); };
@@ -1972,10 +1973,11 @@ function boot() {
     if (instant) markLandings(world.events);
     const snap = snapshot();
     const note = describe(was, evs);
-    if (was.kind === 'boule' && !instant) { // F61: CARREAU / BIBERON overlay (the sim keeps running)
+    if (was.kind === 'boule' && (!instant || (debug && params.has('announcelog')))) { // F61: CARREAU / BIBERON overlay (the sim keeps running)
       try {
         const kind = detectAnnouncement({ before: preThrow, bodies: world.bodies, shooterId: was.id, events: evs });
         const early = carreauW && carreauW.fired && carreauW.shooterId === was.id && carreauW.preThrow === preThrow; // F107: announced mid-throw
+        if (debug && params.has('announcelog')) { const jb = jackBody(), sb = world.bodies.find((b) => b.id === was.id); const msg = ('kind=' + kind + ' gap=' + (jb && sb ? gapM(sb, jb).toFixed(4) : 'na') + ' paused=' + root.classList.contains('is-paused') + ' overlay=' + (root.querySelector('.pt-overlay.is-active') || {}).className); console.log('[announce] ' + msg); root.dataset.alog = (root.dataset.alog || '') + msg + ' | '; }
         if (kind && !(early && kind === 'carreau')) announcer.show(kind);
       } catch (err) { console.error('[announce]', err); }
     }

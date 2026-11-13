@@ -170,3 +170,13 @@ test('F107: the settled fallback still announces when the watcher did not fire',
   assert.equal(w.fired, false);
   assert.equal(detectAnnouncement({ before: before(t0, s0), bodies: [jack(2, 8), mv(t0, 2.5, 6.8), mv(s0, 2.02, 6.0)], shooterId: 20, events: [hit(20, 10)] }), 'carreau');
 });
+
+// F125: the mène-end / game-over card opens in the same tick as the announcement of the last boule's biberon or carreau;
+// the overlay must not be hidden by that card (CSS used to display:none it) and must stack above it.
+import { readFileSync } from 'node:fs';
+test('F125: an open card does not hide the announcement, which stacks above the cards', () => {
+  const css = readFileSync(new URL('../../assets/css/game.css', import.meta.url), 'utf8');
+  assert.ok(!/pt-overlay\.is-active\)[^{]*\.pt-announce/.test(css), 'no rule hides .pt-announce under an active card');
+  const z = (sel) => +new RegExp(`${sel.replace('.', '\\.')}\\s*\\{[^}]*z-index:\\s*(\\d+)`).exec(css)[1];
+  assert.ok(z('.pt-announce') > z('.pt-overlay'), 'announce above the cards');
+});

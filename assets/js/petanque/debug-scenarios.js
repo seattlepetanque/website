@@ -246,7 +246,8 @@ export function runDebugScenario(ctx) {
     clearWorld();
     hud.hideHint();
     const put = putter(world);
-    put('jack', -1, 2.1, 8);
+    put('jack', -1, +params.get('jx') || 2.1, 8); // ?jx= moves the jack across the line of the shot (F123 widen check)
+    if (params.has('jwall')) for (let x = 1.4; x < 3.01; x += 0.1) put('boule', 1, x, 11); // F124: a row of boules across the shot (a staged hit)
     put('boule', 1, 1.8, 8.2);
     put('boule', 1, 2.6, 7.7);
     renderer.sync(world);
