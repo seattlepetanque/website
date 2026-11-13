@@ -1337,6 +1337,7 @@ export function createRenderer(canvas, terrain, init = {}) {
   function setThrowPreview(p) {
     preview = p || null;
     previewApex = p && p.center ? Math.max(0, ...p.center.map((q) => q.z)) : 0;
+    if (p && p.donnee) focusRef = { donnee: p.donnee, apex: previewApex }; // F110: the aim focus outlives the preview (released throw): it eases out instead of snapping
     if (!p) {
       for (const r of allRibbons) { r.n = 0; r.mesh.visible = false; }
       coneMesh.visible = false;
@@ -1509,11 +1510,11 @@ export function createRenderer(canvas, terrain, init = {}) {
       if (opts.viewPitch) { // E12: positive pitch looks down from higher up, negative looks level from lower
         goal.pos.z += opts.viewPitch * 3 * zoom * w; goal.tgt.z -= Math.tan(opts.viewPitch) * 7 * 0.6;
       }
-      if (focusK > 0 && preview && preview.donnee) { // while tossing, look toward the donnée (and zoom in a little)
-        const d = preview.donnee, k = 0.6 * focusK;
+      if (focusK > 0 && focusRef) { // while tossing, look toward the donnée (and zoom in a little); F110: from the kept aim, so the focus eases out after the preview clears
+        const d = focusRef.donnee, k = 0.6 * focusK;
         goal.tgt.x += (d.x - goal.tgt.x) * k; goal.tgt.y += (d.y - goal.tgt.y) * k;
         goal.tgt.z += (groundZ(d) - 0.2 - goal.tgt.z) * k;
-        goal.tgt.z += Math.min(2.2, 0.3 * previewApex) * focusK; // tilt up so a high lob's apex stays in view
+        goal.tgt.z += Math.min(2.2, 0.3 * focusRef.apex) * focusK; // tilt up so a high lob's apex stays in view
       }
     } else if (mode === 'inspect') {
       const t = opts.target || { x: 2, y: 8 };
@@ -1529,7 +1530,7 @@ export function createRenderer(canvas, terrain, init = {}) {
   }
 
   // Toss focus: 0..1, eased while the shoulder camera shows a preview, so the cone is bigger on screen
-  let focusK = 0;
+  let focusK = 0, focusRef = null;
   // ---- Paused (D12): a free orbit camera round a ground point, and the sepia pass ----
   let paused = false;
   const PC = { P: new THREE.Vector3(), pos: new THREE.Vector3(), az: 0, el: 0.6, dist: 6 };
@@ -1629,8 +1630,8 @@ export function createRenderer(canvas, terrain, init = {}) {
     computeGoal(dt);
     const baseFov = camera.aspect < 1 ? 62 : 50;
     let fov = baseFov;
-    if (focusK > 0 && preview && preview.donnee) {
-      const d = Math.hypot(preview.donnee.x - court.circle.x, preview.donnee.y - court.circle.y);
+    if (focusK > 0 && focusRef) {
+      const d = Math.hypot(focusRef.donnee.x - court.circle.x, focusRef.donnee.y - court.circle.y);
       fov = baseFov * (1 - 0.32 * focusK * Math.max(0, Math.min(1, (d - 3) / 5)));
     }
     if (mode === 'observer' && obsFrame) fov *= obsFrame.fovK; // E11: the spectator's slow zoom
@@ -1656,7 +1657,7 @@ export function createRenderer(canvas, terrain, init = {}) {
       cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
     }
     camera.position.copy(cur.pos);
-    if (camLog !== null) console.log('[camlog] ' + JSON.stringify({ m: mode, t: +dt.toFixed(4), p: [cur.pos.x, cur.pos.y, cur.pos.z].map((v) => +v.toFixed(4)), g: [cur.tgt.x, cur.tgt.y, cur.tgt.z].map((v) => +v.toFixed(4)), f: +camera.fov.toFixed(3), gp: [goal.pos.x, goal.pos.y, goal.pos.z].map((v) => +v.toFixed(3)), gt: [goal.tgt.x, goal.tgt.y, goal.tgt.z].map((v) => +v.toFixed(3)) })); // F110: ?debug&camlog
+    if (camLog !== null) console.log('[camlog] ' + JSON.stringify({ m: mode, t: +dt.toFixed(4), p: [cur.pos.x, cur.pos.y, cur.pos.z].map((v) => +v.toFixed(4)), g: [cur.tgt.x, cur.tgt.y, cur.tgt.z].map((v) => +v.toFixed(4)), f: +camera.fov.toFixed(3), fk: +focusK.toFixed(3), pv: preview && preview.donnee ? 1 : 0, gp: [goal.pos.x, goal.pos.y, goal.pos.z].map((v) => +v.toFixed(3)), gt: [goal.tgt.x, goal.tgt.y, goal.tgt.z].map((v) => +v.toFixed(3)) })); // F110: ?debug&camlog
     let lookAt = cur.tgt;
     camera.lookAt(lookAt);
     // shadow frustum follows what we look at

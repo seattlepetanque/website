@@ -1017,7 +1017,8 @@ function boot() {
         loft: (+params.get('loft') || 40) * DEG, snappedTo: tir ? jb.id : null,
       };
       showToss(lastToss, kind);
-      if (params.has('autothrow') && !humanTurn.auto) setTimeout(() => { humanTurn.auto = true; humanToss(lastToss); }, 2500); // screenshots of the throw
+      if (params.has('autothrow') && +params.get('fixeddt')) clock.later(() => { if (pending && lastToss) showToss(lastToss, kind); }, 800); // F110: with &animate the walk to the circle clears the preview; show it again so the aim focus is on when the throw starts
+      if (params.has('autothrow') && !humanTurn.auto) (+params.get('fixeddt') ? clock.later : setTimeout)(() => { humanTurn.auto = true; humanToss(lastToss); }, 2500); // screenshots of the throw
     }
   }
 
@@ -2425,7 +2426,9 @@ function boot() {
   }
   let acc = 0, last = performance.now();
   const freezeAt = debug ? +params.get('freezeat') || 0 : 0; // ?debug&freezeat=0.6 stops the sim at that time (camera checks)
+  const fixedDt = debug ? +params.get('fixeddt') || 0 : 0; // F110: ?debug&fixeddt=16.7 advances exactly that many ms per rendered frame (camera measurements at 60 fps under slow headless rendering)
   function frame(now) {
+    if (fixedDt) now = last + fixedDt;
     const dt = Math.min((now - last) / 1000, 0.1);
     last = now;
     if (pauseHold && ((pending && now > 1500) || now > 3500)) { pauseHold = false; if (playing) userPaused = true; syncPausedUI(); }
