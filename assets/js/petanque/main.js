@@ -10,7 +10,7 @@ import { createRenderer } from './render.js';
 import {
   createMatch, defaultPlayers, teamNamesFor, validPartner, opponentIds, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm, deadJackText, jackGap, jackTooClose, TIE_EPS,
 } from './rules.js';
-import { detectAnnouncement } from './announce.js';
+import { detectAnnouncement, createCarreauWatcher } from './announce.js';
 import { createAnnouncer } from './announce-view.js';
 import { createHud, createHoldIcons } from './hud.js';
 import { settings } from './settings.js';
@@ -121,6 +121,7 @@ function boot() {
   let token = 0; // bumped on each new game so stale timers are ignored
   let yellowDone = false; // ?debug&yellow forces one yellow card
   let flying = null; // body being tracked
+  let carreauW = null; // F107
   let throwEvents = []; // physics events of the current throw (hits, for commentary)
   let preThrow = new Map(); // id -> { x, y } of boules before the current throw
   let pending = null; // { kind, playerId } while waiting for the human to throw
@@ -2025,7 +2026,8 @@ function boot() {
     if (was.kind === 'boule' && !instant) { // F61: CARREAU / BIBERON overlay (the sim keeps running)
       try {
         const kind = detectAnnouncement({ before: preThrow, bodies: world.bodies, shooterId: was.id, events: evs });
-        if (kind) announcer.show(kind);
+        const early = carreauW && carreauW.fired && carreauW.shooterId === was.id && carreauW.preThrow === preThrow; // F107: announced mid-throw
+        if (kind && !(early && kind === 'carreau')) announcer.show(kind);
       } catch (err) { console.error('[announce]', err); }
     }
     if (was.kind === 'jack') {
@@ -2428,6 +2430,10 @@ function boot() {
     let n = 0;
     while (acc >= C.dt && n < MAX_STEPS && !(freezeAt && world.t >= freezeAt)) {
       world.step(); acc -= C.dt; n++;
+      if (flying && flying.kind === 'boule' && !instant && match) { // F107: carreau overlay the moment it happens, once per throw
+        if (!carreauW || carreauW.shooterId !== flying.id || carreauW.preThrow !== preThrow) { carreauW = createCarreauWatcher({ before: preThrow, shooterId: flying.id }); carreauW.preThrow = preThrow; }
+        try { if (carreauW.feed(world.bodies, world.events)) announcer.show('carreau'); } catch (err) { console.error('[carreau]', err); }
+      }
       if (flying) {
         if (flying !== capBody) { capBody = flying; capT0 = world.t; }
         if (!world.settled() && world.t - capT0 > C.hardCapSeconds) hardCap(); // E21: never roll for ever

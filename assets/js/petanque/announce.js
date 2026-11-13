@@ -46,6 +46,44 @@ export function isBiberon({ bodies, shooterId }) {
   return live(b) && touching(b, jack);
 }
 
+// F107: incremental carreau detector, fed once per physics step during the thrown boule's flight so the overlay can fire
+// the moment the carreau happens instead of when everything has settled. Pure: feed(bodies, events) per step; it returns
+// true exactly once (the step where the carreau is confirmed), then never again (`fired` stays set for the settled fallback).
+// Confirmed when: the shooter hit an opposing boule, that target has left its spot (>= minMove, or dead/ghost), and the
+// shooter is within spotM of the target's old centre and has been slower than SETTLE.speed for SETTLE.steps steps in a row.
+export const SETTLE = { speed: 0.05, steps: 6 };
+
+export function createCarreauWatcher({ before, shooterId }) {
+  const targets = new Set(); // opposing boule ids the shooter has hit
+  const seen = new WeakSet();
+  let slow = 0;
+  const w = {
+    shooterId, fired: false,
+    feed(bodies, events) {
+      if (w.fired || shooterId == null) return false;
+      const shooter = bodies.find((b) => b.id === shooterId);
+      if (!live(shooter)) return false;
+      for (const ev of events || []) {
+        if (ev.type !== 'hit' || seen.has(ev) || (ev.a !== shooterId && ev.b !== shooterId)) continue;
+        seen.add(ev);
+        const tid = ev.a === shooterId ? ev.b : ev.a;
+        const t = bodies.find((b) => b.id === tid);
+        if (t && t.kind === 'boule' && t.team !== shooter.team && pos(before, tid)) targets.add(tid);
+      }
+      if (!targets.size) return false;
+      slow = Math.hypot(shooter.vx || 0, shooter.vy || 0, shooter.vz || 0) < SETTLE.speed ? slow + 1 : 0;
+      if (slow < SETTLE.steps) return false;
+      for (const tid of targets) {
+        const t = bodies.find((b) => b.id === tid), from = pos(before, tid);
+        const moved = t.dead || t.ghost || Math.hypot(t.x - from.x, t.y - from.y) >= CARREAU.minMove;
+        if (moved && Math.hypot(shooter.x - from.x, shooter.y - from.y) <= CARREAU.spotM) { w.fired = true; return true; }
+      }
+      return false;
+    },
+  };
+  return w;
+}
+
 // 'carreau' | 'biberon' | null
 export function detectAnnouncement(throwInfo) {
   if (throwInfo.shooterId == null) return null;

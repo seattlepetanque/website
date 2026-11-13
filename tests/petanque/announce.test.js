@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { detectAnnouncement, isCarreau, isBiberon } from '../../assets/js/petanque/announce.js';
+import { detectAnnouncement, isCarreau, isBiberon, createCarreauWatcher } from '../../assets/js/petanque/announce.js';
 
 const R = 0.0375, JR = 0.015;
 const boule = (id, team, x, y, extra = {}) => ({ id, kind: 'boule', team, x, y, r: R, dead: false, ghost: false, ...extra });
@@ -126,4 +126,47 @@ test('F101 no biberon: pre-existing touching boule unchanged, thrown boule elsew
   const j = jack(2, 8), t = boule(10, 1, 2, 8 + JR + R);
   const bodies = [j, t, boule(20, 0, 4, 5)];
   assert.equal(detectAnnouncement({ before: before(j, t), bodies, shooterId: 20, events: [] }), null);
+});
+
+// F107: incremental carreau watcher
+const mv = (b, x, y, vx = 0) => ({ ...b, x, y, vx, vy: 0, vz: 0 });
+function run(w, steps) { let fired = 0; for (const [bodies, events] of steps) if (w.feed(bodies, events)) fired++; return fired; }
+const still = (n, bodies) => Array.from({ length: n }, () => [bodies, []]);
+
+test('F107: hit, target leaves, shooter stops on the spot: fires once, before settling', () => {
+  const t0 = boule(10, 1, 2, 6), s0 = boule(20, 0, 2, 5);
+  const w = createCarreauWatcher({ before: before(t0, s0), shooterId: 20 });
+  const bodies = [mv(t0, 2.5, 6.8, 1), mv(s0, 2.02, 6.01, 0.01)];
+  const steps = [[[mv(t0, 2.05, 6.1, 1), mv(s0, 2.0, 6.0, 1)], [hit(20, 10)]], ...still(10, bodies)];
+  assert.equal(run(w, steps), 1);
+  assert.equal(w.fired, true);
+  assert.equal(run(w, still(10, bodies)), 0);
+});
+
+test('F107: shooter rolling on past the spot does not fire', () => {
+  const t0 = boule(10, 1, 2, 6), s0 = boule(20, 0, 2, 5);
+  const w = createCarreauWatcher({ before: before(t0, s0), shooterId: 20 });
+  const bodies = [mv(t0, 2.5, 6.8, 1), mv(s0, 2.1, 6.5, 0.01)];
+  assert.equal(run(w, [[bodies, [hit(20, 10)]], ...still(20, bodies)]), 0);
+});
+
+test('F107: teammate hit, no hit, and a still-moving shooter do not fire', () => {
+  const t0 = boule(10, 0, 2, 6), s0 = boule(20, 0, 2, 5);
+  const w = createCarreauWatcher({ before: before(t0, s0), shooterId: 20 });
+  const bodies = [mv(t0, 2.5, 6.8, 1), mv(s0, 2.0, 6.0, 0.01)];
+  assert.equal(run(w, [[bodies, [hit(20, 10)]], ...still(20, bodies)]), 0);
+  const w2 = createCarreauWatcher({ before: before(t0, s0), shooterId: 20 });
+  assert.equal(run(w2, still(20, bodies)), 0);
+  const o = boule(11, 1, 2, 6), w3 = createCarreauWatcher({ before: before(o, s0), shooterId: 20 });
+  const moving = [mv(o, 2.5, 6.8, 1), mv(s0, 2.0, 6.0, 1)];
+  assert.equal(run(w3, [[moving, [hit(20, 11)]], ...still(20, moving)]), 0);
+});
+
+test('F107: the settled fallback still announces when the watcher did not fire', () => {
+  const t0 = boule(10, 1, 2, 6), s0 = boule(20, 0, 2, 5);
+  const w = createCarreauWatcher({ before: before(t0, s0), shooterId: 20 });
+  const bodies = [mv(t0, 2.5, 6.8), mv(s0, 2.0, 6.0, 0.4)]; // still creeping: no early fire
+  assert.equal(run(w, [[bodies, [hit(20, 10)]], ...still(5, bodies)]), 0);
+  assert.equal(w.fired, false);
+  assert.equal(detectAnnouncement({ before: before(t0, s0), bodies: [jack(2, 8), mv(t0, 2.5, 6.8), mv(s0, 2.02, 6.0)], shooterId: 20, events: [hit(20, 10)] }), 'carreau');
 });
