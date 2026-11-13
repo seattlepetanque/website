@@ -51,7 +51,7 @@ const useMeshes = params.get('figures') === 'mesh'; // stick figures by default;
 const AI_MIN_THINK = 800; // ms: the AI never answers faster than this
 const HINT_KEY = 'petanque-hint-seen';
 const HINT_TEXT = 'Drag sideways to turn. Press on the court where you want the boule to land, pull down to throw ' +
-  'higher, release to throw; drag back up to cancel. Press near a boule to shoot it.';
+  'higher, release to throw; drag back up to cancel. Press on a boule to shoot it.';
 // Where waiting players stand: behind the circle and beside the court, out of the shoulder camera's view
 // F45: the slots belong to the seats: your partner stands in Pierre's slot and the opponents in Marcel's and Odette's, whoever they are
 const HOME_LOCAL = { you: { x: -0.9, y: -0.4 }, pierre: { x: -1.5, y: 0.7 }, marcel: { x: 6.0, y: 0.0 }, odette: { x: 6.8, y: 0.8 } };

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { LOFT_MIN, LOFT_MAX } from '../../assets/js/petanque/donnee.js';
-import { pullToLoft, isCancel, snapDonnee, classifyDrag, createTossMachine } from '../../assets/js/petanque/toss.js';
+import { TOSS, pullToLoft, isCancel, snapDonnee, classifyDrag, createTossMachine } from '../../assets/js/petanque/toss.js';
 
 const H = 600, W = 800, DEG = Math.PI / 180;
 
@@ -25,10 +25,20 @@ test('isCancel above the press point only', () => {
 
 test('snapDonnee picks nearest within radius', () => {
   const ts = [{ id: 'a', x: 1, y: 5, r: 0.1 }, { id: 'b', x: 1.2, y: 5, r: 0.1 }];
-  assert.deepEqual(snapDonnee({ x: 1.15, y: 5 }, ts, 0.25), { x: 1.2, y: 5, snappedTo: 'b' });
-  assert.deepEqual(snapDonnee({ x: 1.05, y: 5 }, ts, 0.25), { x: 1, y: 5, snappedTo: 'a' });
-  assert.deepEqual(snapDonnee({ x: 3, y: 5 }, ts, 0.25), { x: 3, y: 5, snappedTo: null });
-  assert.equal(snapDonnee({ x: 3, y: 5 }, [], 0.25).snappedTo, null);
+  const R = TOSS.snapRadius;
+  assert.equal(R, 0.08);
+  assert.deepEqual(snapDonnee({ x: 1.15, y: 5 }, ts, R), { x: 1.2, y: 5, snappedTo: 'b' }); // 5 cm from b
+  assert.deepEqual(snapDonnee({ x: 1.05, y: 5 }, ts, R), { x: 1, y: 5, snappedTo: 'a' });
+  assert.deepEqual(snapDonnee({ x: 3, y: 5 }, ts, R), { x: 3, y: 5, snappedTo: null });
+  assert.equal(snapDonnee({ x: 3, y: 5 }, [], R).snappedTo, null);
+});
+
+test('snap radius 8 cm: 10 cm misses, 7 cm snaps, exactly 8 cm snaps', () => {
+  // axis-aligned offsets keep the distance exact in floating point (hypot(d, 0) = d)
+  const ts = [{ id: 'a', x: 0, y: 0, r: 0.1 }];
+  assert.equal(snapDonnee({ x: 0.10, y: 0 }, ts).snappedTo, null);
+  assert.equal(snapDonnee({ x: 0.07, y: 0 }, ts).snappedTo, 'a');
+  assert.equal(snapDonnee({ x: 0.08, y: 0 }, ts).snappedTo, 'a');
 });
 
 test('classifyDrag', () => {
@@ -101,7 +111,7 @@ test('dwell starts a toss at minimum loft; quick tap does nothing', () => {
 });
 
 test('second pointer cancels the toss; Esc cancels; snapping reported', () => {
-  const { m, log } = setup([{ id: 'j', x: 2.1, y: 7, r: 0.04 }]);
+  const { m, log } = setup([{ id: 'j', x: 2.05, y: 7, r: 0.04 }]); // 5 cm from the pick point (2, 7): inside the 8 cm snap radius
   m.down(1, 400, 300, 0); m.move(1, 400, 330, 20);
   assert.equal(log.previews.at(-1).snappedTo, 'j');
   m.down(2, 500, 300, 40);

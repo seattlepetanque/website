@@ -27,7 +27,7 @@ export const TOSS = Object.freeze({
   dwellMs: 150,             // holding still this long starts a toss
   pullFraction: 0.35,       // of canvas height for full loft
   cancelPx: 20,             // above the press point by this much cancels
-  snapRadius: 0.25,         // m
+  snapRadius: 0.08,         // m: the human's aim snaps only when pressed within 8 cm of a body's centre (F124; was 25 cm), so beside a boule or the jack is still possible
   keyTurn: 1 * DEG, keyTurnFine: 0.2 * DEG,
   keyStep: 0.05,            // m per Shift+arrow
   keyLoft: 1 * DEG,
