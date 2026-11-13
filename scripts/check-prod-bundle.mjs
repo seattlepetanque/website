@@ -9,7 +9,11 @@ import { join } from 'node:path';
 // Strings that only the ?debug code uses (quotes included, so they match the URL-flag reads, not comments or CSS).
 const DEBUG_ONLY = ['"mescenario"', '"freezethrow"', '"humanturn"', '"timerframes"', '"jackvis"', '"showtarget"', '"aispot"',
   '"ailog"', '"holdhead"', '"topcam"', '"autotest"', '"fpcam"', '"ringcarry"', '"f02skip"', '"viewyaw"', '"jackshot"',
-  '"golden"', '"meneend"', '"sounds"', '"[ailog]', '"[hard cap]', '"[placeJack]', '"debug"'];
+  '"golden"', '"meneend"', '"sounds"', '"[ailog]', '"[hard cap]', '"[placeJack]', '"debug"',
+  // F111: the debug-scenarios module (scenarios, window.__petanque hook) and the debug switches read in other modules
+  '__petanque', '__characters', '"mene2"', '"mescenario"', '"characters"', '"jphold"', '"closecall"', '"preview"', '"fpmirror"', '"fpat"', '"pausegame"',
+  '"exitclick"', '"f02delay"', '"ringheld"', '"deadjack"', '"measure"', '"tvshot"', '"bshot"',
+  '"gfx"', '"fakegpu"', '"bootfail"', '"weak"', '[quality]', '"hideshadows"', '"aimlog"', '[aimlog]', '"shadowhalf"', '"shadowmap"', '"shadowtype"', '"gravel"', '"blobs"', '"butterflies"', '"perf"', '__perf'];
 
 function build(env) {
   const dir = mkdtempSync(join(tmpdir(), `petanque-${env}-`));

@@ -8,21 +8,16 @@ import { JACK_END_CENTRE, JACK_CENTRE_SHIFT } from './rules.js';
 import { rankBoules, layoutBadges } from './ranklabels.js'; // F91
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
-import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, scoringTargetBox } from './camera.js';
+import { frameMoving, cameraFromFrame, blendStart, blendStep, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, scoringTargetBox } from './camera.js';
 import { prefersReducedMotion } from './reduced.js'; // F113
 import { makeButterflies } from './butterflies.js'; // F67
 import { makeCloudShadows } from './cloudshadows.js'; // F68
 import { daylightAt, SUN_DISTANCE, SHADOW_NEAR, SHADOW_FAR } from './daylight.js';
-import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeTreeShadows, makeBlobTexture, dbgParam, makeSkyPanorama, makeLake, makeSailboats, skyColor, SKY_HAZE, isPhone } from './scenery.js';
+import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeTreeShadows, makeBlobTexture, makeCanvas, makeSkyPanorama, makeLake, makeSailboats, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 import { createFloatplane } from './floatplane.js'; // F19
+import { dbgParam } from './debug.js'; // F111
 
 const TRANSITION = 0.6; // seconds for camera moves
-
-function makeCanvas(w, h) {
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  return c;
-}
 
 // Speckled gravel detail texture, tileable enough at this scale
 function gravelTexture(grey) {
@@ -199,19 +194,19 @@ export function createRenderer(canvas, terrain, init = {}) {
   // The shadow box follows the look target. It is wide enough to take in the trees (within ~15 m of the court) and
   // their shadows, which fall away from the sun: desktop gets a 2048 map over +-14 m (texels ~1.4 cm), phones keep
   // a 1024 map over +-10 m. The depth range is 60 m, so the bias is scaled to match the old 25 m setting.
-  const phoneShadows = isPhone(), shadowHalf = Number(dbgParam('shadowhalf')) || (phoneShadows ? 10 : 14);
+  const phoneShadows = isPhone(), shadowHalf = Number(debug ? dbgParam('shadowhalf') : null) || (phoneShadows ? 10 : 14);
   // F92: clamp to what the GPU supports; ?debug&shadowmap=N forces a size, &shadowtype=basic|pcf|soft picks the filter, &shadowhalf=M the half-width in metres
-  const dbgMap = Number(dbgParam('shadowmap')) || 0;
+  const dbgMap = Number(debug ? dbgParam('shadowmap') : null) || 0;
   const baseHalf = shadowHalf, baseMap = Math.max(256, Math.min(dbgMap || (phoneShadows ? 1024 : 2048), renderer.capabilities.maxTextureSize || 2048));
   let curHalf = shadowHalf;
   sun.shadow.mapSize.set(baseMap, baseMap);
-  const st = dbgParam('shadowtype');
+  const st = debug ? dbgParam('shadowtype') : null;
   if (st) renderer.shadowMap.type = { basic: THREE.BasicShadowMap, pcf: THREE.PCFShadowMap, soft: THREE.PCFSoftShadowMap }[st] ?? renderer.shadowMap.type;
   const sc = sun.shadow.camera;
   sc.left = -shadowHalf; sc.right = shadowHalf; sc.top = shadowHalf; sc.bottom = -shadowHalf; sc.near = SHADOW_NEAR; sc.far = SHADOW_FAR; // F95: near is negative so players upsun of the target keep their shadow
   sc.updateProjectionMatrix();
-  sun.shadow.bias = Number(dbgParam("sb") ?? (-0.00003 * 60 / (SHADOW_FAR - SHADOW_NEAR))); // F98: tiny; the old -0.00017 (~1 cm over the 90 m depth range) detached boule shadows
-  sun.shadow.normalBias = Number(dbgParam("nb") ?? 0.002); // F98: was 0.01 (1 cm), which on 7.5 cm boules shows as a gap at the contact point (peter panning); ?debug&nb=&sb= override
+  sun.shadow.bias = Number((debug ? dbgParam("sb") : null) ?? (-0.00003 * 60 / (SHADOW_FAR - SHADOW_NEAR))); // F98: tiny; the old -0.00017 (~1 cm over the 90 m depth range) detached boule shadows
+  sun.shadow.normalBias = Number((debug ? dbgParam("nb") : null) ?? 0.002); // F98: was 0.01 (1 cm), which on 7.5 cm boules shows as a gap at the contact point (peter panning); ?debug&nb=&sb= override
   scene.add(sun, sun.target);
   // F40: aim the sun at p, snapped to the shadow map's texel grid in light space. Without this the frustum slides
   // by sub-texel steps as the camera moves, which crawls the shadow edges (the timbers' flicker).
@@ -293,7 +288,7 @@ export function createRenderer(canvas, terrain, init = {}) {
   // F96 debug (dev builds): ?debug&hideshadows=trees,players,clouds,decals,all (comma list) switches shadow sources off, to tell
   // which one a cut-off dark shape belongs to: trees = tree blob decals, players = the sun's shadow map (people and boules),
   // clouds = cloud shading, decals = divot discs, the donnee marker and the throw-preview fans
-  const hideSh = new Set(String(dbgParam('hideshadows') || '').split(',').filter(Boolean));
+  const hideSh = new Set(String((debug ? dbgParam('hideshadows') : null) || '').split(',').filter(Boolean));
   const hides = (k) => hideSh.has(k) || hideSh.has('all');
   if (hides('clouds')) clouds.patch = () => {};
   clouds.patch(terrainMesh.material); // F68
@@ -522,7 +517,7 @@ export function createRenderer(canvas, terrain, init = {}) {
   // Jack finder: at 6-10 m the jack is a few pixels, so a bobbing chevron (constant screen size) floats over it.
   // ?debug&jackvis=a|c|ac|none compares the options (a = chevron, c = bright orange jack).
   const jackVisParam = (() => {
-    try { const q = new URLSearchParams(location.search); return globalThis.__DEBUG__ !== false && q.has('debug') ? q.get('jackvis') : null; } catch (e) { return null; }
+    return debug ? dbgParam('jackvis') : null; // F111
   })();
   const jv = jackVisParam === null ? { a: true, c: true }
     : { a: jackVisParam.includes('a'), c: jackVisParam.includes('c') };
@@ -565,7 +560,7 @@ export function createRenderer(canvas, terrain, init = {}) {
   const divotTex = makeBlobTexture(64, [[0, `rgba(${dc},0.55)`], [0.65, `rgba(${dc},0.3)`], [1, `rgba(${dc},0)`]]); // F92: alpha 0 with a 4 px margin
   const divotGeo = new THREE.PlaneGeometry(2, 2);
   const divotMat = new THREE.MeshBasicMaterial({
-    map: divotTex, transparent: true, depthWrite: false, depthTest: dbgParam('blobs') !== 'nodepth', polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+    map: divotTex, transparent: true, depthWrite: false, depthTest: (debug ? dbgParam('blobs') : null) !== 'nodepth', polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
   });
   const divotMeshes = [];
   for (let i = 0; i < DIVOTS; i++) {
@@ -1413,6 +1408,8 @@ export function createRenderer(canvas, terrain, init = {}) {
   let flightFrame = null; // camera.js spring state while the flight camera follows moving bodies
   let obsFrame = null; // E11: camera.js state of the casual-observer camera (kept while it stays in that mode)
 
+  const camLog = dbgParam('camlog'); // F110: ?debug&camlog logs the camera pose per frame and each setCamera (console)
+  let blend = null, fovEase = false; // F110: the aim to follow switch: null | 'start' (first frame) | camera.js blend state; fovEase eases the field of view with it
   let bcFrame = null; // F01: camera.js state of the current broadcast shot (a new shot is a cut)
   let tvFrame = null, tvPending = null; // E27: the TV shot's state, and a camera request held until the shot has played out
   function setCamera(m, o = {}, flush = false) {
@@ -1430,10 +1427,14 @@ export function createRenderer(canvas, terrain, init = {}) {
     }
     if (m === 'shoulder' && o.zoom !== undefined) zoom = clampZoom(o.zoom);
     if (m === 'observer' && mode !== 'observer') obsFrame = null; // a fresh spectator spot; later subjects only pan and dolly
+    const wasAim = mode === 'shoulder' || mode === 'aim';
+    if (camLog !== null) console.log('[camlog] setCamera ' + JSON.stringify({ from: mode, to: m, cut: !!o.cut, flush }));
     mode = m; opts = o;
+    blend = null; fovEase = false;
     if (m === 'flight') flightFrame = null;
+    if (m === 'flight' && o.bodies && wasAim && !cutIn && !reduce()) { blend = 'start'; fovEase = true; } // F110: no copy of the follow pose: the camera keeps its pose and the offset decays (reduced motion keeps the cut)
     from.pos.copy(cur.pos); from.tgt.copy(cur.tgt);
-    trans = reduce() || cutIn ? 1 : 0;
+    trans = reduce() || cutIn || blend ? 1 : 0; // F110: a blend replaces the timed lerp
     if (trans === 1) computeGoal(0, true);
   }
 
@@ -1707,8 +1708,16 @@ export function createRenderer(canvas, terrain, init = {}) {
       fov = baseFov * (1 - 0.32 * focusK * Math.max(0, Math.min(1, (d - 3) / 5)));
     }
     if (mode === 'observer' && obsFrame) fov *= obsFrame.fovK; // E11: the spectator's slow zoom
+    if (fovEase) { if (Math.abs(fov - camera.fov) < 0.05) fovEase = false; else fov = camera.fov + (fov - camera.fov) * (1 - Math.exp(-dt / 0.12)); } // F110: the aim zoom eases out with the pose blend
     if (Math.abs(fov - camera.fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
-    if (trans < 1) {
+    if (blend) { // F110: aim to follow: the camera's own pose plus a decaying offset to the follow goal
+      const g = { pos: goal.pos, tgt: goal.tgt };
+      if (blend === 'start') blend = blendStart({ pos: cur.pos, tgt: cur.tgt }, g);
+      const r = blendStep(blend, g, dt);
+      blend = r.done ? null : r.b;
+      cur.pos.set(r.pose.pos.x, r.pose.pos.y, r.pose.pos.z); cur.tgt.set(r.pose.tgt.x, r.pose.tgt.y, r.pose.tgt.z);
+      if (!blend) { cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt); }
+    } else if (trans < 1) {
       trans = Math.min(1, trans + dt / TRANSITION);
       const k = smooth(trans);
       cur.pos.lerpVectors(from.pos, goal.pos, k);
@@ -1721,6 +1730,7 @@ export function createRenderer(canvas, terrain, init = {}) {
       cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
     }
     camera.position.copy(cur.pos);
+    if (camLog !== null) console.log('[camlog] ' + JSON.stringify({ m: mode, t: +dt.toFixed(4), p: [cur.pos.x, cur.pos.y, cur.pos.z].map((v) => +v.toFixed(4)), g: [cur.tgt.x, cur.tgt.y, cur.tgt.z].map((v) => +v.toFixed(4)), f: +camera.fov.toFixed(3), gp: [goal.pos.x, goal.pos.y, goal.pos.z].map((v) => +v.toFixed(3)), gt: [goal.tgt.x, goal.tgt.y, goal.tgt.z].map((v) => +v.toFixed(3)) })); // F110: ?debug&camlog
     let lookAt = cur.tgt;
     camera.lookAt(lookAt);
     // shadow frustum follows what we look at
@@ -1846,7 +1856,7 @@ export function createRenderer(canvas, terrain, init = {}) {
   treeT = 99; treeDir.set(0, 0, 1);
 
   // F113: ?debug&perf collects CPU time per render() call and renderer.info counts in window.__perf
-  const perf = dbgParam('perf') !== null ? (globalThis.__perf = { frames: 0, ms: 0, maxMs: 0, calls: 0, triangles: 0, geometries: 0, textures: 0, shadowUpdates: 0, reset() { this.frames = this.ms = this.maxMs = this.calls = this.triangles = this.shadowUpdates = 0; } }) : null;
+  const perf = debug && dbgParam('perf') !== null ? (globalThis.__perf = { frames: 0, ms: 0, maxMs: 0, calls: 0, triangles: 0, geometries: 0, textures: 0, shadowUpdates: 0, reset() { this.frames = this.ms = this.maxMs = this.calls = this.triangles = this.shadowUpdates = 0; } }) : null;
   function render(dt = 1 / 60) {
     if (!perf) return renderFrame(dt);
     renderer.info.autoReset = false; renderer.info.reset();

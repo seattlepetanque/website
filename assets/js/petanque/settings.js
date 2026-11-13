@@ -25,6 +25,8 @@ export const settings = {
     try { localStorage.setItem(KEY, v); } catch (e) { /* storage blocked */ }
     for (const fn of [...listeners]) fn(v);
   },
+  // F111: debug scenarios only: switch the mode for this page view without saving it as the user's setting
+  setModeInMemory(v) { if (!MODES.includes(v) || v === mode) return; mode = v; for (const fn of [...listeners]) fn(v); },
   // F104: the Graphics choice on the pause card (see quality.js); applied at once, remembered
   get graphics() { return graphics; },
   set graphics(v) {

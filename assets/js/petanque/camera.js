@@ -13,7 +13,7 @@ export const CAM = Object.freeze({
   ghostWeight: 0.3,
   minDist: 3.2, maxDist: 16,
   margin: 1.25, // framing slack on the fitted distance
-  pitch: 0.3, minPitch: 0.12, maxPitch: 0.95,
+  pitch: 0.34, minPitch: 0.12, maxPitch: 0.95,
   maxYaw: 0.6, // rad either side of straight down the court: never flips behind the play
   minCamZ: 0.4, // m above the ground
   // spring smooth time (s) and speed caps (units/s): target m, distance m, yaw rad, pitch rad
@@ -22,6 +22,9 @@ export const CAM = Object.freeze({
   yaw: { time: 0.5, max: 0.9 },
   pitchSpring: { time: 0.5, max: 0.7 },
   reducedTime: 1.6, reducedSpeed: 0.8, // gentler moves under prefers-reduced-motion
+  // F110: the aim (shoulder) to follow switch. The camera keeps its pose and only the offset to the follow goal decays through
+  // critically damped springs (so there is no lag behind a moving goal), with speed caps: m/s for the camera, m/s for the look-at point.
+  blend: { time: 0.14, posMax: 6, tgtMax: 10, eps: 0.03 },
 });
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -40,6 +43,28 @@ function damp(cur, goal, vel, time, maxSpeed, dt) {
   const cap = maxSpeed * dt;
   if (Math.abs(out - cur) > cap) { out = cur + Math.sign(out - cur) * cap; nv = (out - cur) / dt; }
   return [out, nv];
+}
+
+// F110: blend from the current camera pose to a (moving) goal pose. pose = { pos: {x,y,z}, tgt: {x,y,z} }.
+// blendStart keeps `from` as the starting pose; blendStep(b, goal, dt) returns { b, pose, done }: the pose is the goal plus an
+// offset that decays critically damped, so the first frame is exactly `from` and the goal's own motion is never lagged.
+const BK = ['x', 'y', 'z'];
+export function blendStart(from, goal) {
+  const off = [], v = [0, 0, 0, 0, 0, 0];
+  for (const k of BK) off.push(from.pos[k] - goal.pos[k]);
+  for (const k of BK) off.push(from.tgt[k] - goal.tgt[k]);
+  return { off, v };
+}
+export function blendStep(b, goal, dt) {
+  const B = CAM.blend, off = [], v = [];
+  let big = 0;
+  for (let i = 0; i < 6; i++) {
+    const [o, nv] = dt > 0 ? damp(b.off[i], 0, b.v[i], B.time, i < 3 ? B.posMax : B.tgtMax, dt) : [b.off[i], b.v[i]];
+    off.push(o); v.push(nv);
+    big = Math.max(big, Math.abs(o), Math.abs(nv) * 0.1);
+  }
+  const pose = { pos: { x: goal.pos.x + off[0], y: goal.pos.y + off[1], z: goal.pos.z + off[2] }, tgt: { x: goal.tgt.x + off[3], y: goal.tgt.y + off[4], z: goal.tgt.z + off[5] } };
+  return { b: { off, v }, pose, done: big < B.eps };
 }
 
 // Live subjects: airborne, or rolling above the threshold, plus the thrown body until it settles.

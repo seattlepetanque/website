@@ -1,6 +1,8 @@
 // Game loop: terrain, world, renderer, rules, AI, toss input (donnée throw), audio and HUD wired together.
+import './debug.js'; // F111: first, so globalThis.__dbg is set before anything reads `debug`
+import { debugFloatplane, debugHooks, runDebugScenario } from './debug-scenarios.js'; // F111: only called under `if (debug)`, so production drops it
 import { C } from './constants.js';
-import { court, setCourt, resetCourt, baseYaw, ahead } from './court.js';
+import { court, setCourt, resetCourt, baseYaw, ahead, facingTo } from './court.js';
 import { cameraStyle, tvVariant, clampViewOffset, panViewOffset, walkSubject, freeViewRect } from './camera.js';
 import { createDirector } from './director.js';
 import { mulberry32 } from './rng.js';
@@ -10,7 +12,7 @@ import { createRenderer } from './render.js';
 import {
   createMatch, defaultPlayers, teamNamesFor, validPartner, opponentIds, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm, deadJackText, jackGap, jackTooClose, TIE_EPS,
 } from './rules.js';
-import { detectAnnouncement } from './announce.js';
+import { detectAnnouncement, createCarreauWatcher } from './announce.js';
 import { createAnnouncer } from './announce-view.js';
 import { createHud, createHoldIcons } from './hud.js';
 import { settings } from './settings.js';
@@ -32,7 +34,9 @@ import { prefersReducedMotion } from './reduced.js'; // F113
 import { createGroundView } from './groundview.js';
 import { isPhone } from './scenery.js';
 import { probeGpu, assessGpu, weakDevice, browserName, gpuMessage } from './gpuinfo.js'; // F102
+import { classifyBootError } from './boot-error.js'; // F114
 import { LEVELS, levelSettings, initialLevel, wantAntialias, createAutoQuality } from './quality.js'; // F103
+import { describe as describeText, quip as quipText, faultText, spotText as spotTextOf, ownerName as ownerNameOf, gapText as gapTextOf, meneWinNote } from './commentary-text.js';
 import { PERSONALITIES, CAST_IDS, specFor, pickStance, stanceFor, STAND_BEYOND, createCommentary, whoKind, composeSuggestion } from './personalities.js';
 
 let TEAM_NAMES = teamNamesFor('pierre'); // F45: reset in startGame for the chosen partner
@@ -42,10 +46,7 @@ const FACE_MAX = 80 * Math.PI / 180; // F99: how far off straight ahead a throwe
 const MAX_STEPS = 24; // physics steps per frame; backlog beyond this is dropped
 const DEG = Math.PI / 180;
 const params = new URLSearchParams(location.search);
-// F84: `debug` is not declared here. Hugo's js.Build defines it: the literal false in a production build (esbuild then
-// drops every `debug && ...` / `if (debug)` branch with its strings), and globalThis.__dbg under `hugo server` and
-// development builds, where it is set from ?debug just below. The set-up code is itself dropped in production.
-if (globalThis.__DEBUG__ !== false) globalThis.__dbg = params.has('debug');
+// F84/F111: `debug` is not declared here; debug.js (imported first) owns it. See there.
 const modelTimeout = +params.get('modeltimeout') || 5000; // ms; ?modeltimeout=600000 for virtual-time screenshots
 const useMeshes = params.get('figures') === 'mesh'; // stick figures by default; ?figures=mesh loads the Kenney models (opt-in; ?figures=stick is the same as the default)
 const AI_MIN_THINK = 800; // ms: the AI never answers faster than this
@@ -79,6 +80,7 @@ const say = (text) => { if (status) status.textContent = text; };
 
 
 function boot() {
+  if (debug && params.has('bootfail')) throw new Error(params.get('bootfail') === 'webgl' ? 'WebGL is not available in this browser, so the 3D game cannot start.' : 'debug boot failure'); // F114: ?debug&bootfail=webgl|other shows each boot message
   const seedParam = params.get('seed');
   const seed = seedParam !== null && seedParam !== '' && !isNaN(+seedParam)
     ? +seedParam : Math.floor(Math.random() * 1e9);
@@ -122,6 +124,7 @@ function boot() {
   let token = 0; // bumped on each new game so stale timers are ignored
   let yellowDone = false; // ?debug&yellow forces one yellow card
   let flying = null; // body being tracked
+  let carreauW = null; // F107
   let throwEvents = []; // physics events of the current throw (hits, for commentary)
   let preThrow = new Map(); // id -> { x, y } of boules before the current throw
   let pending = null; // { kind, playerId } while waiting for the human to throw
@@ -986,10 +989,15 @@ function boot() {
   function humanTurn(kind, playerId, text) {
     tossFace = null; // F99
     pending = { kind, playerId };
+    { // F109: every human turn starts facing the jack (straight ahead for the cochonnet throw), whatever the last aim or walk left
+      const jk = kind === 'jack' ? null : jackBody();
+      aimYaw = facingTo(court.circle, jk && !jk.dead ? jk : null, AIM_MAX); throwerYaw = aimYaw; shoulderCam.yaw = aimYaw;
+    }
     hideHolding(); // F11: aiming starts, so the who-holds banner goes
     renderer.clearMeasure(); // aiming starts: the between-throws lines go (D07)
     renderer.showJackZone(kind === 'jack');
-    enterCircle(playerId, aimYaw, undefined, kind);
+    const arrived = enterCircle(playerId, aimYaw, undefined, kind);
+    if (debug && params.has('aimlog')) arrived.then(() => { const jk = jackBody(), c = cast.get(playerId), t = jk && !jk.dead ? Math.atan2(jk.x - court.circle.x, jk.y - court.circle.y) : baseYaw(); console.log('[aimlog] turnstart ' + JSON.stringify({ kind, chYawDeg: +(c.yaw / DEG).toFixed(1), jackBearingDeg: +(t / DEG).toFixed(1), aimYawDeg: +(aimYaw / DEG).toFixed(1) })); });
     enableControls(true);
     renderer.setJackArrow(kind !== 'jack'); // the chevron guides a boule throw only, never the cochonnet's (D17)
     setView('shoulder');
@@ -1189,16 +1197,7 @@ function boot() {
     shoulderCam.yaw = aimYaw;
   }
 
-  // Status line while an AI shows its spot: the factual label, then the player's own line.
-  function spotText(player, choice, kind) {
-    const key = choice.labelKey || { event: kind === 'jack' ? 'spotJack' : 'spotPoint' };
-    const target = key.target === 'jack' ? 'the jack' : player.team === 1 ? 'your boule' : 'their boule';
-    const facts = (choice.label || `${player.name} picks ${player.id === 'odette' ? 'her' : 'his'} spot`) + '.';
-    // the tactical reason (D13) first, then the generic line for the event
-    const why = choice.why;
-    const quip = (why && why.code !== 'mistake' && talk.say(player.id, 'why.' + why.code, { target, ...why })) || talk.say(player.id, key.event, { target });
-    return quip ? `${facts} ${quip}` : facts;
-  }
+  const spotText = (player, choice, kind) => spotTextOf(player, choice, kind, talk);
 
   async function aiBoule(player) {
     hideHolding(); // F11: aiming starts, so the who-holds banner goes
@@ -1786,7 +1785,7 @@ function boot() {
   function snapshot() {
     const j = jackBody();
     return {
-      jack: { x: j.x, y: j.y, dead: j.dead, spot: j.dead && Number.isFinite(j.outX) ? { x: j.outX, y: j.outY } : null },
+      jack: j ? { x: j.x, y: j.y, dead: j.dead, spot: j.dead && Number.isFinite(j.outX) ? { x: j.outX, y: j.outY } : null } : null,
       boules: world.bodies.filter((b) => b.kind === 'boule').map((b) => ({
         id: b.id, team: b.team, owner: b.owner, x: b.x, y: b.y, dead: b.dead,
       })),
@@ -1796,75 +1795,20 @@ function boot() {
   // Commentary for the throw that just settled; evs = its physics events
   let lastKind = null; // 'dead' | 'carreau' | 'great' | null, set by describe() for the personality lines
   function describe(was, evs) {
-    const j = jackBody();
-    lastKind = null;
-    if (j && j.dead) return 'The jack is out: dead jack.';
-    if (was.kind === 'jack') return `Jack is ${jackGap(was, match && match.geometry).toFixed(1)} m out.`; // F75: edge to edge
-    if (j && match && jackTooClose(j, match.geometry)) return 'The jack is too close: less than 3 m from the circle, dead jack.'; // F76, Art. 9.3
-    if (was.dead) lastKind = 'dead';
-    if (was.dead) return `${ownerName(was)} boule is out: dead boule.`;
-    const gap = Math.hypot(was.x - j.x, was.y - j.y) - was.r - j.r;
-    const base = `${ownerName(was)} boule is ${gapText(was, j)} from the jack.`;
-    // carreau: the shooter hit an opposing boule, knocked it away and took its place
-    for (const ev of evs) {
-      if (ev.type !== 'hit' || (ev.a !== was.id && ev.b !== was.id)) continue;
-      const tid = ev.a === was.id ? ev.b : ev.a;
-      const t = world.bodies.find((b) => b.id === tid), from = preThrow.get(tid);
-      if (!t || t.kind !== 'boule' || t.team === was.team || !from) continue;
-      const moved = t.dead || Math.hypot(t.x - from.x, t.y - from.y) > 0.15;
-      if (moved && Math.hypot(was.x - from.x, was.y - from.y) < 0.3) {
-        lastKind = 'carreau';
-        return `Carreau! ${ownerName(was)} boule replaces the target.`;
-      }
-    }
-    if (gap < 0.02) lastKind = 'great';
-    if (gap < 0.02) return `Biberon! ${ownerName(was)} boule is touching the jack.`;
-    return base;
+    const r = describeText(was, evs, { jack: jackBody(), match, bodies: world.bodies, preThrow });
+    lastKind = r.kind;
+    return r.text;
   }
-  // F06: edge-to-edge gap, the same figure as every measuring label, card and status line
-  const gapText = (b, j) => fmtCm(gapM(b, j));
-  const ownerName = (b) => {
-    const p = match && match.players.find((q) => q.id === b.owner);
-    return p ? (p.isHuman ? 'Your' : p.name + "'s") : 'The';
-  };
+  const gapText = gapTextOf;
+  const ownerName = (b) => ownerNameOf(b, match && match.players);
 
-  // One or two personality lines for the throw that just settled (null when nothing fits)
   const pick = (team) => {
     const ids = match.players.filter((p) => p.team === team && !p.isHuman).map((p) => p.id);
     return ids[Math.floor(chance() * ids.length)] || null;
   };
-  function quip(was, prevHold) {
-    const j = jackBody(), now = holdingTeam(match.jack, match.boules);
-    const gap = j ? Math.hypot(was.x - j.x, was.y - j.y) - was.r - j.r : 9;
-    const owner = match.players.find((p) => p.id === was.owner);
-    if (!owner) return '';
-    const gained = now === was.team && prevHold !== was.team;
-    let ev = lastKind;
-    if (!ev) ev = gained || gap < 0.25 ? 'good' : now !== was.team && gap > 0.6 ? 'miss' : null;
-    if (!ev) return '';
-    const out = [];
-    if (owner.isHuman) { // you have no catchphrases: your partner cheers your points, a neutral line otherwise
-      const cheer = gained || ev === 'great' || ev === 'carreau';
-      out.push(cheer ? talk.say(partner, 'ownScores') : talk.line('you', ev));
-    } else out.push(talk.say(owner.id, ev));
-    if (gained && chance() < 0.5) { // the other side reacts to losing the point
-      const foe = pick(1 - was.team);
-      if (foe && foe !== owner.id) out.push(talk.say(foe, 'oppScores'));
-    }
-    return out.filter(Boolean).join(' ');
-  }
+  const quip = (was, prevHold) => quipText(was, prevHold, { jack: jackBody(), match, kind: lastKind, talk, partner, chance });
 
   // ---- Invalid jack: the other team places it by hand ----
-  function faultText(f) {
-    if (!f) return '';
-    const d = f.dist.toFixed(1);
-    if (f.reason === 'short') return `Too short: ${d} m.`;
-    if (f.reason === 'far') return `Too far: ${d} m.`;
-    if (f.reason === 'line') return `Out over the ${f.side} line.`;
-    if (f.reason === 'end') return `Too close to the end string: ${f.gap.toFixed(1)} m, it needs ${f.margin} m.`;
-    if (f.back) return 'Went over a line and came back.';
-    return 'Out of bounds.';
-  }
   // Wide view over the whole 6 to 10 m zone, with the legal-zone arcs
   function placeView() {
     renderer.showJackZone(true, 'place');
@@ -2026,7 +1970,8 @@ function boot() {
     if (was.kind === 'boule' && !instant) { // F61: CARREAU / BIBERON overlay (the sim keeps running)
       try {
         const kind = detectAnnouncement({ before: preThrow, bodies: world.bodies, shooterId: was.id, events: evs });
-        if (kind) announcer.show(kind);
+        const early = carreauW && carreauW.fired && carreauW.shooterId === was.id && carreauW.preThrow === preThrow; // F107: announced mid-throw
+        if (kind && !(early && kind === 'carreau')) announcer.show(kind);
       } catch (err) { console.error('[announce]', err); }
     }
     if (was.kind === 'jack') {
@@ -2132,8 +2077,7 @@ function boot() {
     else if (!jackOut && !r.void && r.measured && r.measured.length) {
       // report the winning boule's gap, the figure on its measuring label
       const win = world.bodies.find((b) => b.id === r.measured[0].id);
-      const special = /^(Carreau|Biberon)/.test(note) ? note + ' ' : '';
-      if (win) note = `${closeCall ? 'Close call! ' : ''}${special}Closest: ${ownerName(win)} boule, ${gapText(win, j)} from the jack.`;
+      if (win) note = meneWinNote({ note, closeCall, win, jack: j, players: match.players });
     }
     refreshHud(null);
     // F56: in a slow mène the outcome view and the card wait for the click (the sim clock is held); the ring, jack return, gathering and
@@ -2430,6 +2374,10 @@ function boot() {
     let n = 0;
     while (acc >= C.dt && n < MAX_STEPS && !(freezeAt && world.t >= freezeAt)) {
       world.step(); acc -= C.dt; n++;
+      if (flying && flying.kind === 'boule' && !instant && match) { // F107: carreau overlay the moment it happens, once per throw
+        if (!carreauW || carreauW.shooterId !== flying.id || carreauW.preThrow !== preThrow) { carreauW = createCarreauWatcher({ before: preThrow, shooterId: flying.id }); carreauW.preThrow = preThrow; }
+        try { if (carreauW.feed(world.bodies, world.events)) announcer.show('carreau'); } catch (err) { console.error('[carreau]', err); }
+      }
       if (flying) {
         if (flying !== capBody) { capBody = flying; capT0 = world.t; }
         if (!world.settled() && world.t - capT0 > C.hardCapSeconds) hardCap(); // E21: never roll for ever
@@ -2462,349 +2410,69 @@ function boot() {
     nextFrame(frame);
   }
 
-  if (debug && params.get('floatplane')) { // ?debug&floatplane=takeoff|landing[&fpat=seconds][&fpcam=0]: run it now, camera on it
-    const fp = renderer.floatplane;
-    fp.trigger(params.get('floatplane') === 'landing' ? 'landing' : 'takeoff', params.get('fpmirror') === '-1' ? -1 : 1);
-    fp.debugFrame = params.get('fpcam') !== '0';
-    if (params.has('fpat')) fp.advance(+params.get('fpat') || 0);
-  }
+  // F111: what the ?debug scenarios (debug-scenarios.js, dropped from production builds) need from this closure; the
+  // mutable bindings go through accessors
+  const dbgCtx = debug ? {
+    params, world, terrain, renderer, hud, cast, audio, clock, seed, SPECS, BOULE_COLORS, useMeshes, modelTimeout, pickHuman, freezeAt,
+    toSetup, startGame, setPlaying, pauseGame, endGame, nextMene, endOfMene, clearWorld, placeAt, placePlayers, homeAt, homeYaw, enterCircle,
+    headView, showBetween, showShot, launchBody, jackBody, readParams, shadow, gather, later, skipCollect, startCollect, startRingPickup,
+    startJackReturn, tickCast, runFetch, pickUp, putDown, handOver, placeWalk, walkHome, rowCount,
+    get token() { return token; }, set token(v) { token = v; },
+    get pending() { return pending; }, set pending(v) { pending = v; },
+    get match() { return match; }, set match(v) { match = v; },
+    get lastThrowerId() { return lastThrowerId; }, set lastThrowerId(v) { lastThrowerId = v; },
+    get f02Script() { return f02Script; }, set f02Script(v) { f02Script = v; },
+    get fetchFreezeAt() { return fetchFreezeAt; }, set fetchFreezeAt(v) { fetchFreezeAt = v; },
+    get frozen() { return frozen; }, set frozen(v) { frozen = v; },
+    get fetchPump() { return fetchPump; }, set fetchPump(v) { fetchPump = v; },
+    get fetchJob() { return fetchJob; }, set fetchJob(v) { fetchJob = v; },
+    get inCircle() { return inCircle; }, set inCircle(v) { inCircle = v; },
+    get ringCarry() { return ringCarry; }, set ringCarry(v) { ringCarry = v; },
+    get pausedNow() { return pausedNow; }, get level() { return level; }, get aimYaw() { return aimYaw; },
+  } : null;
+  if (debug) debugFloatplane(dbgCtx);
   aimView();
   nextFrame(frame);
 
-  if (debug) { // F86: ?debug&pausegame=MS / &endgame=MS pause / end the game after MS of wall time (screenshots)
-    if (params.has('pausegame')) setTimeout(() => pauseGame(), +params.get('pausegame') || 0);
-    if (params.has('endgame')) setTimeout(() => endGame(), +params.get('endgame') || 0);
-    if (params.has('exitclick')) { const t0 = Date.now(), iv = setInterval(() => { const b = document.querySelector('.pt-exit'); if (b && Date.now() - t0 > (+params.get('exitclick') || 0)) { clearInterval(iv); b.click(); } }, 200); } // F93: ?debug&exitclick=MS presses Exit once the game-over card is up (and MS have passed)
-    window.__petanque = {
-      world, terrain, renderer, seed, reset: toSetup, startGame, court,
-      audio,
-      setPlaying, clock, pauseGame, endGame,
-      get paused() { return pausedNow; },
-      get quality() { return level; },
-      get pending() { return pending; },
-      cast,
-      get aimYaw() { return aimYaw; },
-      get match() { return match; },
-      throw: (p) => launchBody(jackBody() && !jackBody().dead ? 'boule' : 'jack', 0, 'you', { ...readParams(), ...p }),
-      throwJack: (p) => launchBody('jack', -1, null, { ...readParams(), ...p }),
-    };
-  }
+  if (debug) debugHooks(dbgCtx);
 
-  // ?debug&play enters the full-window view without a click; the debug modes that start a match do too (otherwise the
-  // match would start paused, with the page showing, and an instant match would never run)
-  if (debug && (params.has('play') || params.has('autotest') || params.has('jackplace') || params.has('aispot') || pickHuman !== null)) setPlaying(true);
-  if (debug && params.has('holding')) hud.showHolding('Marcel & Odette are holding 2 points', 1); // ?debug&holding: sample banner (F11 screenshots)
-
-  if (debug && params.has('autotest')) {
-    // AI-only quick match, every throw simulated to rest instantly
-    startGame({ target: +params.get('target') || 7, difficulty: 'medium', allAI: true, instant: !params.has('animate') }); // &animate: real time
-  } else if (debug && params.has('jackplace') && !params.has('mene2')) {
-    // ?debug&jackplace: Marcel's jack fails and you place it; ?debug&jackplace=ai: your jack fails and the AI places it
-    startGame({ target: 7, difficulty: 'medium', firstJackTeam: params.get('jackplace') === 'ai' ? 0 : 1 });
-  } else if (debug && params.has('aispot')) {
-    // Real-time game where Marcel throws the jack first: screenshot while he shows his spot
-    startGame({ target: 7, difficulty: 'medium', firstJackTeam: 1 });
-  } else if (debug && params.has('mescenario')) {
-    // F22: ?debug&play&mescenario=small|big|close[&mdir=-1]: a mène end with a fixed layout, to check the result card against the scoring view
-    startGame({ target: 7, difficulty: 'medium', firstJackTeam: 0 });
-    token++; pending = null; clearWorld();
-    const jb = createBody('jack', { team: -1, x: 2.3, y: 9.2 }); jb.z = jb.r; world.add(jb);
-    const lay = { small: [[0, 0.11, 0.1], [1, -0.4, 0.3], [1, 0.5, -0.5], [0, -0.7, -0.4]],
-      big: [[0, 0.1, 0.08], [0, -0.12, 0.12], [0, 0.02, -0.18], [0, 0.22, -0.1], [0, -0.26, -0.05], [1, 0.0, 0.62], [1, -0.7, -0.3]],
-      far: [[0, 0.11, 0.1], [1, -0.4, 0.3], [1, 0.5, -0.5], [0, -0.7, -0.4], [0, 4, 3], [1, -5, -4], [0, 2, -6], [1, -3, 6]], // F82: scattered far-off boules must not shrink the view
-      wide: [[0, 0.5, 0.3], [0, -0.9, 0.2], [1, 1.4, -0.6], [0, 0.3, -1.0]],
-      close: [[0, 0.16, 0.0], [1, -0.16 - 0.007, 0], [0, 0.6, 0.5], [1, -0.5, -0.6]] }[params.get('mescenario')] || [];
-    for (const [t, dx, dy] of lay) { const b = createBody('boule', { team: t, x: 2.3 + dx, y: 9.2 + dy }); b.z = b.r; world.add(b); }
-    renderer.sync(world);
-    match = { ...match, phase: 'meneEnd', jack: { x: 2.3, y: 9.2 }, boules: [], result: meneResult(jb, world.bodies.filter((b) => b.kind === 'boule')) };
-    lastThrowerId = 'marcel';
-    for (const id of cast.keys()) placeAt(id, homeAt(id).x, homeAt(id).y, homeYaw(id));
-    setPlaying(true);
-    endOfMene('');
-  } else if (debug && params.has('mene2')) {
-    // ?debug&mene2[&ringcarry][&timerframes]: the first mène is over (jack at 2.3, 9.2, so the ring is carried back to 11 m) and the second begins: quick mode shows
-    // the human's jack turn toward y = 0; &ringcarry (slow mode) shows the last thrower carrying the ring there
-    settings.mode = params.has('ringcarry') ? 'slow' : 'quick';
-    startGame({ target: 7, difficulty: 'medium', firstJackTeam: 0 });
-    token++; pending = null; clearWorld();
-    const jb = createBody('jack', { team: -1, x: 2.3, y: 9.2 }); jb.z = jb.r; world.add(jb);
-    for (const [t, x, y] of [[0, 2.0, 9.0], [1, 2.6, 9.4]]) { const b = createBody('boule', { team: t, x, y }); b.z = b.r; world.add(b); }
-    renderer.sync(world);
-    match = { ...match, phase: 'meneEnd', jack: { x: 2.3, y: 9.2 }, boules: [], result: { void: true } };
-    lastThrowerId = 'marcel';
-    for (const id of cast.keys()) placeAt(id, homeAt(id).x, homeAt(id).y, homeYaw(id));
-    setPlaying(true);
-    if (params.has('deadjack')) { // &deadjack (with &ringcarry&slow): the jack went out beyond the side string; F97: someone carries it back to its pre-throw spot, the ring waits
-      world.bodies.length = 0;
-      const jd = createBody('jack', { team: -1, x: C.terrainW + 1.4, y: 8.4 }); jd.z = terrain.sample(jd.x, jd.y).h + jd.r; jd.dead = true; jd.ghost = true; world.add(jd);
-      for (const [t, x, y] of [[0, 1.2, 6.6], [1, 3.2, 7.0]]) { const b = createBody('boule', { team: t, x, y }); b.z = b.r; world.add(b); }
-      renderer.sync(world);
-      match = { ...match, jack: { x: jd.x, y: jd.y, dead: true, spot: { x: 2.3, y: 9.2 }, replaced: true } };
-      lastThrowerId = 'marcel';
-      renderer.setCamera('head', { target: { x: 3.4, y: 8.8 }, points: [{ x: -0.5, y: 5 }, { x: C.terrainW + 2, y: 12 }] });
-      startRingPickup(); startJackReturn();
-      return;
-    }
-    if (params.has('f02')) { // &f02 (with &ringcarry&slow): the mène is over with twelve boules scattered; the players gather, then collect their own (&f02at=seconds freezes the frame)
-      world.bodies.length = 0;
-      const jb2 = createBody('jack', { team: -1, x: 2.3, y: 9.2 }); jb2.z = jb2.r; world.add(jb2);
-      const spots = [[1.6, 8.7], [3.0, 9.8], [2.0, 10.3], [3.3, 8.6], [1.2, 9.6], [2.7, 9.0], [3.4, 10.4], [1.5, 7.9], [2.4, 8.4]];
-      if (params.has('f51')) spots[5] = [2.4, 9.3]; // &f51: a boule against the jack, in the ring's way
-      let k = 0;
-      for (const p of match.players) for (let n = 0; n < 3 && k < spots.length + 3; n++, k++) {
-        const b = createBody('boule', { team: p.team, x: (spots[k] || [0, 0])[0], y: (spots[k] || [0, 0])[1] }); b.owner = p.id; b.z = b.r; world.add(b);
-        if (!spots[k]) placeDeadBall(world, b, 0.2 + (k - spots.length) * 0.4, court.dir > 0 ? C.terrainL + 0.15 : -0.15);
-      }
-      renderer.sync(world);
-      lastThrowerId = 'marcel';
-      f02Script = true; fetchFreezeAt = +params.get('f02at') || 0;
-      gather(null);
-      startRingPickup();
-      startCollect(+params.get('f02delay') || 600);
-      if (params.has('f02skip')) later(() => skipCollect(), +params.get('f02skip') * 1000); // &f02skip=seconds: a click or key (F15)
-      if (params.has('f02next')) later(() => nextMene(), +params.get('f02next') * 1000); // &f02next=seconds: the player continues (F15: the ring goes down, the jack thrower walks in)
-      renderer.setCamera('head', { target: { x: 2.3, y: 9 }, points: [{ x: -1, y: 6 }, { x: 5.5, y: 12 }] });
-      if (fetchFreezeAt) (async () => {
-        for (let i = 0; i < fetchFreezeAt * 60; i++) { fetchPump = true; tickCast(1 / 60); fetchPump = false; renderer.sync(world); await null; await null; }
-        frozen = true; renderer.sync(world);
-      })();
-      return;
-    }
-    if (params.has('f07')) { // &f07 (with &ringcarry&slow): Marcel stands in the circle after the last throw, picks the ring up and waits holding it by the jack
-      const ch = cast.get('marcel'); inCircle = 'marcel'; shadow('marcel', true);
-      placeAt('marcel', court.circle.x, court.circle.y, Math.PI); ch.setStance('watch');
-      renderer.setCamera('head', { target: { x: 2.3, y: 7.5 }, points: [{ x: 1.5, y: 5 }, { x: 3, y: 9.6 }, { x: court.circle.x, y: court.circle.y }] });
-      if (params.get('f07') === 'held') { // a still of the end state: Marcel 1 m from the jack on the circle's side, holding the ring
-        const j = match.jack, dx = court.circle.x - j.x, dy = court.circle.y - j.y, d = Math.hypot(dx, dy);
-        const sx = j.x + dx / d, sy = j.y + dy / d;
-        ringCarry = 'marcel'; ch.setCarrying(true); placeAt('marcel', sx, sy, Math.atan2(j.x - sx, j.y - sy));
-        renderer.setCamera('inspect', { target: { x: (j.x + sx) / 2, y: (j.y + sy) / 2 - 0.2 * court.dir }, dist: 3.2, az: baseYaw() + Math.PI * 0.8, el: 0.25, height: 0.9, reset: true, fit: 1.4 });
-        return;
-      }
-      startRingPickup();
-      return;
-    }
-    if (params.has('ringheld')) { // &ringheld: a still of Marcel carrying the ring back toward the corrected spot (slow mode)
-      const ch = cast.get('marcel'); ringCarry = 'marcel'; ch.setCarrying(true); shadow('marcel', true);
-      placeAt('marcel', 2.2, 5.5, Math.PI); ch.setStance('watch');
-      renderer.setCamera('head', { target: { x: 2.3, y: 7.5 }, points: [{ x: 1.5, y: 5 }, { x: 3, y: 9.6 }, { x: 2.2, y: 11.2 }] });
-      return;
-    }
-    nextMene();
-  } else if (debug && pickHuman !== null) {
-    // Stop at the human's first boule (or at the chooser with ?humanturn=chooser)
-    startGame({ target: 7, difficulty: 'medium', instant: !params.has('animate'), firstJackTeam: pickHuman === 'jack' ? 0 : 1 }); // &animate: real time
-  } else if (debug && params.has('characters')) {
-    // --- ?debug&characters: stick figures in every stance side by side (for screenshots) ---
-    clearWorld();
-    hud.hideHint();
-    for (const ch of cast.values()) ch.root.visible = false;
-    // &cast=quirk|celebrate|dismay: the four real players in a row (&q=N picks which idle quirk is held)
-    // &hold: each holds 1 + 2 boules (E16); &cast=throw&backswing=0.4 freezes the four mid-backswing
-    const castMode = params.get('cast');
-    const qi = +params.get('q') || 0;
-    const specs = castMode ? ['you', 'pierre', 'marcel', 'odette'].map((id) => [castMode === 'quirk' ? 'watch' : castMode, specFor(id)]) : [
-      ['idle', { model: 'odette', name: 'Ana', height: 1.62, build: 'slim', stance: 'stand', colors: { shirt: '#c0392b', trousers: '#2c3e50', skin: '#e8b48c' } }],
-      ['crouch', { model: 'marcel', name: 'Marcel', height: 1.7, build: 'stout', stance: 'crouch', colors: { shirt: '#6f8f4e', trousers: '#4b4b55', skin: '#d29b74', hat: '#2d3a55' }, quirks: { hat: 'cap' } }],
-      ['stand', { model: 'odette', name: 'Odette', height: 1.65, build: 'slim', stance: 'stand', colors: { shirt: '#f2efe6', trousers: '#6b5b8c', skin: '#efc6a4', hat: '#e9d9a0' }, quirks: { hat: 'sunhat' } }],
-      ['celebrate', { model: 'pierre', name: 'Pierre', height: 1.82, build: 'average', stance: 'crouch', colors: { shirt: '#2f6fb5', trousers: '#2b2b2b', skin: '#a8734d' } }],
-      ['dismay', { model: 'you', name: 'Lou', height: 1.75, build: 'average', stance: 'stand', colors: { shirt: '#e0a526', trousers: '#4a3b2f', skin: '#c58a63' } }],
-      ['watch', { model: 'pierre', name: 'Max', height: 1.9, build: 'stout', stance: 'stand', colors: { shirt: '#7a3b8f', trousers: '#33414d', skin: '#f0c7a8' } }],
-      ['throw', { model: 'you', name: 'Thrower', height: 1.72, build: 'average', stance: params.get('stance') === 'stand' ? 'stand' : 'crouch', colors: { shirt: '#1f9d8b', trousers: '#3b3b3b', skin: '#dba983' } }],
-    ];
-    const figures = specs.map(([stance, spec], i) => {
-      const ch = createCharacter(THREE, spec);
-      if (useMeshes) attachModels([{ ch, model: spec.model }], modelTimeout);
-      const x = castMode ? -1.4 + i * 1.5 : -2.2 + i * 1.3;
-      const y = stance === 'throw' && params.has('closeup') ? 0.5 : 3; // closeup: the thrower steps out of the line
-      ch.setPlacement(x, y, Math.PI); // facing the camera (-y)
-      ch.root.position.z = terrain.sample(x, y).h;
-      renderer.addObject(ch.root);
-      if (stance === 'throw') {
-        ch.setStance(spec.stance);
-        const loop = () => {
-          ch.setHolding(true, BOULE_COLORS[PERSONALITIES[spec.model].team]);
-          const loft = params.has('loft') ? +params.get('loft') * DEG : 0.3 + Math.random() * 0.7;
-          ch.playThrow({ // &freezethrow: stop at the release frame and mark where the boule leaves
-            loft,
-            onRelease: (h) => {
-              if (!params.has('freezethrow')) return;
-              const m = new THREE.Mesh(new THREE.SphereGeometry(C.boule.r, 12, 8), new THREE.MeshBasicMaterial({ color: '#ff2020' }));
-              m.position.set(h.x, h.y, h.z); renderer.addObject(m);
-              ch.frozen = true;
-            },
-          }).then(() => { if (!ch.frozen) setTimeout(loop, 800); });
-          if (params.has('backswing')) { for (let tt = 0; tt < +params.get('backswing'); tt += 1 / 60) ch.update(1 / 60); ch.frozen = true; } // &backswing=0.4: freeze that long into the throw
-        };
-        loop();
-      } else ch.setStance(stance);
-      if (params.has('hold')) ch.setHeldBoules({ dominant: 1, other: 2, color: BOULE_COLORS[PERSONALITIES[spec.model].team] }); // &hold: one boule in the dominant hand, two in the other (the player's team colour, E23)
-      if (castMode === 'quirk') { const l = spec.quirks.idle; ch.forceQuirk(l[qi % l.length]); }
-      if (stance === 'watch') ch.lookAt(2, 0.5, 1.6);
-      return ch;
-    });
-    if (params.has('closeup')) renderer.setCamera('inspect', { target: { x: 5.6, y: 0.5, }, dist: +params.get('dist') || 3.6, az: +params.get('az') || 1.2, el: +params.get('el') || 0.12 });
-    else renderer.setCamera('inspect', { target: { x: castMode ? 2.1 : 1.7, y: 3 }, dist: castMode ? +params.get('dist') || 5 : 7, az: +params.get('az') || 0, el: params.has('el') ? +params.get('el') : 0.1, height: +params.get('height') || 0 });
-    let lastC = performance.now();
-    const tickC = (now) => {
-      const dt = params.has('freezethrow') ? 1 / 60 : Math.min((now - lastC) / 1000, 0.1); lastC = now; // fixed step so a frozen release is exact
-      for (const ch of figures) if (!ch.frozen) ch.update(dt);
-      requestAnimationFrame(tickC);
-    };
-    for (const ch of figures) ch.update(0.5);
-    requestAnimationFrame(tickC);
-    window.__characters = figures;
-  } else if (debug && params.has('measure')) {
-    // --- ?debug&measure: jack and boules from both teams, with the between-throws measuring lines (for screenshots) ---
-    clearWorld();
-    hud.hideHint();
-    const put = (kind, team, x, y) => { const b = createBody(kind, { team, x, y }); b.z = b.r; return world.add(b); };
-    put('jack', -1, 2.1, 8.45);
-    put('boule', 0, 1.9, 8.3); put('boule', 0, 2.5, 8.9);
-    put('boule', 1, 2.28, 8.62); put('boule', 1, 1.6, 7.9);
-    renderer.sync(world);
-    placePlayers('you');
-    headView(jackBody());
-    showBetween();
-  } else if (debug && (params.has('jackshot') || params.has('tvshot'))) { // ?debug&tvshot[&tvcam=a|b|c&jspeed=&freezeat=]: Pierre's boule toward the jack in quick mode (E27 camera checks)
-    if (params.has('tvshot')) settings.mode = 'quick';
-    // --- ?debug&jackshot[&jspeed=&jloft=&jyaw=&freezeat=0.6]: a boule shot hard into the jack, with the flight camera following ---
-    clearWorld();
-    hud.hideHint();
-    const put = (kind, team, x, y) => { const b = createBody(kind, { team, x, y }); b.z = b.r; world.add(b); return b; };
-    put('jack', -1, 2.1, 8);
-    put('boule', 1, 1.8, 8.2);
-    put('boule', 1, 2.6, 7.7);
-    renderer.sync(world);
-    placePlayers('you');
-    const bshot = debug && params.get('bshot'); // F01: ?bshot=prep|throw|reaction|head|flight[&who=pierre]: one broadcast shot (with &cam=broadcast)
-    if (bshot === 'head') headView(jackBody());
-    else if (bshot === 'reaction' || bshot === 'prep' || bshot === 'throw') {
-      const who = SPECS[params.get('who')] ? params.get('who') : 'you';
-      if (who !== 'you') { enterCircle(who, baseYaw(), true); }
-      if (bshot === 'reaction') cast.get(who).setStance('celebrate');
-      showShot({ kind: bshot, id: who, face: baseYaw() });
-    } else launchBody('boule', 0, params.has('tvshot') ? 'pierre' : 'you', { yaw: +params.get('jyaw') || 0.0143, loft: +params.get('jloft') || 0.14, speed: +params.get('jspeed') || 9, backspin: 0, sidespin: 0 });
-    if (freezeAt) { // step to the freeze time up front (headless frames are too slow to get there), moving the camera as it would
-      for (let k = 1; world.t < freezeAt; k++) { world.step(); if (k % 24 === 0) { renderer.sync(world); renderer.render(0.1); } }
-      renderer.sync(world);
-    }
-  } else if (debug && params.has('fetch')) {
-    // --- ?debug&fetch: a boule out beyond the side timber and a jack out beyond the far one. Pierre fetches the boule
-    // to the row, then the jack, which he hands to Odette; she walks it out and sets it down at (&jx, &jy), then both
-    // walk home. &fetchat=seconds freezes the animation then (frame screenshots); &dist/&az/&el/&lx/&ly give a close
-    // inspect camera ---
-    clearWorld();
-    hud.hideHint();
-    const put = (kind, team, x, y) => { const b = createBody(kind, { team, x, y }); b.z = b.r; return world.add(b); };
-    put('boule', 0, 1.9, 8.3);
-    put('boule', 1, 2.3, 8.6);
-    // &fetchin: the dead boule lies inside the strings instead (E02: it is walked off the court)
-    const deadBoule = params.has('fetchin') ? placeDeadBall(world, put('boule', 1, 0, 0), 1.2, 5.2)
-      : placeDeadBall(world, put('boule', 1, 0, 0), C.terrainW + C.lumberGap + C.lumberSize + 0.5, 9.2);
-    const deadJack = placeDeadBall(world, put('jack', -1, 0, 0), 2.6, C.terrainL + C.lumberGap + C.lumberSize + 0.8);
-    renderer.sync(world);
-    placePlayers('you');
-    fetchFreezeAt = +params.get('fetchat') || 0;
-    if (params.has('dist')) renderer.setCamera('inspect', { target: { x: +params.get('lx') || 4, y: +params.get('ly') || 9 }, dist: +params.get('dist'), az: +params.get('az') || 1.2, el: +params.get('el') || 0.3 });
-    else renderer.setCamera('head', { target: { x: 2, y: 8 }, points: [{ x: -1.5, y: -0.5 }, { x: 6.5, y: 16.5 }] });
-    if (fetchFreezeAt) (async () => {
-      for (let i = 0; i < fetchFreezeAt * 60; i++) {
-        fetchPump = true; tickCast(1 / 60); fetchPump = false; await null; await null;
-      }
-      frozen = true;
-      if (params.has('followc')) { // &followc=pierre: close camera on that character (with &dist &az &el)
-        const q = cast.get(params.get('followc')).root.position;
-        renderer.setCamera('inspect', { target: { x: q.x, y: q.y }, dist: +params.get('dist') || 3.2, az: +params.get('az') || 0.6, el: +params.get('el') || 0.2, height: 0.6, reset: true });
-      }
-      renderer.sync(world);
-    })();
-    if (params.has('e02')) { // ?debug&fetch&e02: Pierre (or &who=) retrieves the dead boule like the game does, then goes to a waiting slot
-      runFetch(params.get('who') || 'pierre', true).catch((err) => console.error(err));
-    } else (async () => {
-      const job = { id: 'pierre', tok: token, cancelled: false, scripted: true };
-      fetchJob = job;
-      if (await pickUp(job, deadBoule) && await putDown(job, deadBoule, deadRowSlot(rowCount()))) {
-        if (await pickUp(job, deadJack)) {
-          await handOver(job, 'odette');
-          const spot = { x: +params.get('jx') || 2.3, y: +params.get('jy') || 8.2 };
-          await placeWalk('odette', spot);
-          await walkHome(job);
-        }
-      }
-    })().catch((err) => console.error(err));
-  } else if (debug && params.has('lumber')) {
-    // --- ?debug&lumber: ghosts resting against the timbers and beyond them, plus live boules (for screenshots);
-    // &lx=&ly=&dist=&az=&el= place the inspect camera ---
-    clearWorld();
-    hud.hideHint();
-    const put = (kind, team, x, y) => { const b = createBody(kind, { team, x, y }); b.z = b.r; return world.add(b); };
-    put('jack', -1, 2.1, 8.45);
-    put('boule', 0, 1.9, 8.3);
-    put('boule', 1, 2.3, 8.6);
-    const gi = C.terrainW + C.lumberGap - C.boule.r - 0.003;
-    placeDeadBall(world, put('boule', 0, 0, 0), gi, 9);
-    placeDeadBall(world, put('boule', 1, 0, 0), gi - 0.5, 9.6);
-    placeDeadBall(world, put('boule', 1, 0, 0), C.terrainW + C.lumberGap + C.lumberSize + 0.4, 9.2);
-    placeDeadBall(world, put('boule', 0, 0, 0), 2.5, C.terrainL + C.lumberGap - C.boule.r - 0.003);
-    renderer.sync(world);
-    placePlayers('you');
-    renderer.setCamera('inspect', { target: { x: +params.get('lx') || 4.3, y: +params.get('ly') || 9.2 }, dist: +params.get('dist') || 3, az: +params.get('az') || 1.2, el: +params.get('el') || 0.35 });
-  } else if (debug && params.has('preview')) {
-    // --- ?debug&preview: static throw preview with made-up paths (for screenshots) ---
-    clearWorld();
-    hud.hideHint();
-    const put = (kind, team, x, y) => { const b = createBody(kind, { team, x, y }); b.z = b.r; world.add(b); return b; };
-    put('jack', -1, 2.1, 8.45);
-    put('boule', 0, 1.9, 8.3);
-    put('boule', 1, 2.3, 8.6);
-    renderer.sync(world);
-    placePlayers('you');
-    renderer.setCamera('shoulder', { player: { x: 2, y: 1 }, yaw: 0, zoom: 1 });
-    const arc = (x1, y1, peak, n = 40) => {
-      const pts = [];
-      for (let i = 0; i <= n; i++) {
-        const t = i / n;
-        pts.push({ x: 2 + (x1 - 2) * t, y: 1 + (y1 - 1) * t, z: 0.9 * (1 - t) + 4 * (peak - 0.45) * t * (1 - t) + 0.9 * 0 });
-      }
-      return pts;
-    };
-    const ell = (cx, cy, rx, ry) => Array.from({ length: 49 }, (_, i) => ({ x: cx + rx * Math.cos(i / 48 * 6.2832), y: cy + ry * Math.sin(i / 48 * 6.2832), z: 0 }));
-    renderer.setThrowPreview({
-      center: arc(2.1, 7.5, 2.5),
-      edges: [arc(2.22, 7.8, 2.6), arc(1.98, 7.8, 2.6), arc(2.22, 7.2, 2.4), arc(1.98, 7.2, 2.4)],
-      ellipse1: ell(2.1, 7.5, 0.12, 0.3),
-      ellipse2: ell(2.1, 7.5, 0.24, 0.6),
-      roll: [{ x: 2.1, y: 7.5, z: 0 }, { x: 2.13, y: 7.9, z: 0 }, { x: 2.15, y: 8.3, z: 0 }],
-      donnee: { x: 2.1, y: 7.5 },
-      style: 'demi-portee',
-      snapped: params.has('snapped'),
-      legalZone: params.has('zone'),
-    });
-  } else {
-    toSetup();
-  }
+  // ?debug&play, the debug scenarios (debug-scenarios.js); no scenario: the setup screen
+  if (!(debug && runDebugScenario(dbgCtx))) toSetup();
 }
 
-// Friendly message in the game area when the game cannot start (no WebGL, etc.)
+// Friendly message in the game area when the game cannot start: WebGL missing (F114: 'webgl'), or any other boot failure
 function showFallback(err) {
+  const webgl = classifyBootError(err) === 'webgl';
   const msg = err && err.message ? err.message : String(err);
-  say('Sorry, the game could not start: ' + msg);
+  say(webgl ? 'Sorry, the game could not start: ' + msg : 'Something went wrong starting the game. Please reload the page.');
   if (!root) return;
   for (const el of root.querySelectorAll('canvas, .petanque-hud, .petanque-controls')) el.hidden = true;
   const box = document.createElement('div');
   box.className = 'petanque-fallback';
   const h = document.createElement('p');
   h.className = 'petanque-fallback-title';
-  h.textContent = 'The pétanque court is closed for now';
   const p = document.createElement('p');
-  p.textContent = 'This game needs WebGL 3D graphics, and your browser or device could not start them. ' +
-    'Try another browser or turn on hardware acceleration. In the meantime, ';
+  if (webgl) {
+    h.textContent = 'The pétanque court is closed for now';
+    p.textContent = 'This game needs WebGL 3D graphics, and your browser or device could not start them. ' +
+      'Try another browser or turn on hardware acceleration. In the meantime, ';
+  } else {
+    h.textContent = 'Something went wrong starting the game. Please reload the page.';
+    p.textContent = 'In the meantime, ';
+    const det = document.createElement('details'); // F114: the error text, for support
+    det.className = 'petanque-fallback-details';
+    const sum = document.createElement('summary');
+    sum.textContent = 'Error details';
+    const pre = document.createElement('pre');
+    pre.textContent = msg;
+    det.append(sum, pre);
+    box.append(det);
+  }
   const a = document.createElement('a');
   a.href = root.dataset.linksUrl || '/links/';
   a.textContent = 'read up on pétanque and find a real court on our Links page';
   p.append(a, '.');
-  box.append(h, p);
+  box.prepend(h, p);
   root.insertBefore(box, root.firstChild);
 }
 
@@ -2838,6 +2506,6 @@ function showGpuMessage(a) {
 try {
   boot();
 } catch (err) {
+  console.error(err); // F114: always logged, before the message is drawn
   showFallback(err);
-  console.error(err);
 }

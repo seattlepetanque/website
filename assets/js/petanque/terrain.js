@@ -3,6 +3,7 @@
 // firm = 1 - loose (F05 names the map firmness in the UI); friction is the rolling
 // resistance coefficient (mu_r). A stone's h is the z of its centre.
 import { C } from './constants.js';
+import { dbgParam } from './debug.js';
 import { mulberry32, makeNoise2D } from './rng.js';
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -76,7 +77,7 @@ export function jackMaterialParams(variant = activeGravel, bright = false) {
 }
 
 function debugGravel() {
-  try { return globalThis.__DEBUG__ !== false && typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug') ? new URLSearchParams(location.search).get('gravel') : null; } catch (e) { return null; }
+  return debug ? dbgParam('gravel') : null; // F111
 }
 
 export function createTerrain(seed, opts = {}) {

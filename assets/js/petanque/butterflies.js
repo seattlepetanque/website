@@ -9,6 +9,7 @@
 import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
 import { mulberry32 } from './rng.js';
+import { dbgHas } from './debug.js';
 
 export const BF = {
   firstMin: 60, firstMax: 150, gapMin: 180, gapMax: 360, // seconds
@@ -123,7 +124,7 @@ function wingGeometry(side, wingCol, edgeCol) {
 export function makeButterflies(z, seed) {
   const q = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams();
   if (seed === undefined) seed = +q.get('seed') || (Date.now() % 100000);
-  const dbg = globalThis.__DEBUG__ !== false && q.has('debug') && q.has('butterflies'); // ?debug&butterflies: a visit right at the start, and every 20 s
+  const dbg = debug && dbgHas('butterflies'); // ?debug&butterflies: a visit right at the start, and every 20 s
   const sched = createVisitScheduler(seed, { debug: dbg });
   const group = new THREE.Group(); group.position.z = z; group.visible = false;
   const body = new THREE.BoxGeometry(0.1, 0.014, 0.014);
