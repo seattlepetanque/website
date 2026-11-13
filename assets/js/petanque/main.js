@@ -28,6 +28,7 @@ import { planRoute, standPoint, pathLength } from './fetch.js';
 import { meneEndReady, atPlaces, steer, planGoals, pickJackCarrier, ringStagePoint, ringMayDrop, BLOCK_FADE_S } from './crowd.js';
 import { pickWaitingSlot, waitingSlots } from './waiting.js';
 import { attachModels } from './models.js';
+import { prefersReducedMotion } from './reduced.js'; // F113
 import { createGroundView } from './groundview.js';
 import { isPhone } from './scenery.js';
 import { probeGpu, assessGpu, weakDevice, browserName, gpuMessage } from './gpuinfo.js'; // F102
@@ -99,7 +100,7 @@ function boot() {
   const chance = mulberry32(seed ^ 0x3c6ef372);
 
   // ---- Characters: created once, walk between the circle and their waiting spots ----
-  const reduceMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const reduceMotion = prefersReducedMotion; // F113: one cached MediaQueryList (reduced.js)
   const cast = new Map(); // id -> character
   for (const id of Object.keys(SPECS)) {
     const ch = createCharacter(THREE, SPECS[id]);
@@ -187,7 +188,7 @@ function boot() {
     return b;
   };
   // F05 "Read the ground": slope arrows and a firmness wash, human turn only, shown while its icon is held (F48), can be disabled in settings
-  const gv = createGroundView(terrain, { phone: isPhone(), reduced: () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) });
+  const gv = createGroundView(terrain, { phone: isPhone(), reduced: prefersReducedMotion });
   renderer.addObject(gv.object);
   let gvOn = debug && params.has('groundview');
   const syncGv = (dt) => {
@@ -429,7 +430,7 @@ function boot() {
   // thrower: yaw offset within +-180 deg of the aim, pitch offset within +-15 deg (clamped in camera.js, never wrapped). Wheel and pinch still zoom.
   // Turning it off keeps a small yaw offset (<= KEEP_YAW) since aiming still works from there; a larger one would
   // leave the camera looking sideways or backwards of the aim, so it eases back to the default framing. Pitch stays.
-  const reducedMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const reducedMotion = prefersReducedMotion;
   const wrapPi = (a) => Math.atan2(Math.sin(a), Math.cos(a));
   function setViewOffset(yaw, pitch) {
     const c = clampViewOffset(yaw, pitch);
@@ -2415,6 +2416,7 @@ function boot() {
     if (debug) console.warn('[hard cap]', `t=${(world.t - capT0).toFixed(1)}s`, JSON.stringify(stopped.map((s) => ({ ...s, x: +s.x.toFixed(3), y: +s.y.toFixed(3), z: +s.z.toFixed(3), speed: +s.speed.toFixed(4), spin: +s.spin.toFixed(3) }))));
   }
   let acc = 0, last = performance.now();
+  const bodiesById = new Map();
   const freezeAt = debug ? +params.get('freezeat') || 0 : 0; // ?debug&freezeat=0.6 stops the sim at that time (camera checks)
   function frame(now) {
     const dt = Math.min((now - last) / 1000, 0.1);
@@ -2438,7 +2440,8 @@ function boot() {
     if (world.events.length) {
       markLandings(world.events);
       if (flying) throwEvents.push(...world.events.filter((e) => e.type === 'hit'));
-      audio.handleEvents(world.events, new Map(world.bodies.map((b) => [b.id, b])));
+      bodiesById.clear(); for (const b of world.bodies) bodiesById.set(b.id, b); // F113: one reused Map, not a new Map and array per event frame
+      audio.handleEvents(world.events, bodiesById);
       world.events.length = 0;
     }
     if (!pausedNow) audio.update(world.bodies, dt); // rolling scrape loops (accepts an array)

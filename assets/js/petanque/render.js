@@ -9,6 +9,7 @@ import { rankBoules, layoutBadges } from './ranklabels.js'; // F91
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
 import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, scoringTargetBox } from './camera.js';
+import { prefersReducedMotion } from './reduced.js'; // F113
 import { makeButterflies } from './butterflies.js'; // F67
 import { makeCloudShadows } from './cloudshadows.js'; // F68
 import { daylightAt, SUN_DISTANCE, SHADOW_NEAR, SHADOW_FAR } from './daylight.js';
@@ -152,6 +153,7 @@ function makeEnvMap(renderer, envFloor) {
   const pm = new THREE.PMREMGenerator(renderer);
   const tex = pm.fromScene(s, 0.02).texture;
   pm.dispose();
+  s.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); // F113: the throwaway env scene
   return tex;
 }
 
@@ -170,6 +172,7 @@ export function createRenderer(canvas, terrain, init = {}) {
   if (!renderer.getContext()) throw new Error('WebGL is not available in this browser, so the 3D game cannot start.');
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelRatioMax));
   renderer.shadowMap.enabled = true;
+  renderer.shadowMap.autoUpdate = false; // F113: the shadow map is redrawn only when something that casts moves (see shadowsChanged)
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
@@ -320,7 +323,7 @@ export function createRenderer(canvas, terrain, init = {}) {
   const woodMap = woodTexture();
   const lumberGroup = new THREE.Group();
   {
-    const lr = mulberry32(31), tones = ['#ffffff', '#f0e6d8', '#fff4e6', '#e6dac8', '#f5ecde'];
+    const boards = [], lr = mulberry32(31), tones = ['#ffffff', '#f0e6d8', '#fff4e6', '#e6dac8', '#f5ecde'];
     const sz = C.lumberSize;
     for (const bx of LUMBER) {
       const alongY = bx.y1 - bx.y0 > bx.x1 - bx.x0;
@@ -333,15 +336,33 @@ export function createRenderer(canvas, terrain, init = {}) {
         const geo = new THREE.BoxGeometry(l, sz, hTop + 0.1);
         const uv = geo.attributes.uv, uo = lr(), vo = lr();
         for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) * l / 1.6 + uo, uv.getY(k) * 0.9 + vo);
-        const mat = new THREE.MeshStandardMaterial({ map: woodMap, color: tones[Math.floor(lr() * tones.length)], roughness: 0.92, metalness: 0, envMapIntensity: 0.3 });
-        const m = new THREE.Mesh(geo, mat);
+        const tone = new THREE.Color(tones[Math.floor(lr() * tones.length)]);
         const c0 = (alongY ? bx.y0 : bx.x0) + seg * (i + 0.5);
         const zc = hTop - (hTop + 0.1) / 2;
-        if (alongY) { m.rotation.z = Math.PI / 2; m.position.set((bx.x0 + bx.x1) / 2, c0, zc); } else m.position.set(c0, (bx.y0 + bx.y1) / 2, zc);
-        m.castShadow = true; m.receiveShadow = true;
-        lumberGroup.add(m);
+        if (alongY) { geo.rotateZ(Math.PI / 2); geo.translate((bx.x0 + bx.x1) / 2, c0, zc); } else geo.translate(c0, (bx.y0 + bx.y1) / 2, zc);
+        const cs = new Float32Array(geo.attributes.position.count * 3);
+        for (let k = 0; k < cs.length; k += 3) { cs[k] = tone.r; cs[k + 1] = tone.g; cs[k + 2] = tone.b; }
+        geo.setAttribute('color', new THREE.BufferAttribute(cs, 3)); // the per-board tone rides in vertex colours, so one material serves all
+        boards.push(geo);
       }
     }
+    // F113: the boards are merged into one geometry (one draw call, one shadow draw) instead of one mesh and material each
+    const mergedGeo = new THREE.BufferGeometry();
+    for (const name of ['position', 'normal', 'uv', 'color']) {
+      const size = boards[0].attributes[name].itemSize, out = new Float32Array(boards.reduce((a, g) => a + g.attributes[name].array.length, 0));
+      let off = 0;
+      for (const g of boards) { out.set(g.attributes[name].array, off); off += g.attributes[name].array.length; }
+      mergedGeo.setAttribute(name, new THREE.BufferAttribute(out, size));
+    }
+    const idxArr = new Uint32Array(boards.reduce((a, g) => a + g.index.count, 0));
+    let io = 0, vo = 0;
+    for (const g of boards) { for (let k = 0; k < g.index.count; k++) idxArr[io++] = g.index.array[k] + vo; vo += g.attributes.position.count; }
+    mergedGeo.setIndex(new THREE.BufferAttribute(idxArr, 1));
+    for (const g of boards) g.dispose();
+    const lumberMat = new THREE.MeshStandardMaterial({ map: woodMap, vertexColors: true, roughness: 0.92, metalness: 0, envMapIntensity: 0.3 });
+    const lm = new THREE.Mesh(mergedGeo, lumberMat);
+    lm.castShadow = true; lm.receiveShadow = true;
+    lumberGroup.add(lm);
   }
   scene.add(lumberGroup);
 
@@ -442,11 +463,11 @@ export function createRenderer(canvas, terrain, init = {}) {
   const meshes = new Map(); // id -> { mesh, body, fade, ... }
   const tmpQ = new THREE.Quaternion(), tmpV = new THREE.Vector3();
 
+  let syncGen = 0;
   function sync(world) {
     const bodies = Array.isArray(world) ? world : (world.bodies || []);
-    const seen = new Set();
+    const gen = ++syncGen; // F113: a generation stamp instead of a new Set per frame
     for (const b of bodies) {
-      seen.add(b.id);
       let e = meshes.get(b.id);
       if (!e) {
         const jack = b.kind === 'jack';
@@ -458,21 +479,25 @@ export function createRenderer(canvas, terrain, init = {}) {
         scene.add(mesh);
         e = { mesh, body: b };
         meshes.set(b.id, e);
+        sceneDirty = true;
       }
-      e.body = b;
+      e.body = b; e.gen = gen;
+      if (e.mesh.position.x !== b.x || e.mesh.position.y !== b.y || e.mesh.position.z !== b.z) sceneDirty = true; // F113 (new bodies are dirty below)
       e.mesh.position.set(b.x, b.y, b.z);
       e.mesh.visible = true; // dead bodies stay visible at their spot beyond the far line, greyed
       const baseMat = b.dead ? (b.kind === 'jack' ? deadJackMat : deadBouleMat) : (b.kind === 'jack' ? (jv.c ? jackBright : jackMat) : bouleMats[b.team ? 1 : 0]);
       if (e.fade) { // D11 reduced motion: a ball fades out and in instead of being carried
-        if (!e.fadeMat || e.fadeBase !== baseMat) { e.fadeMat = baseMat.clone(); e.fadeBase = baseMat; e.fadeMat.transparent = true; }
+        if (!e.fadeMat || e.fadeBase !== baseMat) { if (e.fadeMat) e.fadeMat.dispose(); e.fadeMat = baseMat.clone(); e.fadeBase = baseMat; e.fadeMat.transparent = true; }
         e.fadeMat.opacity = e.fade.k;
-        e.mesh.material = e.fadeMat;
-      } else e.mesh.material = baseMat;
+        e.mesh.material = e.fadeMat; sceneDirty = true; // F113 (a fading ball changes while the game runs)
+      } else { if (e.mesh.material !== baseMat) sceneDirty = true; e.mesh.material = baseMat; }
       if (b.kind === 'jack') jackLive = e;
     }
     for (const [id, e] of meshes) {
-      if (seen.has(id)) continue;
+      if (e.gen === gen) continue;
+      sceneDirty = true;
       scene.remove(e.mesh);
+      if (e.fadeMat) e.fadeMat.dispose(); // F113
       if (e === jackLive) jackLive = null;
       meshes.delete(id);
     }
@@ -1376,7 +1401,7 @@ export function createRenderer(canvas, terrain, init = {}) {
   }
 
   // Camera state
-  const reduce = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduce = prefersReducedMotion; // F113: cached
   const cur = { pos: new THREE.Vector3(2, -2, 2), tgt: new THREE.Vector3(2, 8, 0) };
   const from = { pos: new THREE.Vector3(), tgt: new THREE.Vector3() };
   const goal = { pos: new THREE.Vector3(), tgt: new THREE.Vector3() };
@@ -1414,6 +1439,13 @@ export function createRenderer(canvas, terrain, init = {}) {
 
   function groundZ(t) { return terrain.sample(t.x, t.y).h; }
 
+  // F113: computeGoal ran every frame and built a closure and an option object per call; these are shared and refilled
+  const groundHeight = (x, y) => terrain.sample(x, y).h;
+  const obsOpts = { aspect: 1, fov: 50, dt: 0, reduced: false, groundAt: groundHeight, dir: 1 };
+  const wideOpts = { width: C.terrainW, length: C.terrainL, aspect: 1, fov: 50, groundAt: groundHeight };
+  const bcOpts = { subject: null, face: undefined, body: null, jack: null, dir: 1, dt: 0, reduced: false, groundAt: groundHeight, aspect: 1, fov: 50 };
+  const tvOpts = { body: null, jack: null, dir: 1, dt: 0, reduced: false, groundAt: groundHeight, aspect: 1, fov: 50 };
+  const flightOpts = { aspect: 1, fov: 50, dt: 0, reduced: false, thrown: null, dir: 1 };
   function computeGoal(dt) {
     if (mode === 'aim') {
       const yaw = opts.yaw || 0, c = court.circle;
@@ -1428,19 +1460,22 @@ export function createRenderer(canvas, terrain, init = {}) {
         if (!pts.length && opts.body) pts = [{ x: opts.body.x, y: opts.body.y, z: 0 }];
       }
       if (opts.target) pts = pts.concat([opts.target]);
-      const f = frameObserver(pts, { aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50, dt, reduced: reduce(), groundAt: (x, y) => terrain.sample(x, y).h, dir: court.dir }, obsFrame);
+      obsOpts.aspect = camera.aspect; obsOpts.fov = camera.aspect < 1 ? 62 : 50; obsOpts.dt = dt; obsOpts.reduced = reduce(); obsOpts.dir = court.dir;
+      const f = frameObserver(pts, obsOpts, obsFrame);
       obsFrame = f;
       goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
       goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
     } else if (mode === 'wide') { // F57: the whole court from behind the near end, Rainier in the background
-      const f = frameCourtWide({ width: C.terrainW, length: C.terrainL, aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50, groundAt: (x, y) => terrain.sample(x, y).h });
+      wideOpts.aspect = camera.aspect; wideOpts.fov = camera.aspect < 1 ? 62 : 50;
+      const f = frameCourtWide(wideOpts);
       goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
       goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
     } else if (mode === 'broadcast') { // F01: a director's shot (opts.shot: prep | throw | reaction | flight)
       const jk = opts.bodies && opts.bodies.find((b) => b.kind === 'jack' && !b.dead);
       const sub = opts.subject;
       const face = opts.face !== undefined ? opts.face : opts.faceTo && sub ? Math.atan2(opts.faceTo.x - sub.x, opts.faceTo.y - sub.y) : undefined;
-      const f = frameBroadcast(opts.shot, { subject: sub, face, body: opts.body, jack: jk, dir: court.dir, dt, reduced: reduce(), groundAt: (x, y) => terrain.sample(x, y).h, aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50 }, bcFrame);
+      bcOpts.subject = sub; bcOpts.face = face; bcOpts.body = opts.body; bcOpts.jack = jk; bcOpts.dir = court.dir; bcOpts.dt = dt; bcOpts.reduced = reduce(); bcOpts.aspect = camera.aspect; bcOpts.fov = camera.aspect < 1 ? 62 : 50;
+      const f = frameBroadcast(opts.shot, bcOpts, bcFrame);
       if (f) {
         bcFrame = f;
         goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
@@ -1448,7 +1483,8 @@ export function createRenderer(canvas, terrain, init = {}) {
       }
     } else if (mode === 'tv') { // E27: a TV-style shot of an AI throw
       const jk = opts.bodies && opts.bodies.find((b) => b.kind === 'jack' && !b.dead);
-      const f = frameTV(tvVariant(opts.variant) || 'a', { body: opts.body, jack: jk, dir: court.dir, dt, reduced: reduce(), groundAt: (x, y) => terrain.sample(x, y).h, aspect: camera.aspect, fov: camera.aspect < 1 ? 62 : 50 }, tvFrame);
+      tvOpts.body = opts.body; tvOpts.jack = jk; tvOpts.dir = court.dir; tvOpts.dt = dt; tvOpts.reduced = reduce(); tvOpts.aspect = camera.aspect; tvOpts.fov = camera.aspect < 1 ? 62 : 50;
+      const f = frameTV(tvVariant(opts.variant) || 'a', tvOpts, tvFrame);
       if (f) {
         tvFrame = f;
         goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
@@ -1456,10 +1492,11 @@ export function createRenderer(canvas, terrain, init = {}) {
       }
     } else if (mode === 'flight' && opts.bodies) { // D09: frame every moving body (camera.js), cochonnet first when it flies
       const jack = opts.bodies.find((b) => b.kind === 'jack');
-      const f = frameMoving(opts.bodies, jack, { aspect: camera.aspect, fov: camera.fov, dt, reduced: reduce(), thrown: opts.body, dir: court.dir }, flightFrame);
+      flightOpts.aspect = camera.aspect; flightOpts.fov = camera.fov; flightOpts.dt = dt; flightOpts.reduced = reduce(); flightOpts.thrown = opts.body; flightOpts.dir = court.dir;
+      const f = frameMoving(opts.bodies, jack, flightOpts, flightFrame);
       if (f) {
         flightFrame = f;
-        const cf = cameraFromFrame(f, (x, y) => terrain.sample(x, y).h);
+        const cf = cameraFromFrame(f, groundHeight);
         goal.pos.set(cf.pos.x, cf.pos.y, cf.pos.z);
         goal.tgt.set(f.target.x, f.target.y, f.target.z);
       }
@@ -1593,6 +1630,41 @@ export function createRenderer(canvas, terrain, init = {}) {
   });
   sepiaScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), sepiaMat));
   sepiaScene.children[0].frustumCulled = false;
+  // F113: the shadow map is redrawn only when a shadow caster (a visible castShadow mesh or any bone) or the sun moved, or
+  // when something forced it (quality change, new map). Each frame's signature is a weighted sum of the casters' world
+  // matrices; an unchanged sum means an unchanged map (a collision would only delay one update to the next change).
+  let shadowForce = true, shadowSig = NaN, sigN = 0, sigH = 0;
+  const sigVisit = (o) => {
+    if (!(o.castShadow || o.isBone)) return;
+    const e = o.matrixWorld.elements;
+    sigN++;
+    for (let k = 0; k < 16; k++) sigH = sigH * 1.0000013 + Math.round(e[k] * 512) * (1 + k * 0.37); // 2 mm steps: a texel is 14 mm, so smaller motion cannot show
+  };
+  function shadowsChanged() {
+    sigN = 0; sigH = 0;
+    scene.traverseVisible(sigVisit);
+    const sp = sun.position, tp = sun.target.position;
+    sigH += sigN * 1.7 + sp.x * 3.1 + sp.y * 5.3 + sp.z * 7.7 + tp.x * 11.3 + tp.y * 13.7 + tp.z * 17.9;
+    const changed = shadowForce || sigH !== shadowSig;
+    shadowSig = sigH; shadowForce = false;
+    return changed;
+  }
+  scene.matrixWorldAutoUpdate = false; // renderScene updates the matrices once, before the signature, instead of renderer.render doing it
+  function drawScene(target) { // the main scene into `target` (null: the canvas), redrawing the shadow map only when needed
+    if (renderer.shadowMap.enabled && sun.castShadow && shadowsChanged()) { renderer.shadowMap.needsUpdate = true; if (perf) perf.shadowUpdates++; }
+    renderer.setRenderTarget(target);
+    renderer.render(scene, camera);
+  }
+  // F113: what the paused view needs to know to skip drawing the scene into the sepia target
+  let sceneDirty = true, sceneT = 0;
+  const camSig = new Float64Array(10);
+  function cameraMoved() {
+    const p = camera.position, q = camera.quaternion;
+    const v = [p.x, p.y, p.z, q.x, q.y, q.z, q.w, camera.fov, camera.aspect, camera.zoom];
+    let moved = false;
+    for (let k = 0; k < 10; k++) if (camSig[k] !== v[k]) { camSig[k] = v[k]; moved = true; }
+    return moved;
+  }
   function renderScene() {
     const now = performance.now(), sdt = Math.min(0.1, (now - sepiaT0) / 1000);
     sepiaT0 = now;
@@ -1600,12 +1672,19 @@ export function createRenderer(canvas, terrain, init = {}) {
       const step = sdt / 0.35;
       sepiaK = sepiaTarget > sepiaK ? Math.min(sepiaTarget, sepiaK + step) : Math.max(sepiaTarget, sepiaK - step);
     } else if (reduce()) sepiaK = sepiaTarget;
-    if (sepiaK <= 0 && !paused) { renderer.render(scene, camera); return; }
+    if (sepiaK <= 0 && !paused) { scene.updateMatrixWorld(); drawScene(null); sceneDirty = true; return; }
     const size = renderer.getDrawingBufferSize(tmpSize);
-    if (!sepiaRT) sepiaRT = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: q.sepiaSamples });
-    else if (sepiaRT.width !== size.x || sepiaRT.height !== size.y) sepiaRT.setSize(size.x, size.y);
-    renderer.setRenderTarget(sepiaRT);
-    renderer.render(scene, camera);
+    let fresh = false;
+    if (!sepiaRT) { sepiaRT = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: q.sepiaSamples }); fresh = true; }
+    else if (sepiaRT.width !== size.x || sepiaRT.height !== size.y) { sepiaRT.setSize(size.x, size.y); fresh = true; }
+    // paused: the scene is frozen (render dt 0), so it is drawn into the (multisampled, half-float) target only when the
+    // orbit camera or the scene changed, or every 3 s as a safety net; the cheap sepia pass below runs every frame
+    const camMoved = cameraMoved();
+    if (!paused || fresh || sceneDirty || camMoved || now - sceneT > 3000) {
+      scene.updateMatrixWorld();
+      drawScene(sepiaRT);
+      sceneDirty = false; sceneT = now;
+    }
     renderer.setRenderTarget(null);
     sepiaMat.uniforms.tDiffuse.value = sepiaRT.texture;
     sepiaMat.uniforms.k.value = sepiaK;
@@ -1721,6 +1800,7 @@ export function createRenderer(canvas, terrain, init = {}) {
     const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelRatioMax));
     renderer.setSize(w, h, false);
+    sceneDirty = true; // F113
     camera.aspect = w / h;
     // keep the court in view on tall (phone) screens
     camera.fov = camera.aspect < 1 ? 62 : 50;
@@ -1734,7 +1814,7 @@ export function createRenderer(canvas, terrain, init = {}) {
   // F71: golden-hour drift. Colours and the sun move in steps of 0.01 of progress (a shadow-map hop of under a texel or
   // two each time, never per frame); the tree decals follow the direction at most every 2 s of render time.
   let dayAt = -1, dayD = null, treeDir = new THREE.Vector3().copy(sunOffset).normalize(), treeT = 99;
-  const tmpC = new THREE.Color();
+  const tmpC = new THREE.Color(), treeDirNow = new THREE.Vector3();
   const srgb = (a, out) => out.setRGB(a[0], a[1], a[2], THREE.SRGBColorSpace);
   function applyDay(d) {
     sunOffset.set(d.sunDir[0], d.sunDir[1], d.sunDir[2]).multiplyScalar(SUN_DISTANCE);
@@ -1750,20 +1830,33 @@ export function createRenderer(canvas, terrain, init = {}) {
     const d = daylightAt(progress);
     panorama.userData.setDaylight(d); // the alpenglow follows the smooth value
     if (p === dayAt) return;
-    dayAt = p; dayD = daylightAt(p);
+    dayAt = p; dayD = daylightAt(p); sceneDirty = true; // F113
     applyDay({ ...dayD, alpenglow: d.alpenglow });
   }
   function updateTreeShadows(dt) {
     treeT += dt;
     if (treeT < 2) return;
-    if (sunOffset.clone().normalize().angleTo(treeDir) < 0.004) return;
-    treeDir.copy(sunOffset).normalize(); treeT = 0;
+    treeT = 0; // F113: the early return below used to leave treeT >= 2, so the check (and a Vector3 clone) ran every frame
+    treeDirNow.copy(sunOffset).normalize();
+    if (treeDirNow.angleTo(treeDir) < 0.004) return;
+    treeDir.copy(treeDirNow);
     treeShadows.userData.setSun(sunOffset);
   }
   setDaylight(0);
   treeT = 99; treeDir.set(0, 0, 1);
 
+  // F113: ?debug&perf collects CPU time per render() call and renderer.info counts in window.__perf
+  const perf = dbgParam('perf') !== null ? (globalThis.__perf = { frames: 0, ms: 0, maxMs: 0, calls: 0, triangles: 0, geometries: 0, textures: 0, shadowUpdates: 0, reset() { this.frames = this.ms = this.maxMs = this.calls = this.triangles = this.shadowUpdates = 0; } }) : null;
   function render(dt = 1 / 60) {
+    if (!perf) return renderFrame(dt);
+    renderer.info.autoReset = false; renderer.info.reset();
+    const t0 = performance.now();
+    renderFrame(dt);
+    const ms = performance.now() - t0, i = renderer.info;
+    perf.frames++; perf.ms += ms; perf.maxMs = Math.max(perf.maxMs, ms);
+    perf.calls += i.render.calls; perf.triangles += i.render.triangles; perf.geometries = i.memory.geometries; perf.textures = i.memory.textures;
+  }
+  function renderFrame(dt) {
     dt = Math.min(dt, 0.1);
     updateTreeShadows(dt);
     // roll the boules from their angular velocity
@@ -1810,7 +1903,23 @@ export function createRenderer(canvas, terrain, init = {}) {
     canvas.removeEventListener('pointerup', onUp);
     canvas.removeEventListener('pointercancel', onUp);
     canvas.removeEventListener('wheel', onWheel);
-    scene.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+    // F113: free everything this renderer created (geometries, materials with their textures, the fade clones, the sepia
+    // target and pass, the shadow map, the environment map), then the context
+    const freeTex = (m) => { for (const k in m) { const v = m[k]; if (v && v.isTexture) v.dispose(); } };
+    const freeMat = (m) => { freeTex(m); m.dispose(); };
+    scene.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) for (const m of [].concat(o.material)) freeMat(m);
+    });
+    for (const e of meshes.values()) if (e.fadeMat) e.fadeMat.dispose();
+    for (const m of [...bouleMats, deadBouleMat, deadJackMat, jackMat, jackBright]) if (m) freeMat(m);
+    for (const g of [bouleGeo, jackGeo]) g.dispose();
+    for (const t of grooves) t.dispose();
+    sepiaScene.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+    sepiaMat.dispose();
+    if (sepiaRT) { sepiaRT.dispose(); sepiaRT = null; }
+    if (sun.shadow.map) sun.shadow.map.dispose();
+    if (scene.environment && scene.environment.dispose) scene.environment.dispose();
     renderer.dispose();
   }
 
@@ -1846,6 +1955,7 @@ export function createRenderer(canvas, terrain, init = {}) {
     if (!divotsOn) for (const m of divotMeshes) m.visible = false;
     if (sepiaRT && s.sepiaSamples !== q.sepiaSamples) { sepiaRT.dispose(); sepiaRT = null; }
     q = { sepiaSamples: s.sepiaSamples, tufts: !!s.tufts };
+    shadowForce = true; sceneDirty = true; // F113: a new map size, box or switch redraws the shadows and the paused view
   }
   if (init.quality) setQuality(init.quality);
 
@@ -1853,5 +1963,12 @@ export function createRenderer(canvas, terrain, init = {}) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { butterflies, antialias, setQuality, setDaylight, sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, setRankLabels, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  const api = { butterflies, antialias, setQuality, setDaylight, sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, setRankLabels, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  // F113: any call that changes the scene marks the paused view dirty (render, pick, getZoom, sync and setDaylight decide for themselves)
+  for (const k of Object.keys(api)) {
+    const fn = api[k];
+    if (typeof fn !== 'function' || ['render', 'pick', 'getZoom', 'sync', 'setDaylight', 'dispose'].includes(k)) continue;
+    api[k] = (...a) => { sceneDirty = true; return fn(...a); };
+  }
+  return api;
 }

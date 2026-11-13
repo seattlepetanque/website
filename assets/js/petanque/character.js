@@ -2,6 +2,7 @@
 // World is z-up, metres. The character faces +y at yaw 0; positive yaw turns toward +x.
 // The pose math below is pure (no three.js) so it can be tested in Node.
 import { C } from './constants.js';
+import { prefersReducedMotion } from './reduced.js'; // F113
 import { jackMaterialParams } from './terrain.js';
 
 const { sin, cos, sqrt, atan2, min, max, abs, PI } = Math;
@@ -819,7 +820,7 @@ export function createCharacter(THREE, spec = {}) {
   headG.matrixAutoUpdate = false;
 
   // F20: what the idle system needs to know: the quirk lists, hold styles, which hands hold boules, reduced motion
-  const reduced = () => reducedMotion === null ? (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) : reducedMotion;
+  const reduced = () => reducedMotion === null ? prefersReducedMotion() : reducedMotion;
   let reducedMotion = null;
   function idleCtx(react) {
     return {
