@@ -8,7 +8,7 @@ import { createTerrain } from './terrain.js';
 import { createWorld, createBody, launch, placeDeadBall, deadRowSlot, deadJackSpot } from './physics.js';
 import { createRenderer } from './render.js';
 import {
-  createMatch, defaultPlayers, teamNamesFor, validPartner, opponentIds, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm, deadJackText, jackGap, jackTooClose, sameGap,
+  createMatch, defaultPlayers, teamNamesFor, validPartner, opponentIds, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm, deadJackText, jackGap, jackTooClose, sameGap, canonicalGaps,
 } from './rules.js';
 import { detectAnnouncement, createCarreauWatcher } from './announce.js';
 import { createAnnouncer } from './announce-view.js';
@@ -802,14 +802,14 @@ function boot() {
   function showBetween() {
     const j = jackBody();
     if (!j || j.dead) { renderer.clearMeasure(); return; }
-    const items = [];
+    const items = [], cg = canonicalGaps(world.bodies.filter((b) => b.kind === 'boule'), j);
     for (const team of [0, 1]) {
       let best = null;
       for (const b of world.bodies) {
         if (b.kind !== 'boule' || b.dead || b.team !== team) continue;
         if (!best || Math.hypot(b.x - j.x, b.y - j.y) < Math.hypot(best.x - j.x, best.y - j.y)) best = b;
       }
-      if (best) items.push({ x: best.x, y: best.y, r: best.r, label: fmtCm(gapM(best, j)), color: TEAM_INK[team].line, dark: TEAM_INK[team].dark });
+      if (best) items.push({ x: best.x, y: best.y, r: best.r, label: fmtCm(cg.get(best.id) ?? gapM(best, j)), color: TEAM_INK[team].line, dark: TEAM_INK[team].dark });
     }
     const others = world.bodies.filter((b) => b.kind === 'boule' && !b.dead).map((b) => ({ x: b.x, y: b.y }));
     if (items.length) renderer.showMeasure({ x: j.x, y: j.y, r: j.r }, items, others);
@@ -1830,7 +1830,9 @@ function boot() {
     return base;
   }
   // F06: edge-to-edge gap, the same figure as every measuring label, card and status line
-  const gapText = (b, j) => fmtCm(gapM(b, j));
+  // F123b: the canonical (tie-cluster) gap, the same value the rules decide on
+  const canonGap = (b, j) => canonicalGaps(world.bodies.filter((x) => x.kind === 'boule'), j).get(b.id) ?? gapM(b, j);
+  const gapText = (b, j) => fmtCm(canonGap(b, j));
   const ownerName = (b) => {
     const p = match && match.players.find((q) => q.id === b.owner);
     return p ? (p.isHuman ? 'Your' : p.name + "'s") : 'The';
@@ -2106,9 +2108,11 @@ function boot() {
           const reach = Math.max(...scoringE.map((e) => centreD(e.b) + e.b.r));
           const radius = rivalE ? centreD(rivalE.b) - rivalE.b.r : reach + 0.07;
           // E32: a close call (gaps within 2 cm) is flagged in the card; every gap is shown to one decimal (F06)
-          const bestWin = Math.min(...scoringE.map((e) => gapM(e.b, j)));
-          closeCall = !!rivalE && Math.abs(gapM(rivalE.b, j) - bestWin) < 0.02;
-          const lab = (b) => fmtCm(gapM(b, j));
+          const cgs = canonicalGaps(world.bodies.filter((b) => b.kind === 'boule'), j);
+          const cgap = (b) => cgs.get(b.id) ?? gapM(b, j);
+          const bestWin = Math.min(...scoringE.map((e) => cgap(e.b)));
+          closeCall = !!rivalE && Math.abs(cgap(rivalE.b) - bestWin) < 0.02;
+          const lab = (b) => fmtCm(cgap(b));
           renderer.showScoring(j, {
             radius, fill: ink.fill, edge: ink.edge, color: TEAM_INK[r.team].line, dark: TEAM_INK[r.team].dark,
             items: scoringE.map((e, n) => ({ x: e.b.x, y: e.b.y, r: e.b.r, n: n + 1, label: lab(e.b) })),
@@ -2131,7 +2135,7 @@ function boot() {
         .reduce((m, b) => Math.min(m, Math.hypot(b.x - j.x, b.y - j.y)), Infinity));
       if (jackOut && r.inHand) note = deadJackText(r.inHand, TEAM_NAMES, r.jackReason); // F13: from the boules in hand when it went dead
       else if (!live.length) note = 'No live boules on the court: mène void.';
-      else if (sameGap(near[0], near[1])) note = 'The closest boules of each team are the same distance from the cochonnet: mène void.';
+      else if (sameGap(near[0], near[1], live.map((b) => Math.hypot(b.x - j.x, b.y - j.y)))) note = 'The closest boules of each team are the same distance from the cochonnet: mène void.';
       else { note = 'Mène void.'; console.warn('[void mène] no reason found: please report this with the details below'); }
       console.info('[void mène]', { jackDead: !!(j && j.dead), jackAt: j && { x: +j.x.toFixed(3), y: +j.y.toFixed(3) },
         liveBoules: live.length, closest: near.map((d) => (Number.isFinite(d) ? +d.toFixed(4) : null)),

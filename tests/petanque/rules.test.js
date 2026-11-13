@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createMatch, apply, nextTeam, meneResult, holdingTeam, jackValid, jackFault, jackPlaceValid, jackPlaceFault, playersWithBoules, deadJackText,
-  jackGap, jackTooClose, jackCentreRange, fmtCm, sameGap, gapTenths, JACK_END_MARGIN, JACK_R, JACK_DEAD_DIST, JACK_CENTRE_SHIFT,
+  jackGap, jackTooClose, jackCentreRange, fmtCm, sameGap, canonicalGaps, clusterUm, gapUm, JACK_END_MARGIN, JACK_R, JACK_DEAD_DIST, JACK_CENTRE_SHIFT,
 } from '../../assets/js/petanque/rules.js';
 import { FRONT_MIN, FRONT_WANT, nextCircle, CIRCLE_R, SIDE_MARGIN } from '../../assets/js/petanque/court.js';
 import { C } from '../../assets/js/petanque/constants.js';
@@ -521,32 +521,46 @@ test('F88b: a thrown jack that lands too close (no pre-throw spot) is not replac
   assert.ok(!t.jack || !t.jack.replaced);
 });
 
-// --- F77 / F123: one tie rule, on the DISPLAYED gap (0.1 cm) ---
+// --- F77 / F123: F123b: 1 mm tolerance cluster ---
 const R0 = 0.0375 + 0.015; // boule radius + jack radius: centre distance = gap + R0
 const atGap = (cm) => R0 + cm / 100;
-test('F123: 13.4 vs 13.5 cm is not a tie: the farther team throws', () => {
-  const j = { x: 2, y: 8 };
-  const bs = [b('a', 0, 2 + atGap(13.4), 8), b('b', 1, 2 - atGap(13.5), 8)];
-  assert.equal(holdingTeam(j, bs), 0);
-  assert.equal(meneResult(j, bs).team, 0);
-  const m = { phase: 'play', jack: j, boules: bs, jackTeam: 0, lastThrower: 0, stayed: true, players: [
-    { team: 0, boulesLeft: 2 }, { team: 1, boulesLeft: 2 }] };
-  assert.equal(nextTeam(m), 1);
-  assert.equal(nextTeam({ ...m, lastThrower: 1 }), 1);
+const M = (nm, team, g, side = 1) => b(nm, team, 2 + side * atGap(g), 8);
+const mk = (bs, last) => ({ phase: 'play', jack: { x: 2, y: 8 }, boules: bs, jackTeam: 0, lastThrower: last, stayed: true, players: [
+  { team: 0, boulesLeft: 2 }, { team: 1, boulesLeft: 2 }] });
+test('F123b: 13.4 vs 13.5 tie (Art. 29: last thrower plays again) and both render 13.4', () => {
+  const j = { x: 2, y: 8 }, bs = [M('a', 0, 13.4), M('b', 1, 13.5, -1)];
+  assert.equal(holdingTeam(j, bs), 'tie');
+  assert.ok(meneResult(j, bs).void);
+  assert.equal(nextTeam(mk(bs, 1)), 1);
+  assert.equal(nextTeam(mk(bs, 0)), 0);
+  const cg = canonicalGaps(bs, j);
+  assert.equal(fmtCm(cg.get('a')), '13.4 cm');
+  assert.equal(fmtCm(cg.get('b')), '13.4 cm');
 });
-test('F123: equal displayed gaps tie (Art. 29: the last thrower plays again); 13.452 vs 13.46 both show 13.5', () => {
+test('F123b: 13.4, 13.5, 13.6 form {13.4,13.5} and {13.6}; no chaining', () => {
   const j = { x: 2, y: 8 };
-  assert.equal(fmtCm(atGap(13.452) - R0) === fmtCm(atGap(13.46) - R0), true);
-  for (const [g1, g2] of [[13.5, 13.5], [13.452, 13.46]]) {
-    const bs = [b('a', 0, 2 + atGap(g1), 8), b('b', 1, 2 - atGap(g2), 8)];
-    assert.equal(holdingTeam(j, bs), 'tie');
-    assert.ok(meneResult(j, bs).void);
-    const m = { phase: 'play', jack: j, boules: bs, jackTeam: 0, lastThrower: 1, stayed: true, players: [
-      { team: 0, boulesLeft: 2 }, { team: 1, boulesLeft: 2 }] };
-    assert.equal(nextTeam(m), 1);
-  }
-  assert.ok(sameGap(atGap(13.5), atGap(13.5)) && !sameGap(atGap(13.4), atGap(13.5)));
-  assert.equal(gapTenths(atGap(13.4)), 134);
+  const cg = canonicalGaps([M('a', 0, 13.4), M('b', 1, 13.5, -1), M('c', 0, 13.6)], j);
+  assert.equal(fmtCm(cg.get('a')), '13.4 cm');
+  assert.equal(fmtCm(cg.get('b')), '13.4 cm');
+  assert.equal(fmtCm(cg.get('c')), '13.6 cm');
+});
+test('F123b: exactly 1.0 mm apart ties, 1.01 mm apart does not; 13.449 vs 13.451 tie', () => {
+  const j = { x: 2, y: 8 };
+  assert.equal(holdingTeam(j, [M('a', 0, 13.4), M('b', 1, 13.5, -1)]), 'tie');
+  assert.equal(holdingTeam(j, [M('a', 0, 13.4), M('b', 1, 13.501, -1)]), 0);
+  assert.equal(holdingTeam(j, [M('a', 0, 13.449), M('b', 1, 13.451, -1)]), 'tie');
+  assert.deepEqual(clusterUm([0, 1000, 1001]), [0, 0, 1001]);
+});
+test('F123b: when clusters differ the farther team throws', () => {
+  const bs = [M('a', 0, 13.4), M('b', 1, 14.6, -1)];
+  assert.equal(holdingTeam({ x: 2, y: 8 }, bs), 0);
+  assert.equal(nextTeam(mk(bs, 0)), 1);
+});
+test('F123b: ties inside one team do not change the points', () => {
+  const j = { x: 2, y: 8 };
+  const r = meneResult(j, [M('a', 0, 10), M('a2', 0, 10.05, -1), M('b', 1, 15)]);
+  assert.equal(r.team, 0); assert.equal(r.points, 2);
+  assert.equal(meneResult(j, [M('a', 0, 10), M('b', 1, 15)]).points, 1);
 });
 
 // --- F79 / F80: placement geometry ---

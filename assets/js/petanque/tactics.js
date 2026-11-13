@@ -189,7 +189,7 @@ const HOLDER_BONUS = 0.25; // a holder with boules left may add points (plan: 0.
 export function epState(sit, usD, themD, hT, hO, exposure = 0, opts = {}) {
   const bu = usD[0] ?? Infinity, bt = themD[0] ?? Infinity;
   if (bu === Infinity && bt === Infinity) return { ep: 0, holder: null, n: 0, keeps: [], exposureTerm: 0 };
-  if (sameGap(bu, bt)) return { ep: 0, holder: 'tie', n: 0, keeps: [], exposureTerm: 0 };
+  if (sameGap(bu, bt, [...usD.slice(1), ...themD.slice(1)])) return { ep: 0, holder: 'tie', n: 0, keeps: [], exposureTerm: 0 };
   const us = bu < bt;
   const mine = us ? usD : themD, otherBest = us ? bt : bu;
   const hX = us ? hO : hT, hH = us ? hT : hO;
