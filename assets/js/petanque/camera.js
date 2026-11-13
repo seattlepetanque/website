@@ -11,7 +11,7 @@ export const CAM = Object.freeze({
   lookAheadMax: 3, // m: longest look-ahead
   crossTime: 1, // s: a jack projected to cross a string within this is primary
   ghostWeight: 0.3,
-  minDist: 3.2, maxDist: 16,
+  minDist: 3.2, maxDist: 16, fanMaxDist: 21, // F124: the frame-all view may zoom out further (a body 6-8 m beyond the strings)
   margin: 1.25, // framing slack on the fitted distance
   pitch: 0.34, minPitch: 0.12, maxPitch: 0.95,
   maxYaw: 0.6, // rad either side of straight down the court: never flips behind the play
@@ -71,13 +71,20 @@ export function flightGoalMode(st, bodies, thrown, dt) {
 
 // Live subjects: airborne, or rolling above the threshold, plus the thrown body until it settles.
 // Ghosts only while they roll, with low weight. Returns [{x, y, z, w, body}].
-export function gatherMoving(bodies, thrown) {
+// F124: `latch` (a Set of body ids, optional) makes the set sticky: the thrown body and every body that has moved are added and
+// stay subjects (at their current position, moving or at rest) until the latch is dropped, so the frame does not change just
+// because a body stopped, nor because it was knocked out of play (out-of-bounds bodies stay of interest). The zoom limit in
+// frameMoving is the only valve: it keeps the cochonnet, the thrown body, moving bodies, then the rest nearest to the jack.
+export function gatherMoving(bodies, thrown, latch = null) {
   const pts = [];
   for (const b of bodies || []) {
-    if (!b || b.state === 'resting') continue; // the thrown body counts only until it settles
-    const moving = b.state === 'airborne' || speedOf(b) > CAM.moveSpeed;
-    if (!moving && b !== thrown) continue;
-    pts.push({ x: b.x, y: b.y, z: b.z, w: b.ghost && b !== thrown ? CAM.ghostWeight : 1, body: b });
+    if (!b) continue;
+    const moving = b.state === 'airborne' || (b.state !== 'resting' && speedOf(b) > CAM.moveSpeed);
+    if (latch) {
+      if (moving || b === thrown) latch.add(b.id);
+      if (!latch.has(b.id)) continue;
+    } else if (b.state === 'resting' || (!moving && b !== thrown)) continue; // the thrown body counts only until it settles
+    pts.push({ x: b.x, y: b.y, z: b.z, w: b.ghost && b !== thrown && !latch ? CAM.ghostWeight : 1, body: b, mv: moving, th: b === thrown });
   }
   return pts;
 }
@@ -118,7 +125,7 @@ export function frameMoving(bodies, jack, opts, prev) {
   const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
   const vTan = Math.tan((opts.fov || 50) * Math.PI / 360);
   const hTan = vTan * (opts.aspect || 1.5);
-  const moving = gatherMoving(bodies, opts.thrown);
+  const moving = gatherMoving(bodies, opts.thrown, opts.latch);
   if (!moving.length) return prev ? { ...prev, primary: null, active: false } : null;
 
   // priority order: a fast jack first (at its look-ahead), then the rest by weight
@@ -141,11 +148,12 @@ export function frameMoving(bodies, jack, opts, prev) {
 
   // add subjects while they fit; the lead (and the jack's current spot) always stay
   const keep = primary ? 2 : 1;
-  const rest = subjects.slice(keep).sort((a, b) => b.w - a.w || Math.hypot(a.x - lead.x, a.y - lead.y) - Math.hypot(b.x - lead.x, b.y - lead.y));
+  const pri = (m) => (m.body === jack ? 0 : m.th ? 1 : m.mv ? 2 : 3), near = jack || lead; // F124: cochonnet, thrown, moving, then the rest nearest to the jack
+  const rest = subjects.slice(keep).sort((a, b) => b.w - a.w || pri(a) - pri(b) || Math.hypot(a.x - near.x, a.y - near.y) - Math.hypot(b.x - near.x, b.y - near.y));
   let used = subjects.slice(0, keep), c = bbox(used), dist = fitDistance(used, c, yaw, pitch0, hTan, vTan);
   for (const s of rest) {
     const t = used.concat(s), tc = bbox(t), td = fitDistance(t, tc, yaw, pitch0, hTan, vTan);
-    if (td <= CAM.maxDist) { used = t; c = tc; dist = td; }
+    if (td <= CAM.fanMaxDist) { used = t; c = tc; dist = td; }
   }
   const ahead = c.single ? 0.8 : 0; // a lone body: look a little way ahead of it
   const tgt = {
@@ -153,7 +161,7 @@ export function frameMoving(bodies, jack, opts, prev) {
     y: clamp(c.y + Math.cos(yaw) * ahead, -1, C.terrainL + 1),
     z: Math.max(0, c.z * 0.4),
   };
-  dist = clamp(fitDistance(used, tgt, yaw, pitch0, hTan, vTan), CAM.minDist, CAM.maxDist);
+  dist = clamp(fitDistance(used, tgt, yaw, pitch0, hTan, vTan), CAM.minDist, CAM.fanMaxDist);
   // stay above the ground: raise the pitch if the camera would dip under minCamZ
   let pitch = clamp(Math.max(pitch0, Math.asin(clamp((CAM.minCamZ - tgt.z) / dist, -1, 1))), CAM.minPitch, CAM.maxPitch);
   const goal = { target: tgt, distance: dist, yaw, pitch };

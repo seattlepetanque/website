@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { frameMoving, cameraFromFrame, CAM, frameObserver, walkSubject, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS, broadcastGoal, frameBroadcast, BC, freeViewRect, scoringTargetBox, fitScoringView, SCORING_FIT, followStep, flightGoalMode } from '../../assets/js/petanque/camera.js';
+import { frameMoving, cameraFromFrame, CAM, frameObserver, walkSubject, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS, broadcastGoal, frameBroadcast, BC, freeViewRect, scoringTargetBox, fitScoringView, SCORING_FIT, followStep, flightGoalMode, gatherMoving } from '../../assets/js/petanque/camera.js';
 import { createBody } from '../../assets/js/petanque/physics.js';
 
 const OPTS = { aspect: 1.6, fov: 50, dt: 1 / 60 };
@@ -565,4 +565,41 @@ test('F123: the follow stays on the thrown boule while it is alone, widens on co
 
 test('F123: quick mode gives human and AI the same style', () => {
   assert.equal(cameraStyle({ slow: false, human: true }), cameraStyle({ slow: false, human: false }));
+});
+
+test('F124: the fan-out keeps every body that moved in frame until the latch is dropped', () => {
+  const thrown = body('boule', 2, 9, 0, 3), jack = body('jack', 2, 10, 0, 0, { state: 'resting' }), other = body('boule', 3, 9.5, 0, 0, { state: 'resting' });
+  const bodies = [thrown, jack, other], latch = new Set();
+  assert.equal(gatherMoving(bodies, thrown, latch).length, 1); // only the thrown one so far
+  jack.state = 'rolling'; jack.vy = 1; // hit
+  assert.equal(gatherMoving(bodies, thrown, latch).length, 2);
+  const f = (prev) => frameMoving(bodies, jack, { ...OPTS, thrown, latch }, prev);
+  let fr = f(null);
+  for (let i = 0; i < 30; i++) fr = f(fr);
+  const before = fr; // the jack stops: same positions, so the frame must not change
+  jack.state = 'resting'; jack.vy = 0;
+  const after = f(fr);
+  assert.equal(gatherMoving(bodies, thrown, latch).length, 2, 'a stopped body stays a subject');
+  const jump = Math.hypot(after.target.x - before.target.x, after.target.y - before.target.y) + Math.abs(after.distance - before.distance);
+  assert.ok(jump < 0.15, `frame jump ${jump.toFixed(3)} when a body stops`);
+  thrown.state = 'resting'; thrown.vy = 0;
+  assert.equal(gatherMoving(bodies, thrown, latch).length, 2, 'all at rest: still framed (no shrink)');
+  assert.ok(f(after).active, 'the frame stays active');
+  jack.state = 'rolling'; jack.vy = 1;
+  assert.equal(gatherMoving(bodies, thrown, latch).length, 2, 'hit again: still tracked');
+  jack.state = 'resting'; jack.vy = 0; jack.x = -3; jack.ghost = true; // knocked out of play, at rest: still of interest
+  assert.equal(gatherMoving(bodies, thrown, latch).length, 2, 'an out-of-bounds ghost stays in the subject list');
+  assert.equal(gatherMoving(bodies, thrown, new Set()).length, 1, 'a fresh latch starts with the thrown body only (reset at the next throw)');
+});
+
+test('F124: a far latched body is framed when it fits; when it does not, the priority rule keeps the jack, thrown and moving bodies', () => {
+  const thrown = body('boule', 2, 9, 0, 2), jack = body('jack', 2, 10, 0, 0, { state: 'resting' });
+  const near = body('boule', 3, 11, 0, 0, { state: 'resting' }), far = body('boule', 2, 17, 0, 0, { state: 'resting' }), farther = body('boule', 2, 80, 0, 0, { state: 'resting', ghost: true });
+  const latch = new Set([thrown.id, jack.id, near.id, far.id]);
+  const fr = frameMoving([thrown, jack, near, far], jack, { ...OPTS, thrown, latch }, null);
+  assert.ok(fr.ids.includes(far.id), 'a body 7 m past the jack is framed');
+  latch.add(farther.id);
+  const fr2 = frameMoving([thrown, jack, near, far, farther], jack, { ...OPTS, thrown, latch }, null);
+  assert.ok(!fr2.ids.includes(farther.id), 'a body that cannot fit is left out');
+  assert.ok(fr2.ids.includes(jack.id) && fr2.ids.includes(thrown.id) && fr2.distance <= CAM.fanMaxDist);
 });

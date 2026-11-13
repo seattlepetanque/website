@@ -2694,6 +2694,7 @@ function boot() {
     put('jack', -1, debug && +params.get('jx') || 2.1, 8); // ?jx= moves the jack across the line of the shot (F123 widen check)
     put('boule', 1, 1.8, 8.2);
     put('boule', 1, 2.6, 7.7);
+    if (debug && params.has('jwall')) for (let x = 1.4; x < 3.01; x += 0.1) put('boule', 1, x, 11); // F124: a row of boules across the shot (a staged hit)
     renderer.sync(world);
     placePlayers('you');
     const bshot = debug && params.get('bshot'); // F01: ?bshot=prep|throw|reaction|head|flight[&who=pierre]: one broadcast shot (with &cam=broadcast)
