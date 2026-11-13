@@ -1,6 +1,6 @@
 // F103: graphics quality levels (0 = High ... LOW_LEVEL = Low) and the Auto controller. Pure, node-testable.
 // The renderer applies a level with setQuality(levelSettings(i)). WebGL antialiasing is fixed when the context is
-// created, so levels never change it: they lower the pixel ratio and skip the 4-sample sepia target instead.
+// created (F108: changing the Graphics setting re-creates it), so levels never change it: they lower the pixel ratio and skip the 4-sample sepia target instead.
 // Low has no shadows at all: no sun shadow map, no tree decals, no cloud shadows, no divot discs (the last level, so Auto reaches it only after
 // everything else). Fields: pixelRatioMax, shadows (on), shadowScale (shadow map size factor), shadowHalfScale (shadow box half-width factor),
 // sepiaSamples (MSAA of the pause view), tufts, treeShadows, sailboats, butterflies, cloudShadows, divots (the dark discs where boules landed), ambient (volume factor).

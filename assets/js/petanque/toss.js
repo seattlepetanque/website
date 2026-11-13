@@ -259,8 +259,14 @@ export function createTossMachine(opts) {
 
 const STYLE_NAMES = { roulette: 'Roulette', 'demi-portee': 'Demi-portée', plombee: 'Plombée' };
 
-export function createTossInput(canvas, options) {
+// F108: `target` is the GL surface (surface.js: .canvas is the current canvas, .listen delegates on the stage so a rebuilt
+// canvas needs no rebinding) or a plain canvas element.
+export function createTossInput(target, options) {
   const { showReadout = true, ...opts } = options;
+  const live = !!target.listen;
+  const canvasNow = () => (live ? target.canvas : target);
+  const canvas = { get parentElement() { return canvasNow().parentElement; }, getBoundingClientRect: () => canvasNow().getBoundingClientRect(),
+    setPointerCapture: (id) => canvasNow().setPointerCapture(id) };
   let readout = null;
   if (showReadout) {
     readout = document.createElement('div');
@@ -315,12 +321,12 @@ export function createTossInput(canvas, options) {
   };
   const onMenu = (e) => e.preventDefault();
 
-  canvas.style.touchAction = 'none';
-  canvas.addEventListener('pointerdown', onDown);
-  canvas.addEventListener('pointermove', onMove);
-  canvas.addEventListener('pointerup', onUp);
-  canvas.addEventListener('pointercancel', onCancelPtr);
-  canvas.addEventListener('contextmenu', onMenu);
+  canvasNow().style.touchAction = 'none'; // a rebuilt canvas is a clone of this one, so it keeps the style
+  const offs = [];
+  for (const [t, h] of [['pointerdown', onDown], ['pointermove', onMove], ['pointerup', onUp], ['pointercancel', onCancelPtr], ['contextmenu', onMenu]]) {
+    if (live) offs.push(target.listen(t, h));
+    else { target.addEventListener(t, h); offs.push(() => target.removeEventListener(t, h)); }
+  }
   window.addEventListener('keydown', onKey);
 
   return {
@@ -328,11 +334,7 @@ export function createTossInput(canvas, options) {
     getPhase() { return mach.phase; },
     destroy() {
       clearTimer();
-      canvas.removeEventListener('pointerdown', onDown);
-      canvas.removeEventListener('pointermove', onMove);
-      canvas.removeEventListener('pointerup', onUp);
-      canvas.removeEventListener('pointercancel', onCancelPtr);
-      canvas.removeEventListener('contextmenu', onMenu);
+      for (const off of offs.splice(0)) off();
       window.removeEventListener('keydown', onKey);
       if (readout) readout.remove();
     },

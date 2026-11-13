@@ -16,6 +16,7 @@ import { daylightAt, SUN_DISTANCE, SHADOW_NEAR, SHADOW_FAR } from './daylight.js
 import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeTreeShadows, makeBlobTexture, makeCanvas, makeSkyPanorama, makeLake, makeSailboats, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 import { createFloatplane } from './floatplane.js'; // F19
 import { dbgParam } from './debug.js'; // F111
+import { createSurface } from './surface.js'; // F108
 
 const TRANSITION = 0.6; // seconds for camera moves
 
@@ -154,23 +155,22 @@ function makeEnvMap(renderer, envFloor) {
 
 const smooth = (t) => t * t * (3 - 2 * t);
 
-// init.antialias: fixed at context creation (F103: a WebGL context cannot change it later); init.quality: level settings (quality.js) applied at once
+// init.antialias: WebGL fixes it at context creation (F103), so changing it later means a new canvas and context (F108,
+// api.rebuild; surface.js owns the canvas and renderer); init.quality: level settings (quality.js) applied at once
 export function createRenderer(canvas, terrain, init = {}) {
-  let renderer;
-  const antialias = init.antialias !== false;
+  const surface = createSurface(THREE, canvas, { antialias: init.antialias });
+  let renderer = surface.renderer;
   let pixelRatioMax = 2; // F103
-  try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias });
-  } catch (e) {
-    throw new Error('WebGL is not available in this browser, so the 3D game cannot start.');
+  // F108: everything a renderer needs set once (also run on the replacement after a rebuild)
+  function configure(r) {
+    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelRatioMax));
+    r.shadowMap.enabled = true;
+    r.shadowMap.autoUpdate = false; // F113: the shadow map is redrawn only when something that casts moves (see shadowsChanged)
+    r.shadowMap.type = THREE.PCFSoftShadowMap;
+    r.toneMapping = THREE.ACESFilmicToneMapping;
+    r.toneMappingExposure = 1.0;
   }
-  if (!renderer.getContext()) throw new Error('WebGL is not available in this browser, so the 3D game cannot start.');
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelRatioMax));
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.autoUpdate = false; // F113: the shadow map is redrawn only when something that casts moves (see shadowsChanged)
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.0;
+  configure(renderer);
 
   const scene = new THREE.Scene();
   const FOG = new THREE.Color(SKY_HAZE);
@@ -180,7 +180,8 @@ export function createRenderer(canvas, terrain, init = {}) {
   scene.add(skyDome);
   const panorama = makeSkyPanorama(C.terrainW / 2, C.terrainL / 2, SKY_HAZE);
   scene.add(panorama);
-  scene.environment = makeEnvMap(renderer, terrain.gravel === 'grey' ? '#8e939c' : '#a8977a');
+  const envFloor = terrain.gravel === 'grey' ? '#8e939c' : '#a8977a';
+  scene.environment = makeEnvMap(renderer, envFloor);
 
   const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 300);
   camera.up.set(0, 0, 1);
@@ -201,7 +202,8 @@ export function createRenderer(canvas, terrain, init = {}) {
   let curHalf = shadowHalf;
   sun.shadow.mapSize.set(baseMap, baseMap);
   const st = debug ? dbgParam('shadowtype') : null;
-  if (st) renderer.shadowMap.type = { basic: THREE.BasicShadowMap, pcf: THREE.PCFShadowMap, soft: THREE.PCFSoftShadowMap }[st] ?? renderer.shadowMap.type;
+  const shadowTypeFor = (r) => (st ? { basic: THREE.BasicShadowMap, pcf: THREE.PCFShadowMap, soft: THREE.PCFSoftShadowMap }[st] : null) ?? r.shadowMap.type;
+  renderer.shadowMap.type = shadowTypeFor(renderer);
   const sc = sun.shadow.camera;
   sc.left = -shadowHalf; sc.right = shadowHalf; sc.top = shadowHalf; sc.bottom = -shadowHalf; sc.near = SHADOW_NEAR; sc.far = SHADOW_FAR; // F95: near is negative so players upsun of the target keep their shadow
   sc.updateProjectionMatrix();
@@ -1738,6 +1740,7 @@ export function createRenderer(canvas, terrain, init = {}) {
   }
 
   // Minimal orbit controls for inspect mode
+  const offs = []; // F108: listeners sit on the stage wrapper (surface.listen), so a new canvas needs no rebinding
   const pointers = new Map();
   let pinch = 0;
   const onDown = (e) => {
@@ -1800,11 +1803,11 @@ export function createRenderer(canvas, terrain, init = {}) {
     e.preventDefault();
     orbit.dist = Math.max(0.4, Math.min(12, orbit.dist * Math.exp(e.deltaY * 0.001)));
   };
-  canvas.addEventListener('pointerdown', onDown);
-  canvas.addEventListener('pointermove', onMove);
-  canvas.addEventListener('pointerup', onUp);
-  canvas.addEventListener('pointercancel', onUp);
-  canvas.addEventListener('wheel', onWheel, { passive: false });
+  offs.push(surface.listen('pointerdown', onDown));
+  offs.push(surface.listen('pointermove', onMove));
+  offs.push(surface.listen('pointerup', onUp));
+  offs.push(surface.listen('pointercancel', onUp));
+  offs.push(surface.listen('wheel', onWheel, { passive: false }));
 
   function resize() {
     const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight);
@@ -1908,11 +1911,7 @@ export function createRenderer(canvas, terrain, init = {}) {
 
   function dispose() {
     if (ro) ro.disconnect();
-    canvas.removeEventListener('pointerdown', onDown);
-    canvas.removeEventListener('pointermove', onMove);
-    canvas.removeEventListener('pointerup', onUp);
-    canvas.removeEventListener('pointercancel', onUp);
-    canvas.removeEventListener('wheel', onWheel);
+    for (const off of offs.splice(0)) off();
     // F113: free everything this renderer created (geometries, materials with their textures, the fade clones, the sepia
     // target and pass, the shadow map, the environment map), then the context
     const freeTex = (m) => { for (const k in m) { const v = m[k]; if (v && v.isTexture) v.dispose(); } };
@@ -1930,13 +1929,14 @@ export function createRenderer(canvas, terrain, init = {}) {
     if (sepiaRT) { sepiaRT.dispose(); sepiaRT = null; }
     if (sun.shadow.map) sun.shadow.map.dispose();
     if (scene.environment && scene.environment.dispose) scene.environment.dispose();
-    renderer.dispose();
+    surface.dispose();
   }
 
   // F103: apply a quality level (quality.js levelSettings). Cheap to call again; only what changed is redone.
-  let q = { sepiaSamples: 4 };
+  let q = { sepiaSamples: 4 }, lastQuality = init.quality || null;
   const hidesPlayers = hides('players');
   function setQuality(s) {
+    lastQuality = s;
     if (s.pixelRatioMax !== pixelRatioMax) { pixelRatioMax = s.pixelRatioMax; resize(); }
     const size = Math.max(256, Math.min(Math.round(baseMap * s.shadowScale), renderer.capabilities.maxTextureSize || 2048)), half = baseHalf * s.shadowHalfScale;
     if (size !== sun.shadow.mapSize.x) { // the shadow map is rebuilt at the new size
@@ -1973,7 +1973,40 @@ export function createRenderer(canvas, terrain, init = {}) {
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  const api = { butterflies, antialias, setQuality, setDaylight, sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, setRankLabels, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  // F108: re-create the canvas and WebGL context (antialiasing cannot change on a live one). Returns true when the new
+  // surface is in use; false when anything failed and the old canvas and renderer are still in charge (the caller then
+  // asks for a page reload). The scene is not rebuilt: three.js uploads geometries and textures again on the next draw.
+  function rebuild(next) {
+    const oldEnv = scene.environment, oldMap = sun.shadow.map, oldSepia = sepiaRT, oldCanvas = canvas, oldRenderer = renderer;
+    const ok = surface.rebuild(next, (r, c) => {
+      try {
+        renderer = r; canvas = c;
+        configure(r);
+        r.shadowMap.type = shadowTypeFor(r);
+        scene.environment = makeEnvMap(r, envFloor);
+        sun.shadow.map = null; // the shadow map and the pause target belonged to the old context
+        sepiaRT = null;
+        if (ro) { ro.unobserve(oldCanvas); ro.observe(c); }
+        resize();
+        if (lastQuality) setQuality(lastQuality);
+        shadowForce = true; sceneDirty = true; shadowSig = NaN;
+        r.shadowMap.needsUpdate = true;
+      } catch (e) {
+        renderer = oldRenderer; canvas = oldCanvas;
+        scene.environment = oldEnv; sun.shadow.map = oldMap; sepiaRT = oldSepia;
+        if (ro) { ro.unobserve(c); ro.observe(oldCanvas); }
+        throw e;
+      }
+    });
+    if (ok) {
+      try { if (oldEnv && oldEnv.dispose) oldEnv.dispose(); if (oldMap) oldMap.dispose(); if (oldSepia) oldSepia.dispose(); } catch (_) { /* the old context is gone */ }
+    } else {
+      try { resize(); } catch (_) { /* keep going on the old one */ }
+      shadowForce = true; sceneDirty = true;
+    }
+    return ok;
+  }
+  const api = { butterflies, get antialias() { return surface.antialias; }, get canvas() { return surface.canvas; }, surface, surfaceStats: surface.stats, rebuild, setQuality, setDaylight, sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, setRankLabels, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
   // F113: any call that changes the scene marks the paused view dirty (render, pick, getZoom, sync and setDaylight decide for themselves)
   for (const k of Object.keys(api)) {
     const fn = api[k];

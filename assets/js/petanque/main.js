@@ -35,6 +35,7 @@ import { createGroundView } from './groundview.js';
 import { isPhone } from './scenery.js';
 import { probeGpu, assessGpu, weakDevice, browserName, gpuMessage } from './gpuinfo.js'; // F102
 import { classifyBootError } from './boot-error.js'; // F114
+import { surfaceDiff } from './surface.js'; // F108
 import { LEVELS, levelSettings, initialLevel, wantAntialias, createAutoQuality } from './quality.js'; // F103
 import { describe as describeText, quip as quipText, faultText, spotText as spotTextOf, ownerName as ownerNameOf, gapText as gapTextOf, meneWinNote } from './commentary-text.js';
 import { PERSONALITIES, CAST_IDS, specFor, pickStance, stanceFor, STAND_BEYOND, createCommentary, whoKind, composeSuggestion } from './personalities.js';
@@ -374,7 +375,7 @@ function boot() {
     renderer.showJackZone(!!pending && pending.kind === 'jack' && !flying);
   }
 
-  const toss = createTossInput(canvas, {
+  const toss = createTossInput(renderer.surface, {
     pick: (x, y) => renderer.pick(x, y),
     getYaw: () => aimYaw,
     getOrigin: () => court.circle,
@@ -519,7 +520,7 @@ function boot() {
     onExit: () => endGame(), // F93: the game-over card's Exit leaves the same way as End game
     onChoose: (id) => beginTurn(id),
     onHintDismiss: () => store(HINT_KEY, '1'),
-    needsReload: () => wantAntialias(settings.graphics, weak) !== renderer.antialias, // F104: antialiasing is fixed at context creation
+    needsReload: () => rebuildFailed, // F108: only when re-creating the context failed (the old one keeps running)
   });
   const say2 = hud.say;
 
@@ -1042,7 +1043,7 @@ function boot() {
   function logScroll(tag) { // ?debug: report whether the page can scroll while playing
     if (!debug) return;
     const se = document.scrollingElement || html;
-    console.log(`[play] ${tag} playing=${playing} scrollHeight=${se.scrollHeight} innerHeight=${window.innerHeight} scrollWidth=${se.scrollWidth} innerWidth=${window.innerWidth} canvas=${canvas.clientWidth}x${canvas.clientHeight}`);
+    console.log(`[play] ${tag} playing=${playing} scrollHeight=${se.scrollHeight} innerHeight=${window.innerHeight} scrollWidth=${se.scrollWidth} innerWidth=${window.innerWidth} canvas=${renderer.canvas.clientWidth}x${renderer.canvas.clientHeight}`);
   }
   // The full-window layer never requests browser fullscreen; only the corner fullscreen button does (E30)
   function syncPausedUI() { hud.showPaused(!!match && (!playing || userPaused)); }
@@ -1726,7 +1727,7 @@ function boot() {
     skipCollect(); // F02: the players have their boules at once
   };
   window.addEventListener('keydown', skipEvent);
-  canvas.addEventListener('pointerdown', skipEvent);
+  renderer.surface.listen('pointerdown', skipEvent); // F108: delegated on the stage, survives a rebuilt canvas
   // Human click on a green spot: the human's character carries the jack out (after the fetch hands it over)
   function placeJackWalk(spot) {
     if (!match || match.phase !== 'jackPlace') return;
@@ -2117,7 +2118,7 @@ function boot() {
     hud.showMeneEnd({ text, detail: `${detail} Score: ${match.scores[0]} to ${match.scores[1]}. ${voices('meneWon', 'meneLost')}`.trim() });
     // F22: with the card up, frame the circle, badges and labels into whatever the card and the top HUD leave free
     if (scoringShown) renderer.fitScoring(() => {
-      const cv = canvas.getBoundingClientRect(), rel = (r) => ({ l: r.left - cv.left, t: r.top - cv.top, r: r.right - cv.left, b: r.bottom - cv.top });
+      const cv = renderer.canvas.getBoundingClientRect(), rel = (r) => ({ l: r.left - cv.left, t: r.top - cv.top, r: r.right - cv.left, b: r.bottom - cv.top });
       const card = root.querySelector('.pt-overlay.pt-mene-end .pt-card');
       // F62: measured from the DOM now and on every resize: the top score bar, the card, and the right-hand icon cluster
       const vis = (n) => { const r = n.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(n).visibility !== 'hidden' ? rel(r) : null; };
@@ -2343,7 +2344,16 @@ function boot() {
   // controller steps down one level when frames stay slow; never back up. Changing the setting applies at once.
   let auto = settings.graphics === 'auto' ? createAutoQuality(level) : null, qLast = 0;
   function applyLevel(l) { level = l; const s = levelSettings(l); renderer.setQuality(s); audio.setAmbientScale(s.ambient); }
-  settings.onGraphicsChange((g) => { auto = g === 'auto' ? createAutoQuality(initialLevel(g, weak)) : null; applyLevel(initialLevel(g, weak)); });
+  // F108: smooth edges (context antialiasing) apply at once too, by re-creating the canvas and context; only if that fails
+  // does the paused card fall back to the 'reload the page' note
+  let rebuildFailed = false;
+  settings.onGraphicsChange((g) => {
+    auto = g === 'auto' ? createAutoQuality(initialLevel(g, weak)) : null;
+    const want = { antialias: wantAntialias(g, weak) };
+    rebuildFailed = false;
+    if (surfaceDiff({ antialias: renderer.antialias }, want).rebuild && !renderer.rebuild(want)) rebuildFailed = true;
+    applyLevel(initialLevel(g, weak));
+  });
   function qualityTick(now) {
     const ms = now - qLast; qLast = now;
     if (!auto) return;

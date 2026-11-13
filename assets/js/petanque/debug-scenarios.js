@@ -40,7 +40,7 @@ export function debugHooks(ctx) {
     window.__petanque = {
       world, terrain, renderer, seed, reset: toSetup, startGame, court,
       audio,
-      setPlaying, clock, pauseGame, endGame,
+      settings, setPlaying, clock, pauseGame, endGame,
       get paused() { return ctx.pausedNow; },
       get quality() { return ctx.level; },
       get pending() { return ctx.pending; },

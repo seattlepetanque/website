@@ -129,11 +129,11 @@ export function createHud(root, hudEl, cb) {
   // Mode (Slow / Quick) lives here; main.js applies a change to Quick on Resume, Slow from the next action
   const pausedMode = radioGroup(pausedEl, 'Mode', 'pt-paused-mode', [['slow', 'Slow'], ['quick', 'Quick']], settings.mode,
     (v) => { settings.mode = v; }, 'pt-modes pt-paused-modes');
-  // F104: Graphics (High / Auto / Low) beside it; applied at once. The note shows only when antialiasing (fixed when the
-  // context was created) would differ from the choice: it takes effect after a reload.
+  // F104: Graphics (High / Auto / Low) beside it; applied at once, smooth edges too (F108: main.js re-creates the
+  // canvas and context). The note is only the fallback when that re-creation failed and the old context kept running.
   const pausedGfx = radioGroup(pausedEl, 'Graphics', 'pt-paused-gfx', [['high', 'High'], ['auto', 'Auto'], ['low', 'Low']], settings.graphics,
     (v) => { settings.graphics = v; syncGfxNote(); }, 'pt-modes pt-paused-modes pt-paused-gfx');
-  const gfxNote = el('p', 'pt-gfx-note', 'Smooth edges change after you reload the page.');
+  const gfxNote = el('p', 'pt-gfx-note', 'Smooth edges could not change now; they will after you reload the page.');
   gfxNote.hidden = true;
   const syncGfxNote = () => { gfxNote.hidden = !(cb.needsReload && cb.needsReload()); };
   pausedEl.append(gfxNote, resumeBtn,
