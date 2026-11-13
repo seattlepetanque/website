@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const PORT = 9342, SECS = +process.argv[2] || 40;
-const URL_ = 'http://localhost:1609/game.html?debug&play&humanturn&demo&animate&autothrow&cam=game&fixeddt=16.7&camlog';
+const URL_ = process.env.URL_ || 'http://localhost:1609/game.html?debug&play&humanturn&demo&animate&autothrow&cam=game&fixeddt=16.7&camlog';
 const chrome = spawn(process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', ['--headless=new', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', ...(process.env.REDUCED === '0' ? [] : ['--force-prefers-reduced-motion']), `--remote-debugging-port=${PORT}`, `--user-data-dir=${mkdtempSync(join(tmpdir(), 'cam-'))}`, '--window-size=1000,720', 'about:blank'], { stdio: 'ignore' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let targets;
