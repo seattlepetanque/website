@@ -17,7 +17,7 @@ import { settings } from './settings.js';
 import { chooseThrowAsync, chooseJackThrow, chooseJackPlacement, whoThrows } from './ai.js';
 import { createTossInput } from './toss.js';
 import {
-  SKILL, scaledSkill, coneFor, coneEnvelope, executeThrow, predictRollBand, styleForLoft, releaseFrom, snapAim, fitToBudget,
+  SKILL, scaledSkill, coneFor, coneEnvelope, executeThrow, predictRollBand, styleForLoft, releaseFrom, snapAim, fitToBudget, planAim,
 } from './donnee.js';
 import { createAudio } from './audio.js';
 import { createClock } from './clock.js';
@@ -35,6 +35,7 @@ import { PERSONALITIES, CAST_IDS, specFor, pickStance, stanceFor, STAND_BEYOND, 
 let TEAM_NAMES = teamNamesFor('pierre'); // F45: reset in startGame for the chosen partner
 const TEAM_TROUSERS = ['#23396b', '#8a5a2b']; // navy for your team, bronze for the opponents (F45: by team, whoever is on it)
 const AIM_MAX = 0.6; // rad of aim either side of straight ahead
+const FACE_MAX = 80 * Math.PI / 180; // F99: how far off straight ahead a thrower may face towards a donnée picked off to the side
 const MAX_STEPS = 24; // physics steps per frame; backlog beyond this is dropped
 const DEG = Math.PI / 180;
 const params = new URLSearchParams(location.search);
@@ -243,13 +244,27 @@ function boot() {
     aimYaw = baseYaw() + Math.max(-AIM_MAX, Math.min(AIM_MAX, wrapPi(yaw - baseYaw()))); // E10: within AIM_MAX of straight ahead, whichever way that is
     shoulderCam.yaw = aimYaw;
     throwerYaw = aimYaw;
+    tossFace = null;
+    if (debug && params.has('aimlog')) console.log('[aimlog] setAim ' + (aimYaw / DEG).toFixed(2));
     const me = cast.get('you');
     if (pending && inCircle === 'you' && !me.busy) me.yaw = aimYaw;
   }
 
   // Release point of a player's boule: where that character's hand will be at the release frame for this loft,
   // facing their aim. Without a loft it returns a base for the AI ({ x, y, release(loft) }), see donnee.releaseFrom.
-  const faceYaw = (id) => (id === 'you' ? aimYaw : aiYaw);
+  let tossFace = null; // F99: while the human tosses, the yaw they face: the bearing of the donnée (planAim), so the hand, the pose and the launch agree
+  const faceYaw = (id) => (id === 'you' ? (tossFace ?? aimYaw) : aiYaw);
+  const faceLimit = (a) => baseYaw() + Math.max(-FACE_MAX, Math.min(FACE_MAX, wrapPi(a - baseYaw())));
+  function setFace(y) { // the thrower turns to face the donnée (null: back to the aim); looks only, never the throw
+    tossFace = y;
+    const me = cast.get('you');
+    if (pending && inCircle === 'you' && !me.busy) me.yaw = faceYaw('you');
+  }
+  // The human's toss as a throw plan (shared by the preview and the release): see donnee.planAim
+  const planToss = (t) => planAim({
+    donnee: t.donnee, snapped: !!t.snappedTo, loft: t.loft, skill: SKILL.human, terrain: world.terrain, limit: faceLimit,
+    handAt: (yaw) => handFrom('you', t.loft, yaw),
+  });
   // Stance of each player's current throw: picked when they step into the circle (enterCircle), used by the preview,
   // the AI plan, the throw pose and the launch alike
   const throwStance = {};
@@ -316,18 +331,12 @@ function boot() {
   }
   const demo = debug && params.has('demo');
 
-  // The toss donnée pulled in to what the human's arm can deliver at this loft (D02)
-  function fitToss(t, from) {
-    const want = t.snappedTo ? snapAim(from, t.donnee) : t.donnee; // a tir lands just short of its target
-    const fit = fitToBudget({ from, landing: want, loft: t.loft, skill: SKILL.human, terrain: world.terrain });
-    return { landing: fit.landing, clamped: fit.clamped, energyFrac: fit.energyFrac };
-  }
   let reachShown = false;
 
   // Draw the preview for a toss state { donnee, loft, snappedTo }
   function showToss(t, kind) {
-    const from = releasePoint(null, t.loft);
-    const { landing, clamped, energyFrac } = fitToss(t, from);
+    const { from, landing, clamped, energyFrac, face } = planToss(t); // F99: the same plan the release uses
+    setFace(face);
     if (clamped !== reachShown) {
       reachShown = clamped;
       if (clamped) say2(`Max reach: about ${Math.hypot(landing.x - from.x, landing.y - from.y).toFixed(1)} m at this loft. Throw lower to go farther.`);
@@ -357,12 +366,12 @@ function boot() {
     onPreview: (t) => {
       if (!pending || flying) return;
       audio.unlock();
-      if (t.cancel) { lastToss = null; clearToss(); return; }
+      if (t.cancel) { lastToss = null; clearToss(); setFace(null); return; }
       lastToss = t;
       showToss(t, pending.kind);
     },
     onThrow: (t) => humanToss(t),
-    onCancel: () => clearToss(),
+    onCancel: () => { clearToss(); setFace(null); },
     // placing an invalid jack by hand: marker preview, valid click places, invalid click gives a hint
     placeValid: (p) => !!match && jackPlaceValid(p, match.geometry),
     placeStart: { x: 2, y: 9 },
@@ -375,8 +384,9 @@ function boot() {
   function humanToss(t) {
     renderer.setJackArrow(false); // released: the chevron fades out (D17)
     if (!pending || flying) { toss.setPhase('off'); return; }
-    const from = releasePoint(null, t.loft);
-    const { landing, energyFrac } = fitToss(t, from);
+    const { from, landing, energyFrac, face } = planToss(t);
+    setFace(face); // faces the donnée through the whole throw (throwWith reads faceYaw at the start)
+    if (debug && params.has('aimlog')) console.log('[aimlog] toss ' + JSON.stringify({ donnee: t.donnee, landing, aimYaw, loft: t.loft, donneeAngle: Math.atan2(t.donnee.x - court.circle.x, t.donnee.y - court.circle.y) / DEG }));
     const cone = coneFor({ skill: SKILL.human, from, landing, loft: t.loft, energyFrac });
     const res = executeThrow({ from, landing, loft: t.loft, cone, terrain: world.terrain, rand: throwRand });
     clearToss();
@@ -659,9 +669,10 @@ function boot() {
     let released = false;
     const done = ch.playThrow({
       loft,
-      onRelease: () => {
+      onRelease: (pos) => {
         released = true;
         if (t !== token) return;
+        if (debug && params.has('aimlog')) console.log('[aimlog] releaseframe ' + JSON.stringify({ id, aimYaw, chYaw: ch.yaw, ball: pos, root: { x: ch.root.position.x, y: ch.root.position.y } }));
         if (debug && params.has('freezethrow')) { frozen = true; return; }
         go();
       },
@@ -789,8 +800,10 @@ function boot() {
     else renderer.clearMeasure();
   }
   // Landing marks from physics 'land' events
+  let aimLogBody = null; // F99 debug: the body whose first landing is logged
   function markLandings(events) {
     for (const ev of events) {
+      if (debug && aimLogBody && ev.type === 'land' && ev.a === aimLogBody.id) { console.log('[aimlog] land ' + JSON.stringify({ x: ev.x, y: ev.y, angle: Math.atan2(ev.x - court.circle.x, ev.y - court.circle.y) / DEG })); aimLogBody = null; }
       if (ev.type === 'land' && ev.speed > 1.5) renderer.addDivot(ev.x, ev.y, 0.035 + 0.05 * Math.min(1, ev.speed / 8));
     }
   }
@@ -843,6 +856,12 @@ function boot() {
     const body = createBody(kind, { team: kind === 'jack' ? -1 : team, owner });
     world.add(body);
     launch(body, p, from || court.throwFrom);
+    tossFace = null; // F99: the toss is over; the thrower's facing goes back to the aim
+    if (debug && params.has('aimlog')) { // F99: ?debug&aimlog: what the launch used vs the character at that frame (console)
+      const ch = cast.get(owner);
+      console.log('[aimlog] launch ' + JSON.stringify({ aimYaw, chYaw: ch && ch.yaw, from, hand: ch && ch.handWorldPosition(), throwYaw: p.yaw, circle: court.circle }));
+      aimLogBody = body;
+    }
     flying = body;
     clearToss();
     const humanOwner = !!(match && match.players.find((q) => q.id === owner && q.isHuman));
@@ -951,6 +970,7 @@ function boot() {
   }
 
   function humanTurn(kind, playerId, text) {
+    tossFace = null; // F99
     pending = { kind, playerId };
     hideHolding(); // F11: aiming starts, so the who-holds banner goes
     renderer.clearMeasure(); // aiming starts: the between-throws lines go (D07)
@@ -966,12 +986,13 @@ function boot() {
     if (debug && params.has('holdhead')) setView('head'); // ?debug&humanturn&holdhead: the overhead view as while its icon is held (screenshots)
     say2(text);
     if (pickHuman !== null || store(HINT_KEY) !== '1') hud.showHint(HINT_TEXT);
+    if (debug && params.has('aimyaw')) setAim(baseYaw() + (+params.get('aimyaw') || 0) * DEG); // F99: ?debug&humanturn&aimyaw=30: aim this many degrees off centre (with &demo, the donnée is along that aim)
     if (debug && demo) { // ?debug&humanturn&demo: a scripted toss preview for screenshots
       // &loft=15 (degrees), &dist=7 (m ahead of the circle), &dx=0.9 (m across), &tir (snap onto the jack)
       const jb = jackBody();
       const tir = params.has('tir') && jb;
       lastToss = {
-        donnee: tir ? { x: jb.x, y: jb.y } : ahead(+params.get('dist') || 7, +params.get('dx') || 0.9),
+        donnee: tir ? { x: jb.x, y: jb.y } : params.has('aimyaw') ? { x: court.circle.x + Math.sin(aimYaw) * (+params.get('dist') || 7), y: court.circle.y + Math.cos(aimYaw) * (+params.get('dist') || 7) } : ahead(+params.get('dist') || 7, +params.get('dx') || 0.9),
         loft: (+params.get('loft') || 40) * DEG, snappedTo: tir ? jb.id : null,
       };
       showToss(lastToss, kind);
@@ -2431,6 +2452,9 @@ function boot() {
       audio,
       setPlaying, clock, pauseGame, endGame,
       get paused() { return pausedNow; },
+      get pending() { return pending; },
+      cast,
+      get aimYaw() { return aimYaw; },
       get match() { return match; },
       throw: (p) => launchBody(jackBody() && !jackBody().dead ? 'boule' : 'jack', 0, 'you', { ...readParams(), ...p }),
       throwJack: (p) => launchBody('jack', -1, null, { ...readParams(), ...p }),

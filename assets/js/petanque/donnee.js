@@ -249,6 +249,29 @@ export function fitToBudget({ from = court.throwFrom, landing, loft, skill, terr
   return { landing: out, clamped: true, energyFrac: Math.min(1, energyFor({ from, landing: out, loft, skill, terrain })) };
 }
 
+// F99: the one place a human toss becomes a throw. The thrower FACES the donnée (bearing from the circle to where the
+// boule will land), and the hand that releases the boule is where that facing puts it, so the preview, the pose and
+// the launch all come from the same yaw and nothing later (a turn, a pose) can move the throw off the previewed spot.
+// handAt(yaw) -> { x, y, z } is the release point for a thrower facing yaw; limit(yaw) bounds the facing (the UI's
+// turn range). Returns { face, from, landing, clamped, energyFrac } (landing: the donnée pulled to the
+// arm's reach, after a tir's short-landing allowance).
+export function planAim({ circle = court.circle, donnee, snapped = false, loft, handAt, skill, terrain, limit = (a) => a }) {
+  const bearing = (p) => Math.atan2(p.x - circle.x, p.y - circle.y);
+  const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+  let face = limit(bearing(donnee)), from, fit;
+  for (let i = 0; i < 4; i++) {
+    from = handAt(face);
+    const want = snapped ? snapAim(from, donnee) : donnee;
+    fit = fitToBudget({ from, landing: want, loft, skill, terrain });
+    const next = limit(bearing(fit.landing));
+    const settled = Math.abs(wrap(next - face)) < 1e-4;
+    face = next;
+    if (settled) break;
+  }
+  from = handAt(face);
+  return { face, from, landing: fit.landing, clamped: fit.clamped, energyFrac: fit.energyFrac };
+}
+
 // Unit vectors along the throw and to its right (toward +x at yaw 0)
 function axes(from, landing) {
   const dx = landing.x - from.x, dy = landing.y - from.y;
