@@ -13,7 +13,7 @@ const DEBUG_ONLY = ['"mescenario"', '"freezethrow"', '"humanturn"', '"timerframe
   // F111: the debug-scenarios module (scenarios, window.__petanque hook) and the debug switches read in other modules
   '__petanque', '__characters', '"mene2"', '"mescenario"', '"characters"', '"jphold"', '"closecall"', '"preview"', '"fpmirror"', '"fpat"', '"pausegame"',
   '"exitclick"', '"f02delay"', '"ringheld"', '"deadjack"', '"measure"', '"tvshot"', '"bshot"',
-  '"gfx"', '"fakegpu"', '"bootfail"', '"weak"', '[quality]', '"hideshadows"', '"aimlog"', '[aimlog]', '"shadowhalf"', '"shadowmap"', '"shadowtype"', '"gravel"', '"blobs"', '"butterflies"', '"perf"', '__perf'];
+  '"gfx"', '"fakegpu"', '"bootfail"', '"weak"', '[quality]', '"hideshadows"', '"aimlog"', '[aimlog]', '"shadowhalf"', '"shadowmap"', '"shadowtype"', '"gravel"', '"blobs"', '"butterflies"', '"perf"', '__perf', '"hidesim"', '[hidesim]'];
 
 function build(env) {
   const dir = mkdtempSync(join(tmpdir(), `petanque-${env}-`));

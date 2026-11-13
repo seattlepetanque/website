@@ -37,6 +37,11 @@ export function debugHooks(ctx) {
     if (params.has('pausegame')) setTimeout(() => pauseGame(), +params.get('pausegame') || 0);
     if (params.has('endgame')) setTimeout(() => endGame(), +params.get('endgame') || 0);
     if (params.has('exitclick')) { const t0 = Date.now(), iv = setInterval(() => { const b = document.querySelector('.pt-exit'); if (b && Date.now() - t0 > (+params.get('exitclick') || 0)) { clearInterval(iv); b.click(); } }, 200); } // F93: ?debug&exitclick=MS presses Exit once the game-over card is up (and MS have passed)
+    if (params.has('hidesim')) { // F106: ?debug&hidesim=AT:FOR goes hidden AT ms after load for FOR ms; logs the game clock and world time around it
+      const [at, dur] = params.get('hidesim').split(':').map(Number);
+      const snap = () => `clock=${clock.now().toFixed(0)} world=${world.t.toFixed(3)} now=${performance.now().toFixed(0)}`;
+      setTimeout(() => { console.warn('[hidesim] hide', snap()); ctx.visSet(true); setTimeout(() => { console.warn('[hidesim] show', snap()); ctx.visSet(false); setTimeout(() => console.warn('[hidesim] after', snap()), 500); }, dur); }, at);
+    }
     window.__petanque = {
       world, terrain, renderer, seed, reset: toSetup, startGame, court,
       audio,

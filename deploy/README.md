@@ -92,6 +92,19 @@ git push origin main
 
 Don't rewrite history on `main` for a rollback.
 
+## 8b. Caching (static/.htaccess)
+
+`static/.htaccess` is copied by Hugo to the web root and published by deploy.sh's rsync (it is in the build, so
+`--delete` keeps it; the excludes `/.well-known/`, `/_hooks/`, `/.dh-diag` are unaffected). It is the root
+`.htaccess` (canonical-host redirect, dotfile deny, 404 page) plus the F106 caching rules. Rules, all inside `<IfModule>`
+so a missing module is skipped rather than a 500:
+- fingerprinted files (`name.<16+ hex>.js|css|png|...`, e.g. `/js/petanque/main.<hash>.js`, Hugo's `*.min.<hash>.css`):
+  `Cache-Control: public, max-age=31536000, immutable` (mod_headers);
+- HTML: `Cache-Control: no-cache` (always revalidated, a cheap 304) and `Expires` now, so a deploy shows at once;
+- other static files (images, models, fonts, JSON): mod_expires, one hour by default, one month for images and models.
+ModSecurity is not touched. Check after a deploy: `curl -sI https://seattlepetanque.org/js/petanque/main.<hash>.js | grep -i cache-control`
+and the same for `/`. If a file is not fingerprinted it only gets the short default, never `immutable`.
+
 ## 9. Why `backups/` never reaches the host
 
 `backups/` holds the old Publii backups. These are raw data dumps with personal
