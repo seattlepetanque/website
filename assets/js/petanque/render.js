@@ -1411,7 +1411,7 @@ export function createRenderer(canvas, terrain, init = {}) {
   let flightFrame = null; // camera.js spring state while the flight camera follows moving bodies
   let obsFrame = null; // E11: camera.js state of the casual-observer camera (kept while it stays in that mode)
 
-  const camLog = dbgParam('camlog'); // F110: ?debug&camlog logs the camera pose per frame and each setCamera (console)
+  const camLog = debug ? dbgParam('camlog') : null; // F110: ?debug&camlog logs the camera pose per frame and each setCamera (console)
   let shoulderSm = null; // F110: spring state of the shoulder camera (null while another mode or a timed pan runs)
   let blend = null, fovEase = false; // F110: the aim to follow switch: null | 'start' (first frame) | camera.js blend state; fovEase eases the field of view with it
   let bcFrame = null; // F01: camera.js state of the current broadcast shot (a new shot is a cut)
@@ -1432,7 +1432,7 @@ export function createRenderer(canvas, terrain, init = {}) {
     if (m === 'shoulder' && o.zoom !== undefined) zoom = clampZoom(o.zoom);
     if (m === 'observer' && mode !== 'observer') obsFrame = null; // a fresh spectator spot; later subjects only pan and dolly
     const wasAim = mode === 'shoulder' || mode === 'aim';
-    if (camLog !== null) console.log('[camlog] setCamera ' + JSON.stringify({ from: mode, to: m, cut: !!o.cut, flush }));
+    if (debug && camLog !== null) console.log('[camlog] setCamera ' + JSON.stringify({ from: mode, to: m, cut: !!o.cut, flush }));
     mode = m; opts = o;
     blend = null; fovEase = false;
     if (m === 'flight') flightFrame = null;
@@ -1738,7 +1738,7 @@ export function createRenderer(canvas, terrain, init = {}) {
     }
     if (mode !== 'shoulder' || trans < 1) shoulderSm = null;
     camera.position.copy(cur.pos);
-    if (camLog !== null) console.log('[camlog] ' + JSON.stringify({ m: mode, t: +dt.toFixed(4), p: [cur.pos.x, cur.pos.y, cur.pos.z].map((v) => +v.toFixed(4)), g: [cur.tgt.x, cur.tgt.y, cur.tgt.z].map((v) => +v.toFixed(4)), f: +camera.fov.toFixed(3), fk: +focusK.toFixed(3), in: mode === 'shoulder' ? [opts.yaw, opts.viewYaw, opts.viewPitch, opts.zoom, trans].map((v) => v === undefined ? null : +(+v).toFixed(4)) : null, pv: preview && preview.donnee ? 1 : 0, gp: [goal.pos.x, goal.pos.y, goal.pos.z].map((v) => +v.toFixed(3)), gt: [goal.tgt.x, goal.tgt.y, goal.tgt.z].map((v) => +v.toFixed(3)) })); // F110: ?debug&camlog
+    if (debug && camLog !== null) console.log('[camlog] ' + JSON.stringify({ m: mode, t: +dt.toFixed(4), p: [cur.pos.x, cur.pos.y, cur.pos.z].map((v) => +v.toFixed(4)), g: [cur.tgt.x, cur.tgt.y, cur.tgt.z].map((v) => +v.toFixed(4)), f: +camera.fov.toFixed(3), fk: +focusK.toFixed(3), in: mode === 'shoulder' ? [opts.yaw, opts.viewYaw, opts.viewPitch, opts.zoom, trans].map((v) => v === undefined ? null : +(+v).toFixed(4)) : null, pv: preview && preview.donnee ? 1 : 0, gp: [goal.pos.x, goal.pos.y, goal.pos.z].map((v) => +v.toFixed(3)), gt: [goal.tgt.x, goal.tgt.y, goal.tgt.z].map((v) => +v.toFixed(3)) })); // F110: ?debug&camlog
     let lookAt = cur.tgt;
     camera.lookAt(lookAt);
     // shadow frustum follows what we look at
