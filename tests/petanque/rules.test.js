@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createMatch, apply, nextTeam, meneResult, holdingTeam, jackValid, jackFault, jackPlaceValid, jackPlaceFault, playersWithBoules, deadJackText,
-  jackGap, jackTooClose, jackCentreRange, fmtCm, TIE_EPS, JACK_END_MARGIN, JACK_R, JACK_DEAD_DIST, JACK_CENTRE_SHIFT,
+  jackGap, jackTooClose, jackCentreRange, fmtCm, sameGap, gapTenths, JACK_END_MARGIN, JACK_R, JACK_DEAD_DIST, JACK_CENTRE_SHIFT,
 } from '../../assets/js/petanque/rules.js';
 import { FRONT_MIN, FRONT_WANT, nextCircle, CIRCLE_R, SIDE_MARGIN } from '../../assets/js/petanque/court.js';
 import { C } from '../../assets/js/petanque/constants.js';
@@ -521,19 +521,32 @@ test('F88b: a thrown jack that lands too close (no pre-throw spot) is not replac
   assert.ok(!t.jack || !t.jack.replaced);
 });
 
-// --- F77: one tie tolerance ---
-test('F77: TIE_EPS is the one tie tolerance for holding, scoring and the void message', async () => {
-  assert.equal(TIE_EPS, 0.001);
+// --- F77 / F123: one tie rule, on the DISPLAYED gap (0.1 cm) ---
+const R0 = 0.0375 + 0.015; // boule radius + jack radius: centre distance = gap + R0
+const atGap = (cm) => R0 + cm / 100;
+test('F123: 13.4 vs 13.5 cm is not a tie: the farther team throws', () => {
   const j = { x: 2, y: 8 };
-  assert.equal(holdingTeam(j, [b('a', 0, 2.5, 8), b('b', 1, 1.5005, 8)]), 'tie'); // 0.5 vs 0.4995
-  assert.notEqual(holdingTeam(j, [b('a', 0, 2.5, 8), b('b', 1, 1.5025, 8)]), 'tie');
-  assert.ok(meneResult(j, [b('a', 0, 2.5, 8), b('b', 1, 1.5005, 8)]).void);
-  assert.ok(!meneResult(j, [b('a', 0, 2.5, 8), b('b', 1, 1.5025, 8)]).void);
-  const fs = await import('node:fs');
-  const main = fs.readFileSync(new URL('../../assets/js/petanque/main.js', import.meta.url), 'utf8');
-  const tac = fs.readFileSync(new URL('../../assets/js/petanque/tactics.js', import.meta.url), 'utf8');
-  assert.ok(main.includes('<= TIE_EPS') && !/<= 0\.00[12]\) note/.test(main), 'main.js void message uses the shared constant');
-  assert.ok(tac.includes('<= TIE_EPS'));
+  const bs = [b('a', 0, 2 + atGap(13.4), 8), b('b', 1, 2 - atGap(13.5), 8)];
+  assert.equal(holdingTeam(j, bs), 0);
+  assert.equal(meneResult(j, bs).team, 0);
+  const m = { phase: 'play', jack: j, boules: bs, jackTeam: 0, lastThrower: 0, stayed: true, players: [
+    { team: 0, boulesLeft: 2 }, { team: 1, boulesLeft: 2 }] };
+  assert.equal(nextTeam(m), 1);
+  assert.equal(nextTeam({ ...m, lastThrower: 1 }), 1);
+});
+test('F123: equal displayed gaps tie (Art. 29: the last thrower plays again); 13.452 vs 13.46 both show 13.5', () => {
+  const j = { x: 2, y: 8 };
+  assert.equal(fmtCm(atGap(13.452) - R0) === fmtCm(atGap(13.46) - R0), true);
+  for (const [g1, g2] of [[13.5, 13.5], [13.452, 13.46]]) {
+    const bs = [b('a', 0, 2 + atGap(g1), 8), b('b', 1, 2 - atGap(g2), 8)];
+    assert.equal(holdingTeam(j, bs), 'tie');
+    assert.ok(meneResult(j, bs).void);
+    const m = { phase: 'play', jack: j, boules: bs, jackTeam: 0, lastThrower: 1, stayed: true, players: [
+      { team: 0, boulesLeft: 2 }, { team: 1, boulesLeft: 2 }] };
+    assert.equal(nextTeam(m), 1);
+  }
+  assert.ok(sameGap(atGap(13.5), atGap(13.5)) && !sameGap(atGap(13.4), atGap(13.5)));
+  assert.equal(gapTenths(atGap(13.4)), 134);
 });
 
 // --- F79 / F80: placement geometry ---

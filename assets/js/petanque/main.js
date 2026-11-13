@@ -8,7 +8,7 @@ import { createTerrain } from './terrain.js';
 import { createWorld, createBody, launch, placeDeadBall, deadRowSlot, deadJackSpot } from './physics.js';
 import { createRenderer } from './render.js';
 import {
-  createMatch, defaultPlayers, teamNamesFor, validPartner, opponentIds, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm, deadJackText, jackGap, jackTooClose, TIE_EPS,
+  createMatch, defaultPlayers, teamNamesFor, validPartner, opponentIds, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm, deadJackText, jackGap, jackTooClose, sameGap,
 } from './rules.js';
 import { detectAnnouncement, createCarreauWatcher } from './announce.js';
 import { createAnnouncer } from './announce-view.js';
@@ -2131,7 +2131,7 @@ function boot() {
         .reduce((m, b) => Math.min(m, Math.hypot(b.x - j.x, b.y - j.y)), Infinity));
       if (jackOut && r.inHand) note = deadJackText(r.inHand, TEAM_NAMES, r.jackReason); // F13: from the boules in hand when it went dead
       else if (!live.length) note = 'No live boules on the court: mène void.';
-      else if (Math.abs(near[0] - near[1]) <= TIE_EPS) note = 'The closest boules of each team are the same distance from the cochonnet: mène void.';
+      else if (sameGap(near[0], near[1])) note = 'The closest boules of each team are the same distance from the cochonnet: mène void.';
       else { note = 'Mène void.'; console.warn('[void mène] no reason found: please report this with the details below'); }
       console.info('[void mène]', { jackDead: !!(j && j.dead), jackAt: j && { x: +j.x.toFixed(3), y: +j.y.toFixed(3) },
         liveBoules: live.length, closest: near.map((d) => (Number.isFinite(d) ? +d.toFixed(4) : null)),

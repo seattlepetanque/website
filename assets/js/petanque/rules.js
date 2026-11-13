@@ -1,6 +1,7 @@
 // Pétanque rules and scoring (doublette). Pure data logic: no DOM, no physics.
 // Jack: { x, y, dead }. Boules: { id, team, owner, x, y, dead }. Metres, 2D distances.
 import { nextCircle, CIRCLE_R } from './court.js';
+import { C } from './constants.js';
 
 export const DEFAULT_GEOMETRY = Object.freeze({
   circle: Object.freeze({ x: 2, y: 1 }),
@@ -12,9 +13,11 @@ export const DEFAULT_GEOMETRY = Object.freeze({
   jackMax: 10,
 });
 
-// F77: the one tie tolerance: two boules are equidistant from the jack within 1 mm (rules.js scoring and holding, and the
-// void-mène message in main.js and the tactics' tie test use this same constant)
-export const TIE_EPS = 0.001;
+// F123: the one tie rule. A gap is compared as DISPLAYED: the surface gap rounded to 0.1 cm (what fmtCm shows). Two boules
+// are equidistant only when those displayed values are equal, so 13.4 vs 13.5 is never a tie and the farther team throws.
+// Used by holdingTeam, meneResult, the void message in main.js and the tactics' tie test.
+export const gapTenths = (centreDist) => Math.round(Number((Math.max(0, centreDist - C.boule.r - C.jack.r) * 100).toFixed(1)) * 10);
+export const sameGap = (centreA, centreB) => gapTenths(centreA) === gapTenths(centreB);
 const BOULES_PER_PLAYER = 3;
 const EPS = 1e-9;
 
@@ -129,7 +132,7 @@ export function holdingTeam(jack, boules) {
   const m = measure(jack, boules);
   if (!m.length) return null;
   const other = m.find((b) => b.team !== m[0].team);
-  if (other && other.dist - m[0].dist <= TIE_EPS) return 'tie';
+  if (other && sameGap(other.dist, m[0].dist)) return 'tie';
   return m[0].team;
 }
 
@@ -140,9 +143,9 @@ export function meneResult(jack, boules) {
   if (!measured.length) return { void: true };
   const win = measured[0];
   const other = measured.find((b) => b.team !== win.team);
-  if (other && other.dist - win.dist <= TIE_EPS) return { void: true };
-  const limit = other ? other.dist : Infinity;
-  const points = measured.filter((b) => b.team === win.team && b.dist < limit).length;
+  if (other && sameGap(other.dist, win.dist)) return { void: true };
+  const limit = other ? gapTenths(other.dist) : Infinity;
+  const points = measured.filter((b) => b.team === win.team && gapTenths(b.dist) < limit).length;
   return { team: win.team, points, measured: measured.map(({ id, dist }) => ({ id, dist })) };
 }
 
