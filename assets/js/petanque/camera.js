@@ -25,6 +25,7 @@ export const CAM = Object.freeze({
   // F110: the aim (shoulder) to follow switch. The camera keeps its pose and only the offset to the follow goal decays through
   // critically damped springs (so there is no lag behind a moving goal), with speed caps: m/s for the camera, m/s for the look-at point.
   follow: { time: 0.12, max: 40 }, // F110: the shoulder (aim) view is a spring on its goal too: a goal that changes at one moment (aim yaw, view offset reset, focus) glides instead of snapping
+  fanTime: 0.3, // F123: s to blend the follow goal into the frame-all goal
   thrown: { time: 0.4, max: 8, behind: 3, side: 1.3, up: 1.6, ahead: 1 }, // F122: after the human's throw: one spring (time s, max m/s per axis) on a goal behind and to the shoulder side of the boule
 });
 
@@ -54,6 +55,18 @@ export function followStep(st, from, goal, dt, F = CAM.follow) {
   BK.forEach((k, i) => { const [a, nv] = dt > 0 ? damp(cur.pos[k], goal.pos[k], cur.v[i], F.time, F.max, dt) : [cur.pos[k], cur.v[i]]; pos[k] = a; v[i] = nv; });
   BK.forEach((k, i) => { const [a, nv] = dt > 0 ? damp(cur.tgt[k], goal.tgt[k], cur.v[i + 3], F.time, F.max, dt) : [cur.tgt[k], cur.v[i + 3]]; tgt[k] = a; v[i + 3] = nv; });
   return { pos, tgt, v };
+}
+
+// F123: which goal the quick-mode follow chases. 'follow' while the thrown body flies and rolls alone; 'fan' (frame every moving
+// body) as soon as any other body moves (it was hit) and until everything has settled (no flip-flop). `k` is the goal blend
+// 0..1 (smoothstep it), ramped over CAM.fanTime so the goal itself never jumps. st = { mode, k } or null.
+export function flightGoalMode(st, bodies, thrown, dt) {
+  const n = st ? { ...st } : { mode: 'follow', k: 0 };
+  const moving = (b) => b && b.state !== 'resting' && (b.state === 'airborne' || speedOf(b) > CAM.moveSpeed);
+  const others = (bodies || []).some((b) => b !== thrown && moving(b));
+  if (n.mode === 'follow' && others) n.mode = 'fan';
+  if (n.mode === 'fan') n.k = Math.min(1, n.k + dt / CAM.fanTime);
+  return n;
 }
 
 // Live subjects: airborne, or rolling above the threshold, plus the thrown body until it settles.

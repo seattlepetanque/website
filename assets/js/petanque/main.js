@@ -136,8 +136,9 @@ function boot() {
   // E11 / E27: the camera style is read here and nowhere else. Slow mode watches from the side like a spectator
   // ('observer'); the human's own turn (shoulder view) and quick mode keep the game cameras. ?debug&cam=tv|game overrides.
   // E27: the TV variant (?debug&tvcam=a|b|c, else the hidden setting); a debug tvcam also turns TV on in slow mode
-  const tvVar = () => tvVariant((debug && params.get('tvcam')) || settings.tvcam);
-  const camStyle = (human = false) => cameraStyle({ slow: slow(), human, override: (debug && params.get('cam')) || settings.camStyle || (debug && params.has('tvcam') ? 'tv' : null), tv: tvVar() }); // F01: settings.camStyle (hidden) or ?debug&cam=broadcast
+  const quickDefault = () => !slow() && !debug; // F123: quick mode ignores the hidden tvcam / camStyle settings (debug overrides only): every thrower gets the shoulder view and the same follow
+  const tvVar = () => quickDefault() ? '' : tvVariant((debug && params.get('tvcam')) || settings.tvcam);
+  const camStyle = (human = false) => cameraStyle({ slow: slow(), human, override: quickDefault() ? null : (debug && params.get('cam')) || settings.camStyle || (debug && params.has('tvcam') ? 'tv' : null), tv: tvVar() }); // F01: settings.camStyle (hidden) or ?debug&cam=broadcast
   const observing = () => camStyle() === 'observer';
   const broadcasting = () => camStyle() === 'broadcast'; // F01
   const observerView = (points, extra) => { if (wideHold) return; if (humanWalk && !(extra && extra.follow)) humanWalk.cam = false; renderer.setCamera('observer', { points, ...extra }); };
@@ -2689,7 +2690,7 @@ function boot() {
     clearWorld();
     hud.hideHint();
     const put = (kind, team, x, y) => { const b = createBody(kind, { team, x, y }); b.z = b.r; world.add(b); return b; };
-    put('jack', -1, 2.1, 8);
+    put('jack', -1, debug && +params.get('jx') || 2.1, 8); // ?jx= moves the jack across the line of the shot (F123 widen check)
     put('boule', 1, 1.8, 8.2);
     put('boule', 1, 2.6, 7.7);
     renderer.sync(world);
