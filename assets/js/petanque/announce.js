@@ -9,8 +9,8 @@
 //    A shooter that is itself out (dead) never counts. Hitting a teammate's boule is not announced.
 //  - BIBERON: a boule at rest touching the cochonnet: surface-to-surface gap (gapM, rules.js) from just under zero
 //    (overlap tolerance) to BIBERON.maxGapM (1 cm). F101: only the boule just thrown (shooterId) can
-//    be a biberon, wherever it bounced on the way; boules it displaces, or that were already there, never are. It must
-//    be new: if it did not move and the jack did not move it is not announced. Dead or ghost boules and a dead jack never count.
+//    be a biberon, wherever it bounced on the way; boules it displaces, or that were already there, never are (a boule
+//    that was already touching never counts, because only the thrown boule is checked). Dead or ghost boules and a dead jack never count.
 // A carreau wins when both happen (it is the rarer call).
 import { gapM } from './rules.js';
 
@@ -38,16 +38,12 @@ export function isCarreau({ before, bodies, shooterId, events }) {
   return false;
 }
 
-export function isBiberon({ before, bodies, shooterId }) {
-  if (shooterId == null) return false; // F101: only the thrown boule can be announced (a jack throw never is)
+export function isBiberon({ bodies, shooterId }) {
+  if (shooterId == null) return false; // only the thrown boule can be announced (a jack throw never is)
   const jack = bodies.find((b) => b.kind === 'jack');
   if (!jack || jack.dead || jack.ghost) return false;
-  const b = bodies.find((x) => x.id === shooterId); // F101: by identity, so bounces off other boules do not matter
-  if (!live(b) || !touching(b, jack)) return false;
-  const jackBefore = pos(before, jack.id), was = pos(before, b.id);
-  const jackMoved = !jackBefore || Math.hypot(jack.x - jackBefore.x, jack.y - jackBefore.y) > 0.002;
-  const unchanged = was && !jackMoved && Math.hypot(b.x - was.x, b.y - was.y) <= 0.002;
-  return !unchanged;
+  const b = bodies.find((x) => x.id === shooterId); // by identity, so bounces off other boules do not matter
+  return live(b) && touching(b, jack);
 }
 
 // 'carreau' | 'biberon' | null
