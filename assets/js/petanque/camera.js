@@ -68,6 +68,21 @@ export function blendStep(b, goal, dt) {
   return { b: { off, v }, pose, done: big < B.eps };
 }
 
+// F122: keep the camera out of the thrower's head and body. The keep-out is a vertical capsule (head down to the hips, radius
+// `r`); a camera inside is pushed out along the closest-point direction, biased toward the shoulder side `side` ({x,y} unit) so
+// the path passes beside the head, never through it. The result is a continuous function of pos (no pop). Returns a new {x,y,z}.
+export const HEAD_CLEAR = { r: 0.7, drop: 0.8 };
+export function clearHead(pos, head, side, r = HEAD_CLEAR.r, drop = HEAD_CLEAR.drop) {
+  const cz = Math.max(head.z - drop, Math.min(head.z, pos.z));
+  let dx = pos.x - head.x, dy = pos.y - head.y, dz = pos.z - cz;
+  const d = Math.hypot(dx, dy, dz);
+  if (d >= r) return { x: pos.x, y: pos.y, z: pos.z };
+  const k = (r - d) / r; // 0 at the surface, 1 at the axis: the side bias grows as the camera sinks in
+  dx += side.x * r * k; dy += side.y * r * k;
+  const n = Math.hypot(dx, dy, dz) || 1;
+  return { x: head.x + dx / n * r, y: head.y + dy / n * r, z: cz + dz / n * r };
+}
+
 // F110: critically damped follow of a goal pose (the shoulder camera). st = { pos, tgt, v } or null (start from `from`).
 export function followStep(st, from, goal, dt) {
   const F = CAM.follow, cur = st || { pos: { ...from.pos }, tgt: { ...from.tgt }, v: [0, 0, 0, 0, 0, 0] };

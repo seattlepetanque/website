@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { frameMoving, cameraFromFrame, CAM, frameObserver, walkSubject, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS, broadcastGoal, frameBroadcast, BC, freeViewRect, scoringTargetBox, fitScoringView, SCORING_FIT, blendStart, blendStep, followStep } from '../../assets/js/petanque/camera.js';
+import { frameMoving, cameraFromFrame, CAM, frameObserver, walkSubject, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS, broadcastGoal, frameBroadcast, BC, freeViewRect, scoringTargetBox, fitScoringView, SCORING_FIT, blendStart, blendStep, followStep, clearHead, HEAD_CLEAR } from '../../assets/js/petanque/camera.js';
 import { createBody } from '../../assets/js/petanque/physics.js';
 
 const OPTS = { aspect: 1.6, fov: 50, dt: 1 / 60 };
@@ -550,4 +550,26 @@ test('F110: a goal that jumps at one moment (aim yaw change) is followed without
   }
   assert.ok(maxTgt < 0.1, `look-at step ${maxTgt.toFixed(3)} m per frame (the jump is 0.77 m)`);
   assert.ok(Math.abs(prev.tgt.x - 1.5) < 0.01 && Math.abs(prev.pos.x - 3.1) < 0.01, 'and settles on the new goal');
+});
+
+test('F122: the blend from the shoulder view stays clear of the thrower head and is continuous', () => {
+  const shoulder = { pos: { x: 3.1, y: -1.2, z: 2.1 }, tgt: { x: 1.5, y: 8, z: -0.7 } };
+  const head = { x: 2, y: 1, z: 1.65 }, side = { x: 1, y: 0 }, dt = 1 / 60;
+  const dist = (p) => { const cz = Math.max(head.z - HEAD_CLEAR.drop, Math.min(head.z, p.z)); return Math.hypot(p.x - head.x, p.y - head.y, p.z - cz); };
+  for (const goalPos of [{ x: 2, y: 1, z: 1.65 }, { x: 2, y: 1.2, z: 1.1 }, { x: 2.3, y: 0.9, z: 1.7 }]) { // goals straight through the head: the worst case
+    const goal = { pos: goalPos, tgt: { x: 2, y: 9, z: 0.5 } };
+    let b = blendStart(shoulder, goal), prev = shoulder.pos, minD = 9, maxStep = 0;
+    for (let i = 0; i < 120; i++) {
+      const r = blendStep(b, goal, dt); b = r.b;
+      const raw = dist(r.pose.pos);
+      const c = clearHead(r.pose.pos, head, side);
+      minD = Math.min(minD, dist(c));
+      maxStep = Math.max(maxStep, Math.hypot(c.x - prev.x, c.y - prev.y, c.z - prev.z));
+      assert.ok(raw >= 0); prev = c;
+    }
+    assert.ok(minD >= HEAD_CLEAR.r - 1e-6, `min distance ${minD.toFixed(3)} >= ${HEAD_CLEAR.r}`);
+    assert.ok(maxStep < 0.3, `per-frame step ${maxStep.toFixed(3)} m`);
+  }
+  const out = clearHead({ x: 5, y: 5, z: 2 }, head, side);
+  assert.deepEqual(out, { x: 5, y: 5, z: 2 }, 'far away: untouched');
 });

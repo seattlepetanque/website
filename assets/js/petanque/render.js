@@ -8,7 +8,7 @@ import { JACK_END_CENTRE, JACK_CENTRE_SHIFT } from './rules.js';
 import { rankBoules, layoutBadges } from './ranklabels.js'; // F91
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
-import { frameMoving, cameraFromFrame, blendStart, blendStep, followStep, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, scoringTargetBox } from './camera.js';
+import { frameMoving, cameraFromFrame, blendStart, blendStep, followStep, clearHead, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, scoringTargetBox } from './camera.js';
 import { makeButterflies } from './butterflies.js'; // F67
 import { makeCloudShadows } from './cloudshadows.js'; // F68
 import { daylightAt, SUN_DISTANCE, SHADOW_NEAR, SHADOW_FAR } from './daylight.js';
@@ -1390,6 +1390,7 @@ export function createRenderer(canvas, terrain, init = {}) {
   let obsFrame = null; // E11: camera.js state of the casual-observer camera (kept while it stays in that mode)
 
   const camLog = dbgParam('camlog'); // F110: ?debug&camlog logs the camera pose per frame and each setCamera (console)
+  let headRef = null; // F122: head position + shoulder side of the last shoulder view; the camera keeps clear of it
   let shoulderSm = null; // F110: spring state of the shoulder camera (null while another mode or a timed pan runs)
   let blend = null, fovEase = false; // F110: the aim to follow switch: null | 'start' (first frame) | camera.js blend state; fovEase eases the field of view with it
   let bcFrame = null; // F01: camera.js state of the current broadcast shot (a new shot is a cut)
@@ -1505,6 +1506,7 @@ export function createRenderer(canvas, terrain, init = {}) {
       const side = opts.hand === 'left' ? -1 : 1; // behind the left shoulder for a left-hander (mirrors the offsets)
       const fx = Math.sin(yaw), fy = Math.cos(yaw), rx = side * Math.cos(yaw), ry = -side * Math.sin(yaw);
       const gz = groundZ(p);
+      headRef = { x: p.x, y: p.y, z: gz + 1.65 * (opts.wide || 1), side: { x: rx, y: ry } }; // F122: the thrower's head, kept for the blend after the throw
       const w = opts.wide || 1; // chibi mesh players are bulkier: stand the camera further back and up
       goal.pos.set(p.x - fx * 2.2 * zoom * w + rx * 1.1 * zoom * w, p.y - fy * 2.2 * zoom * w + ry * 1.1 * zoom * w, gz + (1.5 + 0.6 * zoom) * w);
       goal.tgt.set(p.x + fx * 7 - rx * 0.5, p.y + fy * 7 - ry * 0.5, gz - 0.7);
@@ -1661,8 +1663,14 @@ export function createRenderer(canvas, terrain, init = {}) {
       cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
     }
     if (mode !== 'shoulder' || trans < 1) shoulderSm = null;
+    if (mode !== 'shoulder' && mode !== 'flight') headRef = null;
+    let headD = -1;
+    if (headRef) { // F122: stay beside the head and body through the shoulder to follow blend (and a reduced-motion cut)
+      if (dbgParam('noheadclear') === null) { const c = clearHead(cur.pos, headRef, headRef.side); cur.pos.set(c.x, c.y, c.z); } // ?debug&noheadclear: before/after measurement
+      headD = Math.hypot(cur.pos.x - headRef.x, cur.pos.y - headRef.y, cur.pos.z - headRef.z);
+    }
     camera.position.copy(cur.pos);
-    if (camLog !== null) console.log('[camlog] ' + JSON.stringify({ m: mode, t: +dt.toFixed(4), p: [cur.pos.x, cur.pos.y, cur.pos.z].map((v) => +v.toFixed(4)), g: [cur.tgt.x, cur.tgt.y, cur.tgt.z].map((v) => +v.toFixed(4)), f: +camera.fov.toFixed(3), fk: +focusK.toFixed(3), in: mode === 'shoulder' ? [opts.yaw, opts.viewYaw, opts.viewPitch, opts.zoom, trans].map((v) => v === undefined ? null : +(+v).toFixed(4)) : null, pv: preview && preview.donnee ? 1 : 0, gp: [goal.pos.x, goal.pos.y, goal.pos.z].map((v) => +v.toFixed(3)), gt: [goal.tgt.x, goal.tgt.y, goal.tgt.z].map((v) => +v.toFixed(3)) })); // F110: ?debug&camlog
+    if (camLog !== null) console.log('[camlog] ' + JSON.stringify({ m: mode, t: +dt.toFixed(4), p: [cur.pos.x, cur.pos.y, cur.pos.z].map((v) => +v.toFixed(4)), g: [cur.tgt.x, cur.tgt.y, cur.tgt.z].map((v) => +v.toFixed(4)), hd: +headD.toFixed(3), f: +camera.fov.toFixed(3), fk: +focusK.toFixed(3), in: mode === 'shoulder' ? [opts.yaw, opts.viewYaw, opts.viewPitch, opts.zoom, trans].map((v) => v === undefined ? null : +(+v).toFixed(4)) : null, pv: preview && preview.donnee ? 1 : 0, gp: [goal.pos.x, goal.pos.y, goal.pos.z].map((v) => +v.toFixed(3)), gt: [goal.tgt.x, goal.tgt.y, goal.tgt.z].map((v) => +v.toFixed(3)) })); // F110: ?debug&camlog
     let lookAt = cur.tgt;
     camera.lookAt(lookAt);
     // shadow frustum follows what we look at
