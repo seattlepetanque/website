@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { frameMoving, cameraFromFrame, CAM, frameObserver, walkSubject, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS, broadcastGoal, frameBroadcast, BC, freeViewRect, scoringTargetBox, fitScoringView, SCORING_FIT, blendStart, blendStep, followStep, clearHead, HEAD_CLEAR } from '../../assets/js/petanque/camera.js';
+import { frameMoving, cameraFromFrame, CAM, frameObserver, walkSubject, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS, broadcastGoal, frameBroadcast, BC, freeViewRect, scoringTargetBox, fitScoringView, SCORING_FIT, followStep } from '../../assets/js/petanque/camera.js';
 import { createBody } from '../../assets/js/petanque/physics.js';
 
 const OPTS = { aspect: 1.6, fov: 50, dt: 1 / 60 };
@@ -510,36 +510,6 @@ test('F62: a tall card lifts the centre; a short one does not', () => {
   assert.ok(Math.abs((flat.t + flat.b) / 2 - 400) < 1e-6);
 });
 
-test('F110: the aim to follow switch has no discontinuity (shoulder pose blends into a moving follow goal)', () => {
-  const shoulder = { pos: { x: 3.1, y: -1.2, z: 2.1 }, tgt: { x: 1.5, y: 8, z: -0.7 } };
-  const thrown = body('boule', 2.05, 0.45, 0, 6, { z: 1, state: 'airborne', vz: 4 });
-  const jack = body('jack', 2, 8, 0, 0, { state: 'resting' });
-  const dt = 1 / 60, jumps = (a, b) => [Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y, a.pos.z - b.pos.z), Math.hypot(a.tgt.x - b.tgt.x, a.tgt.y - b.tgt.y, a.tgt.z - b.tgt.z)];
-  const goalAt = (f) => { const c = cameraFromFrame(f, () => 0); return { pos: c.pos, tgt: c.tgt }; };
-  let f = frameMoving([thrown, jack], jack, { ...OPTS, thrown }, null);
-  let goal = goalAt(f);
-  const cut = jumps(shoulder, goal); // what copying the goal pose does: one frame
-  assert.ok(cut[0] > 1 && cut[1] > 3, 'the follow goal really is far from the shoulder pose at release');
-  let b = blendStart(shoulder, goal), prev = shoulder, maxPos = 0, maxTgt = 0, maxGoalPos = 0, maxGoalTgt = 0, prevGoal = goal, settledAt = null;
-  for (let i = 1; i <= 120; i++) {
-    thrown.x += thrown.vx * dt; thrown.y += thrown.vy * dt; thrown.z = Math.max(0.04, thrown.z + thrown.vz * dt); thrown.vz -= 9.8 * dt;
-    f = frameMoving([thrown, jack], jack, { ...OPTS, thrown }, f);
-    goal = goalAt(f);
-    const r = blendStep(b, goal, dt);
-    b = r.b;
-    const [dp, dg] = jumps(prev, r.pose), [gp, gt] = jumps(prevGoal, goal);
-    maxPos = Math.max(maxPos, dp); maxTgt = Math.max(maxTgt, dg); maxGoalPos = Math.max(maxGoalPos, gp); maxGoalTgt = Math.max(maxGoalTgt, gt);
-    if (i === 1) assert.ok(jumps(shoulder, r.pose)[0] < 0.2 && jumps(shoulder, r.pose)[1] < 0.5, 'the first frame stays at the shoulder pose');
-    if (r.done && settledAt === null) settledAt = i * dt;
-    prev = r.pose; prevGoal = goal;
-  }
-  assert.ok(maxPos < 0.25 && maxTgt < 0.3, `no per-frame jump above 0.25 m / 0.3 m (pos ${maxPos.toFixed(3)}, tgt ${maxTgt.toFixed(3)}); a cut is ${cut[0].toFixed(2)} / ${cut[1].toFixed(2)} m`);
-  assert.ok(maxPos < cut[0] / 4 && maxTgt < cut[1] / 4, 'far smoother than a cut');
-  assert.ok(settledAt !== null && settledAt >= 0.25 && settledAt <= 1.0, `the blend settles in a short time (${settledAt})`);
-  const end = jumps(prev, goal);
-  assert.ok(end[0] < 0.02 && end[1] < 0.02, 'and lands exactly on the follow goal');
-});
-
 test('F110: a goal that jumps at one moment (aim yaw change) is followed without a jump', () => {
   const g0 = { pos: { x: 3.33, y: -1.06, z: 2.09 }, tgt: { x: 0.73, y: 7.9, z: -0.7 } }, g1 = { pos: { x: 3.1, y: -1.2, z: 2.09 }, tgt: { x: 1.5, y: 8, z: -0.7 } };
   let st = null, prev = g0, maxTgt = 0;
@@ -552,24 +522,24 @@ test('F110: a goal that jumps at one moment (aim yaw change) is followed without
   assert.ok(Math.abs(prev.tgt.x - 1.5) < 0.01 && Math.abs(prev.pos.x - 3.1) < 0.01, 'and settles on the new goal');
 });
 
-test('F122: the blend from the shoulder view stays clear of the thrower head and is continuous', () => {
+test('F122: after the throw the camera is one spring from the shoulder pose to a goal behind and beside the boule', () => {
   const shoulder = { pos: { x: 3.1, y: -1.2, z: 2.1 }, tgt: { x: 1.5, y: 8, z: -0.7 } };
-  const head = { x: 2, y: 1, z: 1.65 }, side = { x: 1, y: 0 }, dt = 1 / 60;
-  const dist = (p) => { const cz = Math.max(head.z - HEAD_CLEAR.drop, Math.min(head.z, p.z)); return Math.hypot(p.x - head.x, p.y - head.y, p.z - cz); };
-  for (const goalPos of [{ x: 2, y: 1, z: 1.65 }, { x: 2, y: 1.2, z: 1.1 }, { x: 2.3, y: 0.9, z: 1.7 }]) { // goals straight through the head: the worst case
-    const goal = { pos: goalPos, tgt: { x: 2, y: 9, z: 0.5 } };
-    let b = blendStart(shoulder, goal), prev = shoulder.pos, minD = 9, maxStep = 0;
-    for (let i = 0; i < 120; i++) {
-      const r = blendStep(b, goal, dt); b = r.b;
-      const raw = dist(r.pose.pos);
-      const c = clearHead(r.pose.pos, head, side);
-      minD = Math.min(minD, dist(c));
-      maxStep = Math.max(maxStep, Math.hypot(c.x - prev.x, c.y - prev.y, c.z - prev.z));
-      assert.ok(raw >= 0); prev = c;
-    }
-    assert.ok(minD >= HEAD_CLEAR.r - 1e-6, `min distance ${minD.toFixed(3)} >= ${HEAD_CLEAR.r}`);
-    assert.ok(maxStep < 0.3, `per-frame step ${maxStep.toFixed(3)} m`);
+  const T = CAM.thrown, head = { x: 2, y: 1, z: 1.65 }, dt = 1 / 60;
+  let st = null, prev = shoulder, prevH = null, rev = 0, maxStep = 0, maxTgt = 0, minHead = 9, goal;
+  for (let i = 0; i < 360; i++) {
+    const bx = 2, by = 1 + Math.min(i, 120) * 0.075 + Math.min(100, Math.max(0, i - 120)) * 0.01, bz = Math.max(0.04, 1.2 + 0.5 * Math.sin(Math.min(i, 120) / 120 * Math.PI) * 3); // the boule leaves the hand, flies, then rolls
+    goal = { pos: { x: bx + T.side, y: by - T.behind, z: T.up + 0.5 * bz }, tgt: { x: bx, y: by + T.ahead, z: bz } };
+    st = followStep(st, shoulder, goal, dt, T);
+    if (i === 0) assert.ok(Math.hypot(st.pos.x - shoulder.pos.x, st.pos.y - shoulder.pos.y, st.pos.z - shoulder.pos.z) < 0.15, 'starts at the shoulder pose');
+    maxStep = Math.max(maxStep, Math.hypot(st.pos.x - prev.pos.x, st.pos.y - prev.pos.y, st.pos.z - prev.pos.z));
+    maxTgt = Math.max(maxTgt, Math.hypot(st.tgt.x - prev.tgt.x, st.tgt.y - prev.tgt.y, st.tgt.z - prev.tgt.z));
+    minHead = Math.min(minHead, Math.hypot(st.pos.x - head.x, st.pos.y - head.y, st.pos.z - head.z));
+    const dx = st.pos.x - prev.pos.x, dy = st.pos.y - prev.pos.y;
+    if (Math.hypot(dx, dy) > 1e-4) { const h = Math.atan2(dy, dx); if (prevH !== null && Math.abs(Math.atan2(Math.sin(h - prevH), Math.cos(h - prevH))) > 1.5) rev++; prevH = h; }
+    prev = st;
   }
-  const out = clearHead({ x: 5, y: 5, z: 2 }, head, side);
-  assert.deepEqual(out, { x: 5, y: 5, z: 2 }, 'far away: untouched');
+  assert.ok(maxStep <= 0.15 && maxTgt <= 0.15, `per-frame steps ${maxStep.toFixed(3)} / ${maxTgt.toFixed(3)} m`);
+  assert.equal(rev, 0, 'no direction reversal in the top-down path');
+  assert.ok(minHead >= 0.5, `camera to head ${minHead.toFixed(2)} m`);
+  assert.ok(Math.hypot(prev.pos.x - goal.pos.x, prev.pos.y - goal.pos.y, prev.pos.z - goal.pos.z) < 0.1, 'converges to the goal');
 });
