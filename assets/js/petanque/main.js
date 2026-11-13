@@ -1,6 +1,6 @@
 // Game loop: terrain, world, renderer, rules, AI, toss input (donnée throw), audio and HUD wired together.
 import { C } from './constants.js';
-import { court, setCourt, resetCourt, baseYaw, ahead } from './court.js';
+import { court, setCourt, resetCourt, baseYaw, ahead, facingTo } from './court.js';
 import { cameraStyle, tvVariant, clampViewOffset, panViewOffset, walkSubject, freeViewRect } from './camera.js';
 import { createDirector } from './director.js';
 import { mulberry32 } from './rng.js';
@@ -986,10 +986,15 @@ function boot() {
   function humanTurn(kind, playerId, text) {
     tossFace = null; // F99
     pending = { kind, playerId };
+    { // F109: every human turn starts facing the jack (straight ahead for the cochonnet throw), whatever the last aim or walk left
+      const jk = kind === 'jack' ? null : jackBody();
+      aimYaw = facingTo(court.circle, jk && !jk.dead ? jk : null, AIM_MAX); throwerYaw = aimYaw; shoulderCam.yaw = aimYaw;
+    }
     hideHolding(); // F11: aiming starts, so the who-holds banner goes
     renderer.clearMeasure(); // aiming starts: the between-throws lines go (D07)
     renderer.showJackZone(kind === 'jack');
-    enterCircle(playerId, aimYaw, undefined, kind);
+    const arrived = enterCircle(playerId, aimYaw, undefined, kind);
+    if (debug && params.has('aimlog')) arrived.then(() => { const jk = jackBody(), c = cast.get(playerId), t = jk && !jk.dead ? Math.atan2(jk.x - court.circle.x, jk.y - court.circle.y) : baseYaw(); console.log('[aimlog] turnstart ' + JSON.stringify({ kind, chYawDeg: +(c.yaw / DEG).toFixed(1), jackBearingDeg: +(t / DEG).toFixed(1), aimYawDeg: +(aimYaw / DEG).toFixed(1) })); });
     enableControls(true);
     renderer.setJackArrow(kind !== 'jack'); // the chevron guides a boule throw only, never the cochonnet's (D17)
     setView('shoulder');

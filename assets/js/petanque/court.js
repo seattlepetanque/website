@@ -31,6 +31,17 @@ export const resetCourt = () => setCourt(DEFAULT_CIRCLE, 1);
 
 // Yaw (atan2(dx, dy): 0 faces +y) of straight ahead
 export const baseYaw = (dir = court.dir) => (dir < 0 ? Math.PI : 0);
+// F109: the yaw a thrower at `circle` starts a turn facing: the bearing to `target` (the jack), kept within `maxOff` of straight
+// ahead; straight ahead (baseYaw) without a target. The aim camera, the character and the aim all start from this one value.
+export function facingTo(circle, target, maxOff = Math.PI / 2, dir = court.dir) {
+  const base = baseYaw(dir);
+  if (!target || !Number.isFinite(target.x) || !Number.isFinite(target.y)) return base;
+  const dx = target.x - circle.x, dy = target.y - circle.y;
+  if (Math.hypot(dx, dy) < 1e-6) return base;
+  let d = Math.atan2(dx, dy) - base;
+  d = Math.atan2(Math.sin(d), Math.cos(d));
+  return base + Math.max(-maxOff, Math.min(maxOff, d));
+}
 export const forward = (yaw = baseYaw()) => ({ x: Math.sin(yaw), y: Math.cos(yaw) });
 // The point `dist` metres ahead of the circle along the court (and `lateral` to the thrower's right)
 export function ahead(dist, lateral = 0, c = court.circle, dir = court.dir) {
