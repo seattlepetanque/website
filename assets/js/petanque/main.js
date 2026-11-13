@@ -2,7 +2,7 @@
 import './debug.js'; // F111: first, so globalThis.__dbg is set before anything reads `debug`
 import { debugFloatplane, debugHooks, runDebugScenario } from './debug-scenarios.js'; // F111: only called under `if (debug)`, so production drops it
 import { C } from './constants.js';
-import { court, setCourt, resetCourt, baseYaw, ahead } from './court.js';
+import { court, setCourt, resetCourt, baseYaw, ahead, facingTo } from './court.js';
 import { cameraStyle, tvVariant, clampViewOffset, panViewOffset, walkSubject, freeViewRect } from './camera.js';
 import { createDirector } from './director.js';
 import { mulberry32 } from './rng.js';
@@ -12,7 +12,7 @@ import { createRenderer } from './render.js';
 import {
   createMatch, defaultPlayers, teamNamesFor, validPartner, opponentIds, apply, nextTeam, playersWithBoules, holdingTeam, meneResult, jackFault, jackPlaceValid, jackPlaceFault, gapM, fmtCm, deadJackText, jackGap, jackTooClose, TIE_EPS,
 } from './rules.js';
-import { detectAnnouncement } from './announce.js';
+import { detectAnnouncement, createCarreauWatcher } from './announce.js';
 import { createAnnouncer } from './announce-view.js';
 import { createHud, createHoldIcons } from './hud.js';
 import { settings } from './settings.js';
@@ -32,6 +32,10 @@ import { pickWaitingSlot, waitingSlots } from './waiting.js';
 import { attachModels } from './models.js';
 import { createGroundView } from './groundview.js';
 import { isPhone } from './scenery.js';
+import { probeGpu, assessGpu, weakDevice, browserName, gpuMessage } from './gpuinfo.js'; // F102
+import { classifyBootError } from './boot-error.js'; // F114
+import { LEVELS, levelSettings, initialLevel, wantAntialias, createAutoQuality } from './quality.js'; // F103
+import { describe as describeText, quip as quipText, faultText, spotText as spotTextOf, ownerName as ownerNameOf, gapText as gapTextOf, meneWinNote } from './commentary-text.js';
 import { PERSONALITIES, CAST_IDS, specFor, pickStance, stanceFor, STAND_BEYOND, createCommentary, whoKind, composeSuggestion } from './personalities.js';
 
 let TEAM_NAMES = teamNamesFor('pierre'); // F45: reset in startGame for the chosen partner
@@ -75,12 +79,22 @@ const say = (text) => { if (status) status.textContent = text; };
 
 
 function boot() {
+  if (debug && params.has('bootfail')) throw new Error(params.get('bootfail') === 'webgl' ? 'WebGL is not available in this browser, so the 3D game cannot start.' : 'debug boot failure'); // F114: ?debug&bootfail=webgl|other shows each boot message
   const seedParam = params.get('seed');
   const seed = seedParam !== null && seedParam !== '' && !isNaN(+seedParam)
     ? +seedParam : Math.floor(Math.random() * 1e9);
+  // F102: the game needs hardware WebGL. Production always enforces it; ?debug skips the check (headless Chrome uses SwiftShader),
+  // and ?debug&fakegpu=SwiftShader|none forces the message path.
+  const fakeGpu = debug ? params.get('fakegpu') : null;
+  const gpuCheck = assessGpu(fakeGpu ? { hasContext: fakeGpu !== 'none', renderer: fakeGpu === 'none' ? '' : fakeGpu } : probeGpu(document));
+  if (!gpuCheck.ok && !(debug && !fakeGpu)) { showGpuMessage(gpuCheck); return; }
+  // F102/F104: soft hints (little memory or few cores) start Auto in Low graphics; ?debug&weak forces the hint, &gfx=high|auto|low the setting
+  const weak = weakDevice(navigator) || !!(debug && params.has('weak'));
+  if (debug && ['high', 'auto', 'low'].includes(params.get('gfx'))) settings.graphics = params.get('gfx');
+  let level = initialLevel(settings.graphics, weak);
   const terrain = createTerrain(seed);
   const world = createWorld(terrain, mulberry32(seed ^ 0x9e3779b9));
-  const renderer = createRenderer(canvas, terrain);
+  const renderer = createRenderer(canvas, terrain, { antialias: wantAntialias(settings.graphics, weak), quality: levelSettings(level) });
   const aiRand = mulberry32(seed ^ 0x51ed270b);
   const stanceRand = mulberry32(seed ^ 0x6a09e667); // the AI's crouch-or-stand pick, one per throw
   const talk =createCommentary(mulberry32(seed ^ 0x7a1c0de5)); // personality lines, seeded like everything else
@@ -109,6 +123,7 @@ function boot() {
   let token = 0; // bumped on each new game so stale timers are ignored
   let yellowDone = false; // ?debug&yellow forces one yellow card
   let flying = null; // body being tracked
+  let carreauW = null; // F107
   let throwEvents = []; // physics events of the current throw (hits, for commentary)
   let preThrow = new Map(); // id -> { x, y } of boules before the current throw
   let pending = null; // { kind, playerId } while waiting for the human to throw
@@ -153,6 +168,7 @@ function boot() {
   const KEEP_YAW = 35 * DEG; // E12 (see setAdjust); the pan limits live in camera.js (VIEW_PAN, F48)
   let adjusting = false, viewAnim = 0;
   const audio = createAudio();
+  audio.setAmbientScale(levelSettings(level).ambient);
   const announcer = createAnnouncer(root, { audio }); // F61
   if (debug && ['carreau', 'biberon'].includes(params.get('announce'))) { // ?debug&announce=carreau|biberon: preview at page load, and again every 4 s
     const kind = params.get('announce');
@@ -502,6 +518,7 @@ function boot() {
     onExit: () => endGame(), // F93: the game-over card's Exit leaves the same way as End game
     onChoose: (id) => beginTurn(id),
     onHintDismiss: () => store(HINT_KEY, '1'),
+    needsReload: () => wantAntialias(settings.graphics, weak) !== renderer.antialias, // F104: antialiasing is fixed at context creation
   });
   const say2 = hud.say;
 
@@ -971,10 +988,15 @@ function boot() {
   function humanTurn(kind, playerId, text) {
     tossFace = null; // F99
     pending = { kind, playerId };
+    { // F109: every human turn starts facing the jack (straight ahead for the cochonnet throw), whatever the last aim or walk left
+      const jk = kind === 'jack' ? null : jackBody();
+      aimYaw = facingTo(court.circle, jk && !jk.dead ? jk : null, AIM_MAX); throwerYaw = aimYaw; shoulderCam.yaw = aimYaw;
+    }
     hideHolding(); // F11: aiming starts, so the who-holds banner goes
     renderer.clearMeasure(); // aiming starts: the between-throws lines go (D07)
     renderer.showJackZone(kind === 'jack');
-    enterCircle(playerId, aimYaw, undefined, kind);
+    const arrived = enterCircle(playerId, aimYaw, undefined, kind);
+    if (debug && params.has('aimlog')) arrived.then(() => { const jk = jackBody(), c = cast.get(playerId), t = jk && !jk.dead ? Math.atan2(jk.x - court.circle.x, jk.y - court.circle.y) : baseYaw(); console.log('[aimlog] turnstart ' + JSON.stringify({ kind, chYawDeg: +(c.yaw / DEG).toFixed(1), jackBearingDeg: +(t / DEG).toFixed(1), aimYawDeg: +(aimYaw / DEG).toFixed(1) })); });
     enableControls(true);
     renderer.setJackArrow(kind !== 'jack'); // the chevron guides a boule throw only, never the cochonnet's (D17)
     setView('shoulder');
@@ -1174,16 +1196,7 @@ function boot() {
     shoulderCam.yaw = aimYaw;
   }
 
-  // Status line while an AI shows its spot: the factual label, then the player's own line.
-  function spotText(player, choice, kind) {
-    const key = choice.labelKey || { event: kind === 'jack' ? 'spotJack' : 'spotPoint' };
-    const target = key.target === 'jack' ? 'the jack' : player.team === 1 ? 'your boule' : 'their boule';
-    const facts = (choice.label || `${player.name} picks ${player.id === 'odette' ? 'her' : 'his'} spot`) + '.';
-    // the tactical reason (D13) first, then the generic line for the event
-    const why = choice.why;
-    const quip = (why && why.code !== 'mistake' && talk.say(player.id, 'why.' + why.code, { target, ...why })) || talk.say(player.id, key.event, { target });
-    return quip ? `${facts} ${quip}` : facts;
-  }
+  const spotText = (player, choice, kind) => spotTextOf(player, choice, kind, talk);
 
   async function aiBoule(player) {
     hideHolding(); // F11: aiming starts, so the who-holds banner goes
@@ -1771,7 +1784,7 @@ function boot() {
   function snapshot() {
     const j = jackBody();
     return {
-      jack: { x: j.x, y: j.y, dead: j.dead, spot: j.dead && Number.isFinite(j.outX) ? { x: j.outX, y: j.outY } : null },
+      jack: j ? { x: j.x, y: j.y, dead: j.dead, spot: j.dead && Number.isFinite(j.outX) ? { x: j.outX, y: j.outY } : null } : null,
       boules: world.bodies.filter((b) => b.kind === 'boule').map((b) => ({
         id: b.id, team: b.team, owner: b.owner, x: b.x, y: b.y, dead: b.dead,
       })),
@@ -1781,75 +1794,20 @@ function boot() {
   // Commentary for the throw that just settled; evs = its physics events
   let lastKind = null; // 'dead' | 'carreau' | 'great' | null, set by describe() for the personality lines
   function describe(was, evs) {
-    const j = jackBody();
-    lastKind = null;
-    if (j && j.dead) return 'The jack is out: dead jack.';
-    if (was.kind === 'jack') return `Jack is ${jackGap(was, match && match.geometry).toFixed(1)} m out.`; // F75: edge to edge
-    if (j && match && jackTooClose(j, match.geometry)) return 'The jack is too close: less than 3 m from the circle, dead jack.'; // F76, Art. 9.3
-    if (was.dead) lastKind = 'dead';
-    if (was.dead) return `${ownerName(was)} boule is out: dead boule.`;
-    const gap = Math.hypot(was.x - j.x, was.y - j.y) - was.r - j.r;
-    const base = `${ownerName(was)} boule is ${gapText(was, j)} from the jack.`;
-    // carreau: the shooter hit an opposing boule, knocked it away and took its place
-    for (const ev of evs) {
-      if (ev.type !== 'hit' || (ev.a !== was.id && ev.b !== was.id)) continue;
-      const tid = ev.a === was.id ? ev.b : ev.a;
-      const t = world.bodies.find((b) => b.id === tid), from = preThrow.get(tid);
-      if (!t || t.kind !== 'boule' || t.team === was.team || !from) continue;
-      const moved = t.dead || Math.hypot(t.x - from.x, t.y - from.y) > 0.15;
-      if (moved && Math.hypot(was.x - from.x, was.y - from.y) < 0.3) {
-        lastKind = 'carreau';
-        return `Carreau! ${ownerName(was)} boule replaces the target.`;
-      }
-    }
-    if (gap < 0.02) lastKind = 'great';
-    if (gap < 0.02) return `Biberon! ${ownerName(was)} boule is touching the jack.`;
-    return base;
+    const r = describeText(was, evs, { jack: jackBody(), match, bodies: world.bodies, preThrow });
+    lastKind = r.kind;
+    return r.text;
   }
-  // F06: edge-to-edge gap, the same figure as every measuring label, card and status line
-  const gapText = (b, j) => fmtCm(gapM(b, j));
-  const ownerName = (b) => {
-    const p = match && match.players.find((q) => q.id === b.owner);
-    return p ? (p.isHuman ? 'Your' : p.name + "'s") : 'The';
-  };
+  const gapText = gapTextOf;
+  const ownerName = (b) => ownerNameOf(b, match && match.players);
 
-  // One or two personality lines for the throw that just settled (null when nothing fits)
   const pick = (team) => {
     const ids = match.players.filter((p) => p.team === team && !p.isHuman).map((p) => p.id);
     return ids[Math.floor(chance() * ids.length)] || null;
   };
-  function quip(was, prevHold) {
-    const j = jackBody(), now = holdingTeam(match.jack, match.boules);
-    const gap = j ? Math.hypot(was.x - j.x, was.y - j.y) - was.r - j.r : 9;
-    const owner = match.players.find((p) => p.id === was.owner);
-    if (!owner) return '';
-    const gained = now === was.team && prevHold !== was.team;
-    let ev = lastKind;
-    if (!ev) ev = gained || gap < 0.25 ? 'good' : now !== was.team && gap > 0.6 ? 'miss' : null;
-    if (!ev) return '';
-    const out = [];
-    if (owner.isHuman) { // you have no catchphrases: your partner cheers your points, a neutral line otherwise
-      const cheer = gained || ev === 'great' || ev === 'carreau';
-      out.push(cheer ? talk.say(partner, 'ownScores') : talk.line('you', ev));
-    } else out.push(talk.say(owner.id, ev));
-    if (gained && chance() < 0.5) { // the other side reacts to losing the point
-      const foe = pick(1 - was.team);
-      if (foe && foe !== owner.id) out.push(talk.say(foe, 'oppScores'));
-    }
-    return out.filter(Boolean).join(' ');
-  }
+  const quip = (was, prevHold) => quipText(was, prevHold, { jack: jackBody(), match, kind: lastKind, talk, partner, chance });
 
   // ---- Invalid jack: the other team places it by hand ----
-  function faultText(f) {
-    if (!f) return '';
-    const d = f.dist.toFixed(1);
-    if (f.reason === 'short') return `Too short: ${d} m.`;
-    if (f.reason === 'far') return `Too far: ${d} m.`;
-    if (f.reason === 'line') return `Out over the ${f.side} line.`;
-    if (f.reason === 'end') return `Too close to the end string: ${f.gap.toFixed(1)} m, it needs ${f.margin} m.`;
-    if (f.back) return 'Went over a line and came back.';
-    return 'Out of bounds.';
-  }
   // Wide view over the whole 6 to 10 m zone, with the legal-zone arcs
   function placeView() {
     renderer.showJackZone(true, 'place');
@@ -2011,7 +1969,8 @@ function boot() {
     if (was.kind === 'boule' && !instant) { // F61: CARREAU / BIBERON overlay (the sim keeps running)
       try {
         const kind = detectAnnouncement({ before: preThrow, bodies: world.bodies, shooterId: was.id, events: evs });
-        if (kind) announcer.show(kind);
+        const early = carreauW && carreauW.fired && carreauW.shooterId === was.id && carreauW.preThrow === preThrow; // F107: announced mid-throw
+        if (kind && !(early && kind === 'carreau')) announcer.show(kind);
       } catch (err) { console.error('[announce]', err); }
     }
     if (was.kind === 'jack') {
@@ -2117,8 +2076,7 @@ function boot() {
     else if (!jackOut && !r.void && r.measured && r.measured.length) {
       // report the winning boule's gap, the figure on its measuring label
       const win = world.bodies.find((b) => b.id === r.measured[0].id);
-      const special = /^(Carreau|Biberon)/.test(note) ? note + ' ' : '';
-      if (win) note = `${closeCall ? 'Close call! ' : ''}${special}Closest: ${ownerName(win)} boule, ${gapText(win, j)} from the jack.`;
+      if (win) note = meneWinNote({ note, closeCall, win, jack: j, players: match.players });
     }
     refreshHud(null);
     // F56: in a slow mène the outcome view and the card wait for the click (the sim clock is held); the ring, jack return, gathering and
@@ -2380,6 +2338,17 @@ function boot() {
     if (!p && quickPending && settings.mode === 'quick') applyQuick();
   }
 
+  // F103/F104: graphics quality. High = level 0, Low = the last level, Auto starts at 0 (Low on a weak device) and the
+  // controller steps down one level when frames stay slow; never back up. Changing the setting applies at once.
+  let auto = settings.graphics === 'auto' ? createAutoQuality(level) : null, qLast = 0;
+  function applyLevel(l) { level = l; const s = levelSettings(l); renderer.setQuality(s); audio.setAmbientScale(s.ambient); }
+  settings.onGraphicsChange((g) => { auto = g === 'auto' ? createAutoQuality(initialLevel(g, weak)) : null; applyLevel(initialLevel(g, weak)); });
+  function qualityTick(now) {
+    const ms = now - qLast; qLast = now;
+    if (!auto) return;
+    const next = auto.frame(ms, !pausedNow && !document.hidden);
+    if (next !== null) { applyLevel(next); if (debug) console.info('[quality] auto stepped down to', next, LEVELS[next].name); }
+  }
   // Fixed timestep loop (?debug&timerframes drives it from timers, for headless screenshots under virtual time)
   const nextFrame = debug && params.has('timerframes') ? (f) => setTimeout(() => f(performance.now()), 16) : requestAnimationFrame;
   // E21 hard cap: a throw that hasn't settled after hardCapSeconds of game time (the clock stops while paused) has
@@ -2396,12 +2365,17 @@ function boot() {
     last = now;
     if (pauseHold && ((pending && now > 1500) || now > 3500)) { pauseHold = false; if (playing) userPaused = true; syncPausedUI(); }
     syncPause();
+    qualityTick(now);
     clock.tick(dt * 1000);
     acc += dt;
     if ((!playing || userPaused) && match) acc = 0; // paused: the game waits
     let n = 0;
     while (acc >= C.dt && n < MAX_STEPS && !(freezeAt && world.t >= freezeAt)) {
       world.step(); acc -= C.dt; n++;
+      if (flying && flying.kind === 'boule' && !instant && match) { // F107: carreau overlay the moment it happens, once per throw
+        if (!carreauW || carreauW.shooterId !== flying.id || carreauW.preThrow !== preThrow) { carreauW = createCarreauWatcher({ before: preThrow, shooterId: flying.id }); carreauW.preThrow = preThrow; }
+        try { if (carreauW.feed(world.bodies, world.events)) announcer.show('carreau'); } catch (err) { console.error('[carreau]', err); }
+      }
       if (flying) {
         if (flying !== capBody) { capBody = flying; capT0 = world.t; }
         if (!world.settled() && world.t - capT0 > C.hardCapSeconds) hardCap(); // E21: never roll for ever
@@ -2451,7 +2425,7 @@ function boot() {
     get fetchJob() { return fetchJob; }, set fetchJob(v) { fetchJob = v; },
     get inCircle() { return inCircle; }, set inCircle(v) { inCircle = v; },
     get ringCarry() { return ringCarry; }, set ringCarry(v) { ringCarry = v; },
-    get pausedNow() { return pausedNow; }, get aimYaw() { return aimYaw; },
+    get pausedNow() { return pausedNow; }, get level() { return level; }, get aimYaw() { return aimYaw; },
   } : null;
   if (debug) debugFloatplane(dbgCtx);
   aimView();
@@ -2463,31 +2437,72 @@ function boot() {
   if (!(debug && runDebugScenario(dbgCtx))) toSetup();
 }
 
-// Friendly message in the game area when the game cannot start (no WebGL, etc.)
+// Friendly message in the game area when the game cannot start: WebGL missing (F114: 'webgl'), or any other boot failure
 function showFallback(err) {
+  const webgl = classifyBootError(err) === 'webgl';
   const msg = err && err.message ? err.message : String(err);
-  say('Sorry, the game could not start: ' + msg);
+  say(webgl ? 'Sorry, the game could not start: ' + msg : 'Something went wrong starting the game. Please reload the page.');
   if (!root) return;
   for (const el of root.querySelectorAll('canvas, .petanque-hud, .petanque-controls')) el.hidden = true;
   const box = document.createElement('div');
   box.className = 'petanque-fallback';
   const h = document.createElement('p');
   h.className = 'petanque-fallback-title';
-  h.textContent = 'The pétanque court is closed for now';
   const p = document.createElement('p');
-  p.textContent = 'This game needs WebGL 3D graphics, and your browser or device could not start them. ' +
-    'Try another browser or turn on hardware acceleration. In the meantime, ';
+  if (webgl) {
+    h.textContent = 'The pétanque court is closed for now';
+    p.textContent = 'This game needs WebGL 3D graphics, and your browser or device could not start them. ' +
+      'Try another browser or turn on hardware acceleration. In the meantime, ';
+  } else {
+    h.textContent = 'Something went wrong starting the game. Please reload the page.';
+    p.textContent = 'In the meantime, ';
+    const det = document.createElement('details'); // F114: the error text, for support
+    det.className = 'petanque-fallback-details';
+    const sum = document.createElement('summary');
+    sum.textContent = 'Error details';
+    const pre = document.createElement('pre');
+    pre.textContent = msg;
+    det.append(sum, pre);
+    box.append(det);
+  }
   const a = document.createElement('a');
   a.href = root.dataset.linksUrl || '/links/';
   a.textContent = 'read up on pétanque and find a real court on our Links page';
   p.append(a, '.');
-  box.append(h, p);
+  box.prepend(h, p);
+  root.insertBefore(box, root.firstChild);
+}
+
+// F102: the hardware-WebGL requirement message, in the game area: what is needed, what was detected, how to fix it
+function showGpuMessage(a) {
+  const m = gpuMessage(a, browserName(navigator.userAgent));
+  say(m.title + '. ' + m.lead);
+  if (!root) return;
+  for (const el of root.querySelectorAll('canvas, .petanque-hud, .petanque-controls')) el.hidden = true;
+  const box = document.createElement('div');
+  box.className = 'petanque-fallback petanque-gpu';
+  const h = document.createElement('p');
+  h.className = 'petanque-fallback-title';
+  h.textContent = m.title;
+  const lead = document.createElement('p');
+  lead.textContent = m.lead;
+  const det = document.createElement('p');
+  det.className = 'petanque-gpu-detected';
+  det.textContent = m.detected;
+  const ul = document.createElement('ul');
+  for (const t of m.howto) { const li = document.createElement('li'); li.textContent = t; ul.append(li); }
+  const p = document.createElement('p');
+  const link = document.createElement('a');
+  link.href = root.dataset.linksUrl || '/links/';
+  link.textContent = 'read up on pétanque and find a real court on our Links page';
+  p.append('In the meantime, ', link, '.');
+  box.append(h, lead, det, ul, p);
   root.insertBefore(box, root.firstChild);
 }
 
 try {
   boot();
 } catch (err) {
+  console.error(err); // F114: always logged, before the message is drawn
   showFallback(err);
-  console.error(err);
 }

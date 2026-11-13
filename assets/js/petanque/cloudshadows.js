@@ -47,10 +47,12 @@ export function makeCloudShadows(seed = 1) {
   const p = cloudParams(seed);
   const uniforms = {
     cloudT: { value: 0 },
+    cloudK: { value: 1 }, // F103: 0 turns the shadows off (low graphics)
     cloudW: { value: p.waves.map(([kx, ky, ph, amp]) => new THREE.Vector4(kx, ky, ph, amp)) },
   };
   const glsl = `
 uniform float cloudT;
+uniform float cloudK;
 uniform vec4 cloudW[${CLOUD.waves}];
 varying vec2 vCsXY;
 float cloudShadowAt(vec2 q) {
@@ -68,6 +70,7 @@ float cloudShadowAt(vec2 q) {
       material.onBeforeCompile = (sh, renderer) => {
         if (prev) prev(sh, renderer);
         sh.uniforms.cloudT = uniforms.cloudT;
+        sh.uniforms.cloudK = uniforms.cloudK;
         sh.uniforms.cloudW = uniforms.cloudW;
         sh.vertexShader = sh.vertexShader
           .replace('#include <common>', '#include <common>\nvarying vec2 vCsXY;')
@@ -80,7 +83,7 @@ float cloudShadowAt(vec2 q) {
         sh.fragmentShader = sh.fragmentShader
           .replace('#include <common>', '#include <common>\nprecision highp float;\n' + glsl)
           .replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
-  diffuseColor.rgb *= 1.0 - cloudShadowAt(vCsXY) * vec3(${CLOUD.strength.map(f).join(', ')});`);
+  diffuseColor.rgb *= 1.0 - cloudShadowAt(vCsXY) * cloudK * vec3(${CLOUD.strength.map(f).join(', ')});`);
       };
       const key = 'f68cloud' + (nPatched++);
       material.customProgramCacheKey = () => key;

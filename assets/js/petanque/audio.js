@@ -160,7 +160,7 @@ export function createAudio(opts = {}) {
     lim.attack.value = L.attack; lim.release.value = L.release;
     master.connect(lim).connect(ctx.destination);
     white = makeWhite(ctx);
-    try { amb = createAmbient(ctx, master); } catch (e) { amb = null; }
+    try { amb = createAmbient(ctx, master); if (ambScale !== 1) amb.setScale(ambScale); } catch (e) { amb = null; }
     syncAmb();
   }
 
@@ -551,6 +551,9 @@ export function createAudio(opts = {}) {
 
   // F66: busy = a human aim/throw moment (no rare tonal events start), slow = slow mode
   function setAmbientState(st) { if (amb && amb.setState) amb.setState(st); }
+  // F103: ambience volume factor 0..1 (low graphics); remembered if the audio is not unlocked yet
+  let ambScale = 1;
+  function setAmbientScale(k) { ambScale = k; if (amb && amb.setScale) amb.setScale(k); }
 
   function isMuted() {
     return muted;
@@ -570,5 +573,5 @@ export function createAudio(opts = {}) {
     return btn;
   }
 
-  return { unlock, setPaused, handleEvents, update, accent, fanfare, play, setMuted, isMuted, playAmbient, setEngine, setAmbientState, createMuteButton };
+  return { unlock, setPaused, handleEvents, update, accent, fanfare, play, setMuted, isMuted, playAmbient, setEngine, setAmbientState, setAmbientScale, createMuteButton };
 }

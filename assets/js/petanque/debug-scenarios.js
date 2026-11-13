@@ -42,6 +42,7 @@ export function debugHooks(ctx) {
       audio,
       setPlaying, clock, pauseGame, endGame,
       get paused() { return ctx.pausedNow; },
+      get quality() { return ctx.level; },
       get pending() { return ctx.pending; },
       cast,
       get aimYaw() { return ctx.aimYaw; },

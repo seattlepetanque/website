@@ -152,15 +152,18 @@ function makeEnvMap(renderer, envFloor) {
 
 const smooth = (t) => t * t * (3 - 2 * t);
 
-export function createRenderer(canvas, terrain) {
+// init.antialias: fixed at context creation (F103: a WebGL context cannot change it later); init.quality: level settings (quality.js) applied at once
+export function createRenderer(canvas, terrain, init = {}) {
   let renderer;
+  const antialias = init.antialias !== false;
+  let pixelRatioMax = 2; // F103
   try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer = new THREE.WebGLRenderer({ canvas, antialias });
   } catch (e) {
     throw new Error('WebGL is not available in this browser, so the 3D game cannot start.');
   }
   if (!renderer.getContext()) throw new Error('WebGL is not available in this browser, so the 3D game cannot start.');
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelRatioMax));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -191,8 +194,9 @@ export function createRenderer(canvas, terrain) {
   const phoneShadows = isPhone(), shadowHalf = Number(debug ? dbgParam('shadowhalf') : null) || (phoneShadows ? 10 : 14);
   // F92: clamp to what the GPU supports; ?debug&shadowmap=N forces a size, &shadowtype=basic|pcf|soft picks the filter, &shadowhalf=M the half-width in metres
   const dbgMap = Number(debug ? dbgParam('shadowmap') : null) || 0;
-  const mapSize = Math.max(256, Math.min(dbgMap || (phoneShadows ? 1024 : 2048), renderer.capabilities.maxTextureSize || 2048));
-  sun.shadow.mapSize.set(mapSize, mapSize);
+  const baseHalf = shadowHalf, baseMap = Math.max(256, Math.min(dbgMap || (phoneShadows ? 1024 : 2048), renderer.capabilities.maxTextureSize || 2048));
+  let curHalf = shadowHalf;
+  sun.shadow.mapSize.set(baseMap, baseMap);
   const st = debug ? dbgParam('shadowtype') : null;
   if (st) renderer.shadowMap.type = { basic: THREE.BasicShadowMap, pcf: THREE.PCFShadowMap, soft: THREE.PCFSoftShadowMap }[st] ?? renderer.shadowMap.type;
   const sc = sun.shadow.camera;
@@ -211,7 +215,7 @@ export function createRenderer(canvas, terrain) {
     sunYAxis.crossVectors(sunZAxis, sunXAxis).normalize();
   };
   updateSunAxes();
-  const sunTexel = (2 * shadowHalf) / sun.shadow.mapSize.x;
+  let sunTexel = (2 * curHalf) / sun.shadow.mapSize.x; // F103: follows the quality level's map size and box
   const aimSun = (p) => {
     const px = p.dot(sunXAxis), py = p.dot(sunYAxis);
     const sx = Math.round(px / sunTexel) * sunTexel, sy = Math.round(py / sunTexel) * sunTexel;
@@ -542,9 +546,10 @@ export function createRenderer(canvas, terrain) {
     divotMeshes.push(m);
   }
   let divotNext = 0;
+  let divotsOn = true; // F103: off at Low (the discs read as shadows)
   function addDivot(x, y, r = 0.06) {
     const m = divotMeshes[divotNext++ % DIVOTS];
-    if (hides('decals')) return;
+    if (hides('decals') || !divotsOn) return;
     // F34: lay the disc on the slope (tangent to the ground there) so its whole span stays above it
     // F96: the plane is tangent to the MESH (surfH), then lifted until it clears the mesh at the centre and a ring of points
     // around it (the mesh is 5 cm triangles; the dented ground that terrain.sample() reports is up to 2 cm below it)
@@ -1592,7 +1597,7 @@ export function createRenderer(canvas, terrain) {
     } else if (reduce()) sepiaK = sepiaTarget;
     if (sepiaK <= 0 && !paused) { renderer.render(scene, camera); return; }
     const size = renderer.getDrawingBufferSize(tmpSize);
-    if (!sepiaRT) sepiaRT = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
+    if (!sepiaRT) sepiaRT = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: q.sepiaSamples });
     else if (sepiaRT.width !== size.x || sepiaRT.height !== size.y) sepiaRT.setSize(size.x, size.y);
     renderer.setRenderTarget(sepiaRT);
     renderer.render(scene, camera);
@@ -1709,7 +1714,7 @@ export function createRenderer(canvas, terrain) {
 
   function resize() {
     const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelRatioMax));
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     // keep the court in view on tall (phone) screens
@@ -1774,8 +1779,8 @@ export function createRenderer(canvas, terrain) {
     updateCamera(dt);
     if (!reduce()) lake.update(dt);
     floatplane.update(dt, camera, reduce());
-    sailboats.update(dt, reduce(), floatplane, edgeZ); // F64
-    butterflies.update(dt, reduce(), butterflies.busy); // F67, F81
+    if (sailboats.group.visible) sailboats.update(dt, reduce(), floatplane, edgeZ); // F64 (F103: not when switched off)
+    if (butterflies.group.visible) butterflies.update(dt, reduce(), butterflies.busy); // F67, F81
     clouds.update(dt, reduce()); // F68
     updatePreview();
     updateJackMark(dt);
@@ -1804,9 +1809,44 @@ export function createRenderer(canvas, terrain) {
     renderer.dispose();
   }
 
+  // F103: apply a quality level (quality.js levelSettings). Cheap to call again; only what changed is redone.
+  let q = { sepiaSamples: 4 };
+  const hidesPlayers = hides('players');
+  function setQuality(s) {
+    if (s.pixelRatioMax !== pixelRatioMax) { pixelRatioMax = s.pixelRatioMax; resize(); }
+    const size = Math.max(256, Math.min(Math.round(baseMap * s.shadowScale), renderer.capabilities.maxTextureSize || 2048)), half = baseHalf * s.shadowHalfScale;
+    if (size !== sun.shadow.mapSize.x) { // the shadow map is rebuilt at the new size
+      if (sun.shadow.map) sun.shadow.map.dispose();
+      sun.shadow.map = null;
+      sun.shadow.mapSize.set(size, size);
+    }
+    if (half !== curHalf) {
+      curHalf = half;
+      sc.left = -half; sc.right = half; sc.top = half; sc.bottom = -half;
+      sc.updateProjectionMatrix();
+    }
+    sunTexel = (2 * curHalf) / sun.shadow.mapSize.x; // F40: texel snapping stays on the new grid
+    const on = !!s.shadows;
+    if (renderer.shadowMap.enabled !== on) {
+      renderer.shadowMap.enabled = on;
+      scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) m.needsUpdate = true; });
+    }
+    sun.castShadow = on && !hidesPlayers;
+    tufts.visible = !!s.tufts;
+    treeShadows.visible = !!s.treeShadows && !hides('trees');
+    sailboats.group.visible = !!s.sailboats;
+    butterflies.group.visible = !!s.butterflies;
+    clouds.uniforms.cloudK.value = s.cloudShadows ? 1 : 0;
+    divotsOn = s.divots !== false;
+    if (!divotsOn) for (const m of divotMeshes) m.visible = false;
+    if (sepiaRT && s.sepiaSamples !== q.sepiaSamples) { sepiaRT.dispose(); sepiaRT = null; }
+    q = { sepiaSamples: s.sepiaSamples, tufts: !!s.tufts };
+  }
+  if (init.quality) setQuality(init.quality);
+
   setCamera('aim');
   trans = 1;
   computeGoal(0);
   cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
-  return { butterflies, setDaylight, sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, setRankLabels, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
+  return { butterflies, antialias, setQuality, setDaylight, sync, fadeBody, setCamera, setPaused, render, pick, resize, dispose, addDivot, clearDivots, showMeasure, showScoring, setRankLabels, fitScoring, clearMeasure: () => { scoringFit = null; scoringArgs = null; clearMeasure(); }, showJackZone, syncCourt, floatplane, setRingPose, setJackArrow, setPlaceMarker, setPlayers, setThrowPreview, getZoom: () => zoom, addObject: (o) => scene.add(o), removeObject: (o) => scene.remove(o) };
 }
