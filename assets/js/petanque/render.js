@@ -12,16 +12,11 @@ import { frameMoving, cameraFromFrame, frameObserver, gatherMoving, frameTV, tvV
 import { makeButterflies } from './butterflies.js'; // F67
 import { makeCloudShadows } from './cloudshadows.js'; // F68
 import { daylightAt, SUN_DISTANCE, SHADOW_NEAR, SHADOW_FAR } from './daylight.js';
-import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeTreeShadows, makeBlobTexture, dbgParam, makeSkyPanorama, makeLake, makeSailboats, skyColor, SKY_HAZE, isPhone } from './scenery.js';
+import { grassTexture, makeGrassPlane, blendGrassIntoTerrain, makeTufts, makeTrees, makeTreeShadows, makeBlobTexture, makeCanvas, makeSkyPanorama, makeLake, makeSailboats, skyColor, SKY_HAZE, isPhone } from './scenery.js';
 import { createFloatplane } from './floatplane.js'; // F19
+import { dbgParam } from './debug.js'; // F111
 
 const TRANSITION = 0.6; // seconds for camera moves
-
-function makeCanvas(w, h) {
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  return c;
-}
 
 // Speckled gravel detail texture, tileable enough at this scale
 function gravelTexture(grey) {
@@ -193,18 +188,18 @@ export function createRenderer(canvas, terrain) {
   // The shadow box follows the look target. It is wide enough to take in the trees (within ~15 m of the court) and
   // their shadows, which fall away from the sun: desktop gets a 2048 map over +-14 m (texels ~1.4 cm), phones keep
   // a 1024 map over +-10 m. The depth range is 60 m, so the bias is scaled to match the old 25 m setting.
-  const phoneShadows = isPhone(), shadowHalf = Number(dbgParam('shadowhalf')) || (phoneShadows ? 10 : 14);
+  const phoneShadows = isPhone(), shadowHalf = Number(debug ? dbgParam('shadowhalf') : null) || (phoneShadows ? 10 : 14);
   // F92: clamp to what the GPU supports; ?debug&shadowmap=N forces a size, &shadowtype=basic|pcf|soft picks the filter, &shadowhalf=M the half-width in metres
-  const dbgMap = Number(dbgParam('shadowmap')) || 0;
+  const dbgMap = Number(debug ? dbgParam('shadowmap') : null) || 0;
   const mapSize = Math.max(256, Math.min(dbgMap || (phoneShadows ? 1024 : 2048), renderer.capabilities.maxTextureSize || 2048));
   sun.shadow.mapSize.set(mapSize, mapSize);
-  const st = dbgParam('shadowtype');
+  const st = debug ? dbgParam('shadowtype') : null;
   if (st) renderer.shadowMap.type = { basic: THREE.BasicShadowMap, pcf: THREE.PCFShadowMap, soft: THREE.PCFSoftShadowMap }[st] ?? renderer.shadowMap.type;
   const sc = sun.shadow.camera;
   sc.left = -shadowHalf; sc.right = shadowHalf; sc.top = shadowHalf; sc.bottom = -shadowHalf; sc.near = SHADOW_NEAR; sc.far = SHADOW_FAR; // F95: near is negative so players upsun of the target keep their shadow
   sc.updateProjectionMatrix();
-  sun.shadow.bias = Number(dbgParam("sb") ?? (-0.00003 * 60 / (SHADOW_FAR - SHADOW_NEAR))); // F98: tiny; the old -0.00017 (~1 cm over the 90 m depth range) detached boule shadows
-  sun.shadow.normalBias = Number(dbgParam("nb") ?? 0.002); // F98: was 0.01 (1 cm), which on 7.5 cm boules shows as a gap at the contact point (peter panning); ?debug&nb=&sb= override
+  sun.shadow.bias = Number((debug ? dbgParam("sb") : null) ?? (-0.00003 * 60 / (SHADOW_FAR - SHADOW_NEAR))); // F98: tiny; the old -0.00017 (~1 cm over the 90 m depth range) detached boule shadows
+  sun.shadow.normalBias = Number((debug ? dbgParam("nb") : null) ?? 0.002); // F98: was 0.01 (1 cm), which on 7.5 cm boules shows as a gap at the contact point (peter panning); ?debug&nb=&sb= override
   scene.add(sun, sun.target);
   // F40: aim the sun at p, snapped to the shadow map's texel grid in light space. Without this the frustum slides
   // by sub-texel steps as the camera moves, which crawls the shadow edges (the timbers' flicker).
@@ -286,7 +281,7 @@ export function createRenderer(canvas, terrain) {
   // F96 debug (dev builds): ?debug&hideshadows=trees,players,clouds,decals,all (comma list) switches shadow sources off, to tell
   // which one a cut-off dark shape belongs to: trees = tree blob decals, players = the sun's shadow map (people and boules),
   // clouds = cloud shading, decals = divot discs, the donnee marker and the throw-preview fans
-  const hideSh = new Set(String(dbgParam('hideshadows') || '').split(',').filter(Boolean));
+  const hideSh = new Set(String((debug ? dbgParam('hideshadows') : null) || '').split(',').filter(Boolean));
   const hides = (k) => hideSh.has(k) || hideSh.has('all');
   if (hides('clouds')) clouds.patch = () => {};
   clouds.patch(terrainMesh.material); // F68
@@ -493,7 +488,7 @@ export function createRenderer(canvas, terrain) {
   // Jack finder: at 6-10 m the jack is a few pixels, so a bobbing chevron (constant screen size) floats over it.
   // ?debug&jackvis=a|c|ac|none compares the options (a = chevron, c = bright orange jack).
   const jackVisParam = (() => {
-    try { const q = new URLSearchParams(location.search); return globalThis.__DEBUG__ !== false && q.has('debug') ? q.get('jackvis') : null; } catch (e) { return null; }
+    return debug ? dbgParam('jackvis') : null; // F111
   })();
   const jv = jackVisParam === null ? { a: true, c: true }
     : { a: jackVisParam.includes('a'), c: jackVisParam.includes('c') };
@@ -536,7 +531,7 @@ export function createRenderer(canvas, terrain) {
   const divotTex = makeBlobTexture(64, [[0, `rgba(${dc},0.55)`], [0.65, `rgba(${dc},0.3)`], [1, `rgba(${dc},0)`]]); // F92: alpha 0 with a 4 px margin
   const divotGeo = new THREE.PlaneGeometry(2, 2);
   const divotMat = new THREE.MeshBasicMaterial({
-    map: divotTex, transparent: true, depthWrite: false, depthTest: dbgParam('blobs') !== 'nodepth', polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+    map: divotTex, transparent: true, depthWrite: false, depthTest: (debug ? dbgParam('blobs') : null) !== 'nodepth', polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
   });
   const divotMeshes = [];
   for (let i = 0; i < DIVOTS; i++) {

@@ -24,6 +24,7 @@
 //   stone     one slightly louder pebble tick when the physics reports a stone contact
 
 import { createAudioUnlock } from './audio-unlock.js'; // F94: iOS resume/interrupted/silent-switch lifecycle
+import './debug.js'; // F111: defines the bare `debug` under node
 import { createAmbient } from './ambient.js'; // F12: park ambience (birds, breeze, airplane)
 
 // All tuning numbers live here. Gains are linear (0..1 before the compressor).

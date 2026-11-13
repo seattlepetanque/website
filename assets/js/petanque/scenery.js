@@ -3,12 +3,13 @@
 import * as THREE from '../vendor/three.module.js';
 import { C } from './constants.js';
 import { mulberry32 } from './rng.js';
+import { dbgParam } from './debug.js'; // F111
 import { createSailFleet, SAIL } from './sailboats.js';
 
 const TAU = Math.PI * 2;
 const deg = (d) => d * Math.PI / 180;
 
-function makeCanvas(w, h) {
+export function makeCanvas(w, h) { // F111: shared with render.js
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   return c;
@@ -16,9 +17,7 @@ function makeCanvas(w, h) {
 
 // Small viewports or dense screens get fewer tufts
 // F92: ?debug&NAME=value switches (stripped from production builds with the build-time define, see layouts/_default/game.html)
-export function dbgParam(name) {
-  try { return globalThis.__DEBUG__ !== false && typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug') ? new URLSearchParams(location.search).get(name) : null; } catch (e) { return null; }
-}
+// F111: dbgParam lives in debug.js; call sites that must vanish from production write `debug ? dbgParam('x') : null`.
 
 // F92: a soft round decal texture whose alpha is exactly 0 well inside the quad edge (a 4 px margin), so the quad's
 // straight edge can never show. ?debug&blobs=nomip (no mipmaps, plain linear), =premul (premultiplied alpha),
@@ -29,7 +28,7 @@ export function makeBlobTexture(size, stops) {
   const grad = g.createRadialGradient(c, c, 2, c, c, R);
   for (const [at, col] of stops) grad.addColorStop(at, col);
   g.fillStyle = grad; g.fillRect(0, 0, size, size);
-  const mode = dbgParam('blobs');
+  const mode = debug ? dbgParam('blobs') : null;
   if (mode === 'hard') { g.clearRect(0, 0, size, size); g.fillStyle = 'rgba(0,0,0,0.6)'; g.fillRect(0, 0, size, size); }
   const tex = new THREE.CanvasTexture(cv);
   if (mode === 'nomip') { tex.generateMipmaps = false; tex.minFilter = THREE.LinearFilter; }
@@ -314,7 +313,7 @@ export function treeShadowDecal(x, y, height, radius, sunOffset, outside, clear 
 // map re-centres on the look target, so real tree shadows entered and left it as the camera moved). One instanced mesh.
 export function makeTreeShadows(terrain, sunOffset) {
   const tex = makeBlobTexture(64, [[0, 'rgba(0,0,0,0.9)'], [0.6, 'rgba(0,0,0,0.6)'], [1, 'rgba(0,0,0,0)']]); // F92: alpha 0 at 28 px of 32
-  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.4, depthWrite: false, depthTest: dbgParam('blobs') !== 'nodepth', polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, color: '#0b1a05' });
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.4, depthWrite: false, depthTest: (debug ? dbgParam('blobs') : null) !== 'nodepth', polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, color: '#0b1a05' });
   const list = TREES;
   const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), mat, list.length);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3(), z = new THREE.Vector3(0, 0, 1);

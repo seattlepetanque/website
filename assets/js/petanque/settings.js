@@ -21,6 +21,8 @@ export const settings = {
     try { localStorage.setItem(KEY, v); } catch (e) { /* storage blocked */ }
     for (const fn of [...listeners]) fn(v);
   },
+  // F111: debug scenarios only: switch the mode for this page view without saving it as the user's setting
+  setModeInMemory(v) { if (!MODES.includes(v) || v === mode) return; mode = v; for (const fn of [...listeners]) fn(v); },
   // E27 (hidden): the TV camera variant for AI turns in quick mode: '' (off) | 'a' | 'b' | 'c'. Set it from the console:
   // localStorage.setItem('petanque-tvcam', 'b'). ?debug&tvcam=a|b|c overrides it.
   get tvcam() { try { const v = localStorage.getItem('petanque-tvcam'); return ['a', 'b', 'c'].includes(v) ? v : ''; } catch (e) { return ''; } },
