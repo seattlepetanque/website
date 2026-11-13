@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createMatch, apply, nextTeam, meneResult, holdingTeam, jackValid, jackFault, jackPlaceValid, jackPlaceFault, playersWithBoules, deadJackText,
-  jackGap, jackTooClose, jackCentreRange, TIE_EPS, JACK_END_MARGIN, JACK_R, JACK_DEAD_DIST, JACK_CENTRE_SHIFT,
+  jackGap, jackTooClose, jackCentreRange, fmtCm, TIE_EPS, JACK_END_MARGIN, JACK_R, JACK_DEAD_DIST, JACK_CENTRE_SHIFT,
 } from '../../assets/js/petanque/rules.js';
 import { FRONT_MIN, FRONT_WANT, nextCircle, CIRCLE_R, SIDE_MARGIN } from '../../assets/js/petanque/court.js';
 import { C } from '../../assets/js/petanque/constants.js';
@@ -598,4 +598,12 @@ test('F88: with no known pre-throw spot the physics last-in-bounds spot (F10) is
   m = apply(m, { type: 'throwSettled', jack: { x: -1, y: 12, dead: true, spot: { x: 0.02, y: 11 } }, boules: [] });
   assert.deepEqual(m.jack.spot, { x: 0.02, y: 11 });
   assert.equal(m.result.jackReason, 'out');
+});
+
+test('F100: fmtCm is always centimetres with one decimal, never metres', () => {
+  assert.equal(fmtCm(1.002), '100.2 cm');
+  assert.equal(fmtCm(0), '0.0 cm');
+  assert.equal(fmtCm(0.183), '18.3 cm');
+  assert.equal(fmtCm(12.345), '1234.5 cm');
+  assert.equal(fmtCm(-0.02), '0.0 cm', 'touching or overlapping shows 0.0 cm');
 });

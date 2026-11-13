@@ -75,11 +75,12 @@ export const JACK_END_CENTRE = JACK_END_MARGIN + JACK_R; // the same rule for th
 export const JACK_DEAD_DIST = 3; // Art. 9.3: edge gap from the circle below which a jack is dead
 export const JACK_CENTRE_SHIFT = CIRCLE_R + JACK_R; // centre distance = edge gap + this (default circle)
 // F06: every displayed distance is surface to surface. gapM: metres from a's edge to b's edge (negative = touching or overlapping).
-// fmtCm: one decimal, "18.3 cm" (metres from 1 m up, "1.8 m").
+// fmtCm: always centimetres with one decimal, "18.3 cm", "100.2 cm", "1234.5 cm" (never metres: F100 scoring measurements).
+// Negative input (touching or overlapping) is shown as 0.0 cm.
 export const gapM = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) - (a.r ?? 0) - (b.r ?? 0);
 export function fmtCm(m) {
   const v = Math.max(0, m);
-  return v < 1 ? `${(v * 100).toFixed(1)} cm` : `${v.toFixed(1)} m`;
+  return `${(v * 100).toFixed(1)} cm`;
 }
 const endGap = (jack, g) => ((g.dir ?? 1) < 0 ? jack.y : g.length - jack.y); // distance from the jack's centre to the end string
 const circleR = (g) => g.circle.r ?? g.circleR ?? CIRCLE_R;
