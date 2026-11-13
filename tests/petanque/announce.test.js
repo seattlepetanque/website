@@ -66,7 +66,7 @@ test('biberon: thrown boule stops touching the jack (gap 0.5 cm)', () => {
 test('biberon: a nudge of the jack that ends touching counts; the jack movement does not matter', () => {
   const b0 = before(jack(2, 8), boule(20, 0, 2, 8.2));
   const bodies = [jack(2, 8.1), boule(20, 0, 2, 8.1 + JR + R)];
-  assert.equal(isBiberon({ before: b0, bodies }), true);
+  assert.equal(isBiberon({ before: b0, bodies, shooterId: 20 }), true);
 });
 
 test('biberon: an already touching, undisturbed boule is not announced again', () => {
@@ -77,11 +77,11 @@ test('biberon: an already touching, undisturbed boule is not announced again', (
 
 test('no biberon: gap 2 cm, dead/ghost boule, dead jack, two boules touching each other', () => {
   const j = jack(2, 8);
-  assert.equal(isBiberon({ before: before(j), bodies: [j, boule(20, 0, 2, 8 + JR + R + 0.02)] }), false);
-  assert.equal(isBiberon({ before: before(j), bodies: [j, boule(20, 0, 2, 8 + JR + R, { dead: true })] }), false);
-  assert.equal(isBiberon({ before: before(j), bodies: [j, boule(20, 0, 2, 8 + JR + R, { ghost: true })] }), false);
+  assert.equal(isBiberon({ before: before(j), bodies: [j, boule(20, 0, 2, 8 + JR + R + 0.02)], shooterId: 20 }), false);
+  assert.equal(isBiberon({ before: before(j), bodies: [j, boule(20, 0, 2, 8 + JR + R, { dead: true })], shooterId: 20 }), false);
+  assert.equal(isBiberon({ before: before(j), bodies: [j, boule(20, 0, 2, 8 + JR + R, { ghost: true })], shooterId: 20 }), false);
   const dj = jack(2, 8, { dead: true });
-  assert.equal(isBiberon({ before: before(dj), bodies: [dj, boule(20, 0, 2, 8 + JR + R)] }), false);
+  assert.equal(isBiberon({ before: before(dj), bodies: [dj, boule(20, 0, 2, 8 + JR + R)], shooterId: 20 }), false);
   const a = boule(10, 1, 3, 5), c = boule(20, 0, 3 + 2 * R, 5);
   assert.equal(detectAnnouncement({ before: before(j, a), bodies: [j, a, c], shooterId: 20, events: [hit(20, 10)] }), null);
 });
@@ -95,4 +95,35 @@ test('carreau wins over biberon when both hold', () => {
 
 test('a jack throw (no shooter) with no boules announces nothing', () => {
   assert.equal(detectAnnouncement({ before: before(), bodies: [jack(2, 8)], shooterId: null, events: [] }), null);
+});
+
+test('F101 no biberon: a displaced boule stops next to the jack (thrown boule far away)', () => {
+  const j = jack(2, 8), t = boule(10, 1, 2.3, 7.5);
+  const bodies = [j, boule(10, 1, 2, 8 + JR + R + 0.004), boule(20, 0, 3, 6)];
+  assert.equal(detectAnnouncement({ before: before(j, t), bodies, shooterId: 20, events: [hit(20, 10)] }), null);
+});
+
+test('F101 biberon: the thrown boule stops next to the jack', () => {
+  const j = jack(2, 8);
+  const bodies = [j, boule(20, 0, 2, 8 + JR + R + 0.004)];
+  assert.equal(detectAnnouncement({ before: before(j), bodies, shooterId: 20, events: [] }), 'biberon');
+});
+
+test('F101 biberon: thrown boule bounced off another and still stops next to the jack', () => {
+  const j = jack(2, 8), t = boule(10, 1, 2.5, 7);
+  const bodies = [j, boule(10, 1, 2.9, 6.6), boule(20, 0, 2, 8 + JR + R + 0.002)];
+  assert.equal(detectAnnouncement({ before: before(j, t), bodies, shooterId: 20, events: [hit(20, 10), hit(20, 10)] }), 'biberon');
+});
+
+test('F101 no biberon: displaced boule next to the jack even when the thrown one also touches nothing', () => {
+  const j = jack(2, 8), t = boule(10, 1, 2, 8.4);
+  const bodies = [j, boule(10, 1, 2, 8 + JR + R), boule(20, 0, 2.5, 7.2)];
+  assert.equal(isBiberon({ before: before(j, t), bodies, shooterId: 20 }), false);
+  assert.equal(isBiberon({ before: before(j, t), bodies }), false); // no shooter id: never
+});
+
+test('F101 no biberon: pre-existing touching boule unchanged, thrown boule elsewhere', () => {
+  const j = jack(2, 8), t = boule(10, 1, 2, 8 + JR + R);
+  const bodies = [j, t, boule(20, 0, 4, 5)];
+  assert.equal(detectAnnouncement({ before: before(j, t), bodies, shooterId: 20, events: [] }), null);
 });
