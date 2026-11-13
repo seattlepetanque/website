@@ -31,6 +31,7 @@ import { attachModels } from './models.js';
 import { createGroundView } from './groundview.js';
 import { isPhone } from './scenery.js';
 import { probeGpu, assessGpu, weakDevice, browserName, gpuMessage } from './gpuinfo.js'; // F102
+import { classifyBootError } from './boot-error.js'; // F114
 import { LEVELS, levelSettings, initialLevel, wantAntialias, createAutoQuality } from './quality.js'; // F103
 import { PERSONALITIES, CAST_IDS, specFor, pickStance, stanceFor, STAND_BEYOND, createCommentary, whoKind, composeSuggestion } from './personalities.js';
 
@@ -78,6 +79,7 @@ const say = (text) => { if (status) status.textContent = text; };
 
 
 function boot() {
+  if (debug && params.has('bootfail')) throw new Error(params.get('bootfail') === 'webgl' ? 'WebGL is not available in this browser, so the 3D game cannot start.' : 'debug boot failure'); // F114: ?debug&bootfail=webgl|other shows each boot message
   const seedParam = params.get('seed');
   const seed = seedParam !== null && seedParam !== '' && !isNaN(+seedParam)
     ? +seedParam : Math.floor(Math.random() * 1e9);
@@ -2794,25 +2796,39 @@ function boot() {
   }
 }
 
-// Friendly message in the game area when the game cannot start (no WebGL, etc.)
+// Friendly message in the game area when the game cannot start: WebGL missing (F114: 'webgl'), or any other boot failure
 function showFallback(err) {
+  const webgl = classifyBootError(err) === 'webgl';
   const msg = err && err.message ? err.message : String(err);
-  say('Sorry, the game could not start: ' + msg);
+  say(webgl ? 'Sorry, the game could not start: ' + msg : 'Something went wrong starting the game. Please reload the page.');
   if (!root) return;
   for (const el of root.querySelectorAll('canvas, .petanque-hud, .petanque-controls')) el.hidden = true;
   const box = document.createElement('div');
   box.className = 'petanque-fallback';
   const h = document.createElement('p');
   h.className = 'petanque-fallback-title';
-  h.textContent = 'The pétanque court is closed for now';
   const p = document.createElement('p');
-  p.textContent = 'This game needs WebGL 3D graphics, and your browser or device could not start them. ' +
-    'Try another browser or turn on hardware acceleration. In the meantime, ';
+  if (webgl) {
+    h.textContent = 'The pétanque court is closed for now';
+    p.textContent = 'This game needs WebGL 3D graphics, and your browser or device could not start them. ' +
+      'Try another browser or turn on hardware acceleration. In the meantime, ';
+  } else {
+    h.textContent = 'Something went wrong starting the game. Please reload the page.';
+    p.textContent = 'In the meantime, ';
+    const det = document.createElement('details'); // F114: the error text, for support
+    det.className = 'petanque-fallback-details';
+    const sum = document.createElement('summary');
+    sum.textContent = 'Error details';
+    const pre = document.createElement('pre');
+    pre.textContent = msg;
+    det.append(sum, pre);
+    box.append(det);
+  }
   const a = document.createElement('a');
   a.href = root.dataset.linksUrl || '/links/';
   a.textContent = 'read up on pétanque and find a real court on our Links page';
   p.append(a, '.');
-  box.append(h, p);
+  box.prepend(h, p);
   root.insertBefore(box, root.firstChild);
 }
 
@@ -2846,6 +2862,6 @@ function showGpuMessage(a) {
 try {
   boot();
 } catch (err) {
+  console.error(err); // F114: always logged, before the message is drawn
   showFallback(err);
-  console.error(err);
 }
