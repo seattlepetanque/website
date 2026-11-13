@@ -203,8 +203,8 @@ export function createRenderer(canvas, terrain) {
   const sc = sun.shadow.camera;
   sc.left = -shadowHalf; sc.right = shadowHalf; sc.top = shadowHalf; sc.bottom = -shadowHalf; sc.near = SHADOW_NEAR; sc.far = SHADOW_FAR; // F95: near is negative so players upsun of the target keep their shadow
   sc.updateProjectionMatrix();
-  sun.shadow.bias = -0.00017 * 60 / (SHADOW_FAR - SHADOW_NEAR); // scaled to the depth range
-  sun.shadow.normalBias = 0.01;
+  sun.shadow.bias = Number(dbgParam("sb") ?? (-0.00003 * 60 / (SHADOW_FAR - SHADOW_NEAR))); // F98: tiny; the old -0.00017 (~1 cm over the 90 m depth range) detached boule shadows
+  sun.shadow.normalBias = Number(dbgParam("nb") ?? 0.002); // F98: was 0.01 (1 cm), which on 7.5 cm boules shows as a gap at the contact point (peter panning); ?debug&nb=&sb= override
   scene.add(sun, sun.target);
   // F40: aim the sun at p, snapped to the shadow map's texel grid in light space. Without this the frustum slides
   // by sub-texel steps as the camera moves, which crawls the shadow edges (the timbers' flicker).
