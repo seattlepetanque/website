@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { frameMoving, cameraFromFrame, CAM, frameObserver, walkSubject, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS, broadcastGoal, frameBroadcast, BC, freeViewRect, scoringTargetBox, fitScoringView, SCORING_FIT, blendStart, blendStep } from '../../assets/js/petanque/camera.js';
+import { frameMoving, cameraFromFrame, CAM, frameObserver, walkSubject, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS, broadcastGoal, frameBroadcast, BC, freeViewRect, scoringTargetBox, fitScoringView, SCORING_FIT, blendStart, blendStep, followStep } from '../../assets/js/petanque/camera.js';
 import { createBody } from '../../assets/js/petanque/physics.js';
 
 const OPTS = { aspect: 1.6, fov: 50, dt: 1 / 60 };
@@ -538,4 +538,16 @@ test('F110: the aim to follow switch has no discontinuity (shoulder pose blends 
   assert.ok(settledAt !== null && settledAt >= 0.25 && settledAt <= 1.0, `the blend settles in a short time (${settledAt})`);
   const end = jumps(prev, goal);
   assert.ok(end[0] < 0.02 && end[1] < 0.02, 'and lands exactly on the follow goal');
+});
+
+test('F110: a goal that jumps at one moment (aim yaw change) is followed without a jump', () => {
+  const g0 = { pos: { x: 3.33, y: -1.06, z: 2.09 }, tgt: { x: 0.73, y: 7.9, z: -0.7 } }, g1 = { pos: { x: 3.1, y: -1.2, z: 2.09 }, tgt: { x: 1.5, y: 8, z: -0.7 } };
+  let st = null, prev = g0, maxTgt = 0;
+  for (let i = 0; i < 120; i++) {
+    st = followStep(st, prev, i < 20 ? g0 : g1, 1 / 60);
+    maxTgt = Math.max(maxTgt, Math.hypot(st.tgt.x - prev.tgt.x, st.tgt.y - prev.tgt.y, st.tgt.z - prev.tgt.z));
+    prev = st;
+  }
+  assert.ok(maxTgt < 0.1, `look-at step ${maxTgt.toFixed(3)} m per frame (the jump is 0.77 m)`);
+  assert.ok(Math.abs(prev.tgt.x - 1.5) < 0.01 && Math.abs(prev.pos.x - 3.1) < 0.01, 'and settles on the new goal');
 });

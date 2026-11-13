@@ -24,6 +24,7 @@ export const CAM = Object.freeze({
   reducedTime: 1.6, reducedSpeed: 0.8, // gentler moves under prefers-reduced-motion
   // F110: the aim (shoulder) to follow switch. The camera keeps its pose and only the offset to the follow goal decays through
   // critically damped springs (so there is no lag behind a moving goal), with speed caps: m/s for the camera, m/s for the look-at point.
+  follow: { time: 0.12, max: 40 }, // F110: the shoulder (aim) view is a spring on its goal too: a goal that changes at one moment (aim yaw, view offset reset, focus) glides instead of snapping
   blend: { time: 0.14, posMax: 6, tgtMax: 10, eps: 0.03 },
 });
 
@@ -65,6 +66,15 @@ export function blendStep(b, goal, dt) {
   }
   const pose = { pos: { x: goal.pos.x + off[0], y: goal.pos.y + off[1], z: goal.pos.z + off[2] }, tgt: { x: goal.tgt.x + off[3], y: goal.tgt.y + off[4], z: goal.tgt.z + off[5] } };
   return { b: { off, v }, pose, done: big < B.eps };
+}
+
+// F110: critically damped follow of a goal pose (the shoulder camera). st = { pos, tgt, v } or null (start from `from`).
+export function followStep(st, from, goal, dt) {
+  const F = CAM.follow, cur = st || { pos: { ...from.pos }, tgt: { ...from.tgt }, v: [0, 0, 0, 0, 0, 0] };
+  const pos = {}, tgt = {}, v = [];
+  BK.forEach((k, i) => { const [a, nv] = dt > 0 ? damp(cur.pos[k], goal.pos[k], cur.v[i], F.time, F.max, dt) : [cur.pos[k], cur.v[i]]; pos[k] = a; v[i] = nv; });
+  BK.forEach((k, i) => { const [a, nv] = dt > 0 ? damp(cur.tgt[k], goal.tgt[k], cur.v[i + 3], F.time, F.max, dt) : [cur.tgt[k], cur.v[i + 3]]; tgt[k] = a; v[i + 3] = nv; });
+  return { pos, tgt, v };
 }
 
 // Live subjects: airborne, or rolling above the threshold, plus the thrown body until it settles.
