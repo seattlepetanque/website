@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { frameMoving, cameraFromFrame, CAM, frameObserver, walkSubject, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS, broadcastGoal, frameBroadcast, BC, freeViewRect, scoringTargetBox, fitScoringView, SCORING_FIT, followStep } from '../../assets/js/petanque/camera.js';
+import { frameMoving, cameraFromFrame, CAM, frameObserver, walkSubject, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS, broadcastGoal, frameBroadcast, BC, freeViewRect, scoringTargetBox, fitScoringView, SCORING_FIT, followStep, flightGoalMode } from '../../assets/js/petanque/camera.js';
 import { createBody } from '../../assets/js/petanque/physics.js';
 
 const OPTS = { aspect: 1.6, fov: 50, dt: 1 / 60 };
@@ -542,4 +542,27 @@ test('F122: after the throw the camera is one spring from the shoulder pose to a
   assert.equal(rev, 0, 'no direction reversal in the top-down path');
   assert.ok(minHead >= 0.5, `camera to head ${minHead.toFixed(2)} m`);
   assert.ok(Math.hypot(prev.pos.x - goal.pos.x, prev.pos.y - goal.pos.y, prev.pos.z - goal.pos.z) < 0.1, 'converges to the goal');
+});
+
+test('F123: the follow stays on the thrown boule while it is alone, widens on contact, and stays wide until the end', () => {
+  const dt = 1 / 60, mk = (kind, state, vx = 0) => ({ kind, state, vx, vy: 0, vz: 0, x: 0, y: 0, z: 0 });
+  const thrown = mk('boule', 'airborne', 8), jack = mk('jack', 'resting'), other = mk('boule', 'resting');
+  const bodies = [thrown, jack, other];
+  let st = null;
+  for (let i = 0; i < 120; i++) st = flightGoalMode(st, bodies, thrown, dt); // flies and rolls alone, others at rest
+  assert.equal(st.mode, 'follow'); assert.equal(st.k, 0);
+  jack.state = 'rolling'; jack.vx = 2; // the thrown boule hit the jack
+  const ks = [];
+  for (let i = 0; i < 30; i++) { st = flightGoalMode(st, bodies, thrown, dt); ks.push(st.k); }
+  assert.equal(st.mode, 'fan'); assert.equal(st.k, 1);
+  const sm = (k) => k * k * (3 - 2 * k), steps = ks.map((k, i) => sm(k) - sm(i ? ks[i - 1] : 0));
+  assert.ok(Math.max(...steps) < 0.13, 'the goal blend is continuous: no big per-frame step');
+  jack.state = 'resting'; thrown.state = 'resting'; thrown.vx = 0; // everything settles: no flip-flop back to follow
+  for (let i = 0; i < 60; i++) st = flightGoalMode(st, bodies, thrown, dt);
+  assert.equal(st.mode, 'fan');
+  assert.equal(flightGoalMode(null, [thrown], thrown, dt).mode, 'follow');
+});
+
+test('F123: quick mode gives human and AI the same style', () => {
+  assert.equal(cameraStyle({ slow: false, human: true }), cameraStyle({ slow: false, human: false }));
 });
