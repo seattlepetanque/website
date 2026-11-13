@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { frameMoving, cameraFromFrame, CAM, frameObserver, walkSubject, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS, broadcastGoal, frameBroadcast, BC, freeViewRect, scoringTargetBox, fitScoringView, SCORING_FIT } from '../../assets/js/petanque/camera.js';
+import { frameMoving, cameraFromFrame, CAM, frameObserver, walkSubject, OBS, cameraStyle, frameTV, tvGoal, TV, TV_VARIANTS, broadcastGoal, frameBroadcast, BC, freeViewRect, scoringTargetBox, fitScoringView, SCORING_FIT, blendStart, blendStep } from '../../assets/js/petanque/camera.js';
 import { createBody } from '../../assets/js/petanque/physics.js';
 
 const OPTS = { aspect: 1.6, fov: 50, dt: 1 / 60 };
@@ -508,4 +508,34 @@ test('F62: a tall card lifts the centre; a short one does not', () => {
   const flat = scoringTargetBox(f, 1, { cardH: 50, H: 900 }), tall = scoringTargetBox(f, 1, { cardH: 300, H: 900 });
   assert.ok(tall.t < flat.t && tall.b < flat.b);
   assert.ok(Math.abs((flat.t + flat.b) / 2 - 400) < 1e-6);
+});
+
+test('F110: the aim to follow switch has no discontinuity (shoulder pose blends into a moving follow goal)', () => {
+  const shoulder = { pos: { x: 3.1, y: -1.2, z: 2.1 }, tgt: { x: 1.5, y: 8, z: -0.7 } };
+  const thrown = body('boule', 2.05, 0.45, 0, 6, { z: 1, state: 'airborne', vz: 4 });
+  const jack = body('jack', 2, 8, 0, 0, { state: 'resting' });
+  const dt = 1 / 60, jumps = (a, b) => [Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y, a.pos.z - b.pos.z), Math.hypot(a.tgt.x - b.tgt.x, a.tgt.y - b.tgt.y, a.tgt.z - b.tgt.z)];
+  const goalAt = (f) => { const c = cameraFromFrame(f, () => 0); return { pos: c.pos, tgt: c.tgt }; };
+  let f = frameMoving([thrown, jack], jack, { ...OPTS, thrown }, null);
+  let goal = goalAt(f);
+  const cut = jumps(shoulder, goal); // what copying the goal pose does: one frame
+  assert.ok(cut[0] > 1 && cut[1] > 3, 'the follow goal really is far from the shoulder pose at release');
+  let b = blendStart(shoulder, goal), prev = shoulder, maxPos = 0, maxTgt = 0, maxGoalPos = 0, maxGoalTgt = 0, prevGoal = goal, settledAt = null;
+  for (let i = 1; i <= 120; i++) {
+    thrown.x += thrown.vx * dt; thrown.y += thrown.vy * dt; thrown.z = Math.max(0.04, thrown.z + thrown.vz * dt); thrown.vz -= 9.8 * dt;
+    f = frameMoving([thrown, jack], jack, { ...OPTS, thrown }, f);
+    goal = goalAt(f);
+    const r = blendStep(b, goal, dt);
+    b = r.b;
+    const [dp, dg] = jumps(prev, r.pose), [gp, gt] = jumps(prevGoal, goal);
+    maxPos = Math.max(maxPos, dp); maxTgt = Math.max(maxTgt, dg); maxGoalPos = Math.max(maxGoalPos, gp); maxGoalTgt = Math.max(maxGoalTgt, gt);
+    if (i === 1) assert.ok(jumps(shoulder, r.pose)[0] < 0.2 && jumps(shoulder, r.pose)[1] < 0.5, 'the first frame stays at the shoulder pose');
+    if (r.done && settledAt === null) settledAt = i * dt;
+    prev = r.pose; prevGoal = goal;
+  }
+  assert.ok(maxPos < 0.25 && maxTgt < 0.3, `no per-frame jump above 0.25 m / 0.3 m (pos ${maxPos.toFixed(3)}, tgt ${maxTgt.toFixed(3)}); a cut is ${cut[0].toFixed(2)} / ${cut[1].toFixed(2)} m`);
+  assert.ok(maxPos < cut[0] / 4 && maxTgt < cut[1] / 4, 'far smoother than a cut');
+  assert.ok(settledAt !== null && settledAt >= 0.25 && settledAt <= 1.0, `the blend settles in a short time (${settledAt})`);
+  const end = jumps(prev, goal);
+  assert.ok(end[0] < 0.02 && end[1] < 0.02, 'and lands exactly on the follow goal');
 });
