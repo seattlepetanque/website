@@ -23,7 +23,7 @@ export function spotText(player, choice, kind, talk) {
 // Commentary for the throw that just settled. Returns { text, kind } where kind is
 // 'dead' | 'carreau' | 'great' | null (for the personality lines).
 // ctx: { jack, match, bodies, preThrow }
-export function describe(was, evs, { jack: j, match, bodies, preThrow }) {
+export function describe(was, evs, { jack: j, match, bodies, preThrow, gapFn = gapText }) { // F123b: gapFn gives the canonical (tie-cluster) gap text
   const players = match && match.players;
   if (j && j.dead) return { text: 'The jack is out: dead jack.', kind: null };
   if (was.kind === 'jack') return { text: `Jack is ${jackGap(was, match && match.geometry).toFixed(1)} m out.`, kind: null }; // F75: edge to edge
@@ -31,7 +31,7 @@ export function describe(was, evs, { jack: j, match, bodies, preThrow }) {
   if (was.dead) return { text: `${ownerName(was, players)} boule is out: dead boule.`, kind: 'dead' };
   if (!j) return { text: `${ownerName(was, players)} boule is down.`, kind: null }; // no jack on the court: nothing to measure against
   const gap = Math.hypot(was.x - j.x, was.y - j.y) - was.r - j.r;
-  const base = `${ownerName(was, players)} boule is ${gapText(was, j)} from the jack.`;
+  const base = `${ownerName(was, players)} boule is ${gapFn(was, j)} from the jack.`;
   // carreau: the shooter hit an opposing boule, knocked it away and took its place
   for (const ev of evs) {
     if (ev.type !== 'hit' || (ev.a !== was.id && ev.b !== was.id)) continue;
@@ -87,8 +87,8 @@ export function faultText(f) {
 
 // The mène-end note for a decided mène: the winning boule's gap, with any carreau/biberon note kept in front.
 // Returns the previous note unchanged when there is no winning boule or jack.
-export function meneWinNote({ note, closeCall, win, jack, players }) {
+export function meneWinNote({ note, closeCall, win, jack, players, gapFn = gapText }) {
   if (!win || !jack) return note;
   const special = /^(Carreau|Biberon)/.test(note) ? note + ' ' : '';
-  return `${closeCall ? 'Close call! ' : ''}${special}Closest: ${ownerName(win, players)} boule, ${gapText(win, jack)} from the jack.`;
+  return `${closeCall ? 'Close call! ' : ''}${special}Closest: ${ownerName(win, players)} boule, ${gapFn(win, jack)} from the jack.`;
 }

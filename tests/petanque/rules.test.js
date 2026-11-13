@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createMatch, apply, nextTeam, meneResult, holdingTeam, jackValid, jackFault, jackPlaceValid, jackPlaceFault, playersWithBoules, deadJackText,
-  jackGap, jackTooClose, jackCentreRange, fmtCm, TIE_EPS, JACK_END_MARGIN, JACK_R, JACK_DEAD_DIST, JACK_CENTRE_SHIFT,
+  jackGap, jackTooClose, jackCentreRange, fmtCm, sameGap, canonicalGaps, clusterUm, gapUm, JACK_END_MARGIN, JACK_R, JACK_DEAD_DIST, JACK_CENTRE_SHIFT,
 } from '../../assets/js/petanque/rules.js';
 import { FRONT_MIN, FRONT_WANT, nextCircle, CIRCLE_R, SIDE_MARGIN } from '../../assets/js/petanque/court.js';
 import { C } from '../../assets/js/petanque/constants.js';
@@ -521,19 +521,46 @@ test('F88b: a thrown jack that lands too close (no pre-throw spot) is not replac
   assert.ok(!t.jack || !t.jack.replaced);
 });
 
-// --- F77: one tie tolerance ---
-test('F77: TIE_EPS is the one tie tolerance for holding, scoring and the void message', async () => {
-  assert.equal(TIE_EPS, 0.001);
+// --- F77 / F123: F123b: 1 mm tolerance cluster ---
+const R0 = 0.0375 + 0.015; // boule radius + jack radius: centre distance = gap + R0
+const atGap = (cm) => R0 + cm / 100;
+const M = (nm, team, g, side = 1) => b(nm, team, 2 + side * atGap(g), 8);
+const mk = (bs, last) => ({ phase: 'play', jack: { x: 2, y: 8 }, boules: bs, jackTeam: 0, lastThrower: last, stayed: true, players: [
+  { team: 0, boulesLeft: 2 }, { team: 1, boulesLeft: 2 }] });
+test('F123b: 13.4 vs 13.5 tie (Art. 29: last thrower plays again) and both render 13.4', () => {
+  const j = { x: 2, y: 8 }, bs = [M('a', 0, 13.4), M('b', 1, 13.5, -1)];
+  assert.equal(holdingTeam(j, bs), 'tie');
+  assert.ok(meneResult(j, bs).void);
+  assert.equal(nextTeam(mk(bs, 1)), 1);
+  assert.equal(nextTeam(mk(bs, 0)), 0);
+  const cg = canonicalGaps(bs, j);
+  assert.equal(fmtCm(cg.get('a')), '13.4 cm');
+  assert.equal(fmtCm(cg.get('b')), '13.4 cm');
+});
+test('F123b: 13.4, 13.5, 13.6 form {13.4,13.5} and {13.6}; no chaining', () => {
   const j = { x: 2, y: 8 };
-  assert.equal(holdingTeam(j, [b('a', 0, 2.5, 8), b('b', 1, 1.5005, 8)]), 'tie'); // 0.5 vs 0.4995
-  assert.notEqual(holdingTeam(j, [b('a', 0, 2.5, 8), b('b', 1, 1.5025, 8)]), 'tie');
-  assert.ok(meneResult(j, [b('a', 0, 2.5, 8), b('b', 1, 1.5005, 8)]).void);
-  assert.ok(!meneResult(j, [b('a', 0, 2.5, 8), b('b', 1, 1.5025, 8)]).void);
-  const fs = await import('node:fs');
-  const main = fs.readFileSync(new URL('../../assets/js/petanque/main.js', import.meta.url), 'utf8');
-  const tac = fs.readFileSync(new URL('../../assets/js/petanque/tactics.js', import.meta.url), 'utf8');
-  assert.ok(main.includes('<= TIE_EPS') && !/<= 0\.00[12]\) note/.test(main), 'main.js void message uses the shared constant');
-  assert.ok(tac.includes('<= TIE_EPS'));
+  const cg = canonicalGaps([M('a', 0, 13.4), M('b', 1, 13.5, -1), M('c', 0, 13.6)], j);
+  assert.equal(fmtCm(cg.get('a')), '13.4 cm');
+  assert.equal(fmtCm(cg.get('b')), '13.4 cm');
+  assert.equal(fmtCm(cg.get('c')), '13.6 cm');
+});
+test('F123b: exactly 1.0 mm apart ties, 1.01 mm apart does not; 13.449 vs 13.451 tie', () => {
+  const j = { x: 2, y: 8 };
+  assert.equal(holdingTeam(j, [M('a', 0, 13.4), M('b', 1, 13.5, -1)]), 'tie');
+  assert.equal(holdingTeam(j, [M('a', 0, 13.4), M('b', 1, 13.501, -1)]), 0);
+  assert.equal(holdingTeam(j, [M('a', 0, 13.449), M('b', 1, 13.451, -1)]), 'tie');
+  assert.deepEqual(clusterUm([0, 1000, 1001]), [0, 0, 1001]);
+});
+test('F123b: when clusters differ the farther team throws', () => {
+  const bs = [M('a', 0, 13.4), M('b', 1, 14.6, -1)];
+  assert.equal(holdingTeam({ x: 2, y: 8 }, bs), 0);
+  assert.equal(nextTeam(mk(bs, 0)), 1);
+});
+test('F123b: ties inside one team do not change the points', () => {
+  const j = { x: 2, y: 8 };
+  const r = meneResult(j, [M('a', 0, 10), M('a2', 0, 10.05, -1), M('b', 1, 15)]);
+  assert.equal(r.team, 0); assert.equal(r.points, 2);
+  assert.equal(meneResult(j, [M('a', 0, 10), M('b', 1, 15)]).points, 1);
 });
 
 // --- F79 / F80: placement geometry ---

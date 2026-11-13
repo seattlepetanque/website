@@ -1,6 +1,7 @@
 // Pétanque rules and scoring (doublette). Pure data logic: no DOM, no physics.
 // Jack: { x, y, dead }. Boules: { id, team, owner, x, y, dead }. Metres, 2D distances.
 import { nextCircle, CIRCLE_R } from './court.js';
+import { C } from './constants.js';
 
 export const DEFAULT_GEOMETRY = Object.freeze({
   circle: Object.freeze({ x: 2, y: 1 }),
@@ -12,9 +13,35 @@ export const DEFAULT_GEOMETRY = Object.freeze({
   jackMax: 10,
 });
 
-// F77: the one tie tolerance: two boules are equidistant from the jack within 1 mm (rules.js scoring and holding, and the
-// void-mène message in main.js and the tactics' tie test use this same constant)
-export const TIE_EPS = 0.001;
+// F123b: the one tie rule. Surface gaps to the jack are held in integer micrometres. Sorted ascending, a boule joins the current
+// cluster when its gap minus the cluster's smallest is <= 1.0 mm (inclusive; anchored on the smallest, no chaining), else it
+// starts a new one. Boules in one cluster are EQUAL and every display shows the cluster's smallest gap (the canonical gap).
+export const TIE_UM = 1000;
+export const gapUm = (centreDist, rB = C.boule.r, rJ = C.jack.r) => Math.round(Math.max(0, centreDist - rB - rJ) * 1e6);
+// canonical micrometre value for each entry of an array of gaps in micrometres (same order)
+export function clusterUm(ums) {
+  const order = ums.map((u, i) => i).sort((p, q) => ums[p] - ums[q]);
+  const out = new Array(ums.length);
+  let anchor = null;
+  for (const i of order) {
+    if (anchor === null || ums[i] - anchor > TIE_UM) anchor = ums[i];
+    out[i] = anchor;
+  }
+  return out;
+}
+// canonicalGaps(boules, jack): Map id -> canonical surface gap in metres, for the live boules.
+export function canonicalGaps(boules, jack) {
+  const live = (boules || []).filter((b) => !b.dead);
+  const ums = live.map((b) => gapUm(dist(b, jack), b.r ?? C.boule.r, jack.r ?? C.jack.r));
+  const canon = clusterUm(ums);
+  return new Map(live.map((b, i) => [b.id, canon[i] / 1e6]));
+}
+// two centre distances (e.g. the best of each side) are equal under the cluster rule (they are clustered together with the rest of `all`)
+export function sameGap(centreA, centreB, all = []) {
+  const u = [centreA, centreB, ...all].map((d) => gapUm(d));
+  const c = clusterUm(u);
+  return c[0] === c[1];
+}
 const BOULES_PER_PLAYER = 3;
 const EPS = 1e-9;
 
@@ -117,10 +144,13 @@ export function boulesInHand(match, team) {
 
 // Live boules sorted by distance to the jack: [{ id, team, dist }]
 function measure(jack, boules) {
-  return boules
+  const m = boules
     .filter((b) => !b.dead)
-    .map((b) => ({ id: b.id, team: b.team, dist: dist(b, jack) }))
-    .sort((a, b) => a.dist - b.dist);
+    .map((b) => ({ id: b.id, team: b.team, dist: dist(b, jack), um: gapUm(dist(b, jack), b.r ?? C.boule.r, jack.r ?? C.jack.r) }))
+    .sort((a, b) => a.um - b.um || a.dist - b.dist);
+  const canon = clusterUm(m.map((x) => x.um));
+  m.forEach((x, i) => { x.canon = canon[i]; }); // F123b: the cluster's smallest gap
+  return m;
 }
 
 // Team holding the point: 0 | 1 | null (no live boules) | 'tie'
@@ -129,7 +159,7 @@ export function holdingTeam(jack, boules) {
   const m = measure(jack, boules);
   if (!m.length) return null;
   const other = m.find((b) => b.team !== m[0].team);
-  if (other && other.dist - m[0].dist <= TIE_EPS) return 'tie';
+  if (other && other.canon === m[0].canon) return 'tie';
   return m[0].team;
 }
 
@@ -140,9 +170,9 @@ export function meneResult(jack, boules) {
   if (!measured.length) return { void: true };
   const win = measured[0];
   const other = measured.find((b) => b.team !== win.team);
-  if (other && other.dist - win.dist <= TIE_EPS) return { void: true };
-  const limit = other ? other.dist : Infinity;
-  const points = measured.filter((b) => b.team === win.team && b.dist < limit).length;
+  if (other && other.canon === win.canon) return { void: true };
+  const limit = other ? other.canon : Infinity;
+  const points = measured.filter((b) => b.team === win.team && b.canon < limit).length;
   return { team: win.team, points, measured: measured.map(({ id, dist }) => ({ id, dist })) };
 }
 

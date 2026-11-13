@@ -6,7 +6,7 @@
 import { C } from './constants.js';
 import { court, ahead, farGap, alongOf } from './court.js';
 import { SKILL, scaledSkill, coneFor } from './donnee.js';
-import { meneResult, holdingTeam, boulesInHand, fmtCm, JACK_R, TIE_EPS } from './rules.js';
+import { meneResult, holdingTeam, boulesInHand, fmtCm, JACK_R, sameGap } from './rules.js';
 
 const DEG = Math.PI / 180;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -189,7 +189,7 @@ const HOLDER_BONUS = 0.25; // a holder with boules left may add points (plan: 0.
 export function epState(sit, usD, themD, hT, hO, exposure = 0, opts = {}) {
   const bu = usD[0] ?? Infinity, bt = themD[0] ?? Infinity;
   if (bu === Infinity && bt === Infinity) return { ep: 0, holder: null, n: 0, keeps: [], exposureTerm: 0 };
-  if (Math.abs(bu - bt) <= TIE_EPS) return { ep: 0, holder: 'tie', n: 0, keeps: [], exposureTerm: 0 };
+  if (sameGap(bu, bt, [...usD.slice(1), ...themD.slice(1)])) return { ep: 0, holder: 'tie', n: 0, keeps: [], exposureTerm: 0 };
   const us = bu < bt;
   const mine = us ? usD : themD, otherBest = us ? bt : bu;
   const hX = us ? hO : hT, hH = us ? hT : hO;

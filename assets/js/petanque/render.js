@@ -8,7 +8,7 @@ import { JACK_END_CENTRE, JACK_CENTRE_SHIFT } from './rules.js';
 import { rankBoules, layoutBadges } from './ranklabels.js'; // F91
 import { mulberry32 } from './rng.js';
 import { LUMBER } from './physics.js';
-import { frameMoving, cameraFromFrame, blendStart, blendStep, followStep, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, scoringTargetBox } from './camera.js';
+import { frameMoving, cameraFromFrame, CAM, followStep, frameObserver, gatherMoving, frameTV, tvVariant, TV, frameBroadcast, frameCourtWide, scoringTargetBox } from './camera.js';
 import { prefersReducedMotion } from './reduced.js'; // F113
 import { makeButterflies } from './butterflies.js'; // F67
 import { makeCloudShadows } from './cloudshadows.js'; // F68
@@ -1412,8 +1412,9 @@ export function createRenderer(canvas, terrain, init = {}) {
   let obsFrame = null; // E11: camera.js state of the casual-observer camera (kept while it stays in that mode)
 
   const camLog = debug ? dbgParam('camlog') : null; // F110: ?debug&camlog logs the camera pose per frame and each setCamera (console)
+  let headRef = null; // F122: head position + shoulder side of the last shoulder view; the camera keeps clear of it
   let shoulderSm = null; // F110: spring state of the shoulder camera (null while another mode or a timed pan runs)
-  let blend = null, fovEase = false; // F110: the aim to follow switch: null | 'start' (first frame) | camera.js blend state; fovEase eases the field of view with it
+  let follow = false, flightSm = null, fovEase = false; // F122: after the human's throw the camera is one spring (flightSm) on a goal beside the boule; fovEase eases the aim zoom out with it
   let bcFrame = null; // F01: camera.js state of the current broadcast shot (a new shot is a cut)
   let tvFrame = null, tvPending = null; // E27: the TV shot's state, and a camera request held until the shot has played out
   function setCamera(m, o = {}, flush = false) {
@@ -1434,11 +1435,12 @@ export function createRenderer(canvas, terrain, init = {}) {
     const wasAim = mode === 'shoulder' || mode === 'aim';
     if (debug && camLog !== null) console.log('[camlog] setCamera ' + JSON.stringify({ from: mode, to: m, cut: !!o.cut, flush }));
     mode = m; opts = o;
-    blend = null; fovEase = false;
+    fovEase = false;
     if (m === 'flight') flightFrame = null;
-    if (m === 'flight' && o.bodies && wasAim && !cutIn && !reduce()) { blend = 'start'; fovEase = true; } // F110: no copy of the follow pose: the camera keeps its pose and the offset decays (reduced motion keeps the cut)
+    follow = m === 'flight' && !!o.body && !!headRef && (wasAim || follow) && !cutIn; // F122: the shoulder pose is the spring's start, so no snap
+    flightSm = follow ? flightSm : null; fovEase = follow && wasAim && !reduce();
     from.pos.copy(cur.pos); from.tgt.copy(cur.tgt);
-    trans = reduce() || cutIn || blend ? 1 : 0; // F110: a blend replaces the timed lerp
+    trans = reduce() || cutIn || follow ? 1 : 0;
     if (trans === 1) computeGoal(0, true);
   }
 
@@ -1495,6 +1497,10 @@ export function createRenderer(canvas, terrain, init = {}) {
         goal.pos.set(f.pos.x, f.pos.y, f.pos.z);
         goal.tgt.set(f.tgt.x, f.tgt.y, f.tgt.z);
       }
+    } else if (mode === 'flight' && follow && headRef) { // F122: behind and to the shoulder side of the boule, above it, looking just ahead of it
+      const b = opts.body, T = CAM.thrown, gz = groundZ(b);
+      goal.pos.set(b.x - headRef.fx * T.behind + headRef.rx * T.side, b.y - headRef.fy * T.behind + headRef.ry * T.side, gz + T.up + 0.5 * Math.max(0, b.z));
+      goal.tgt.set(b.x + headRef.fx * T.ahead, b.y + headRef.fy * T.ahead, Math.max(gz, b.z));
     } else if (mode === 'flight' && opts.bodies) { // D09: frame every moving body (camera.js), cochonnet first when it flies
       const jack = opts.bodies.find((b) => b.kind === 'jack');
       flightOpts.aspect = camera.aspect; flightOpts.fov = camera.fov; flightOpts.dt = dt; flightOpts.reduced = reduce(); flightOpts.thrown = opts.body; flightOpts.dir = court.dir;
@@ -1539,6 +1545,7 @@ export function createRenderer(canvas, terrain, init = {}) {
       const side = opts.hand === 'left' ? -1 : 1; // behind the left shoulder for a left-hander (mirrors the offsets)
       const fx = Math.sin(yaw), fy = Math.cos(yaw), rx = side * Math.cos(yaw), ry = -side * Math.sin(yaw);
       const gz = groundZ(p);
+      headRef = { x: p.x, y: p.y, z: gz + 1.65 * (opts.wide || 1), fx, fy, rx, ry }; // F122: the thrower's head and axes, kept for the follow after the throw
       const w = opts.wide || 1; // chibi mesh players are bulkier: stand the camera further back and up
       goal.pos.set(p.x - fx * 2.2 * zoom * w + rx * 1.1 * zoom * w, p.y - fy * 2.2 * zoom * w + ry * 1.1 * zoom * w, gz + (1.5 + 0.6 * zoom) * w);
       goal.tgt.set(p.x + fx * 7 - rx * 0.5, p.y + fy * 7 - ry * 0.5, gz - 0.7);
@@ -1714,13 +1721,11 @@ export function createRenderer(canvas, terrain, init = {}) {
     if (mode === 'observer' && obsFrame) fov *= obsFrame.fovK; // E11: the spectator's slow zoom
     if (fovEase) { if (Math.abs(fov - camera.fov) < 0.05) fovEase = false; else fov = camera.fov + (fov - camera.fov) * (1 - Math.exp(-dt / 0.12)); } // F110: the aim zoom eases out with the pose blend
     if (Math.abs(fov - camera.fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
-    if (blend) { // F110: aim to follow: the camera's own pose plus a decaying offset to the follow goal
-      const g = { pos: goal.pos, tgt: goal.tgt };
-      if (blend === 'start') blend = blendStart({ pos: cur.pos, tgt: cur.tgt }, g);
-      const r = blendStep(blend, g, dt);
-      blend = r.done ? null : r.b;
-      cur.pos.set(r.pose.pos.x, r.pose.pos.y, r.pose.pos.z); cur.tgt.set(r.pose.tgt.x, r.pose.tgt.y, r.pose.tgt.z);
-      if (!blend) { cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt); }
+    if (follow && mode === 'flight') { // F122: one spring from the camera's own pose to the goal
+      if (reduce()) { cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt); } else {
+        flightSm = followStep(flightSm, { pos: cur.pos, tgt: cur.tgt }, goal, dt, CAM.thrown);
+        cur.pos.set(flightSm.pos.x, flightSm.pos.y, flightSm.pos.z); cur.tgt.set(flightSm.tgt.x, flightSm.tgt.y, flightSm.tgt.z);
+      }
     } else if (trans < 1) {
       trans = Math.min(1, trans + dt / TRANSITION);
       const k = smooth(trans);
@@ -1737,8 +1742,11 @@ export function createRenderer(canvas, terrain, init = {}) {
       cur.pos.copy(goal.pos); cur.tgt.copy(goal.tgt);
     }
     if (mode !== 'shoulder' || trans < 1) shoulderSm = null;
+    if (mode !== 'flight') { follow = false; flightSm = null; }
+    if (mode !== 'shoulder' && mode !== 'flight') headRef = null;
+    const headD = headRef ? Math.hypot(cur.pos.x - headRef.x, cur.pos.y - headRef.y, cur.pos.z - headRef.z) : -1; // F122: camlog only
     camera.position.copy(cur.pos);
-    if (debug && camLog !== null) console.log('[camlog] ' + JSON.stringify({ m: mode, t: +dt.toFixed(4), p: [cur.pos.x, cur.pos.y, cur.pos.z].map((v) => +v.toFixed(4)), g: [cur.tgt.x, cur.tgt.y, cur.tgt.z].map((v) => +v.toFixed(4)), f: +camera.fov.toFixed(3), fk: +focusK.toFixed(3), in: mode === 'shoulder' ? [opts.yaw, opts.viewYaw, opts.viewPitch, opts.zoom, trans].map((v) => v === undefined ? null : +(+v).toFixed(4)) : null, pv: preview && preview.donnee ? 1 : 0, gp: [goal.pos.x, goal.pos.y, goal.pos.z].map((v) => +v.toFixed(3)), gt: [goal.tgt.x, goal.tgt.y, goal.tgt.z].map((v) => +v.toFixed(3)) })); // F110: ?debug&camlog
+    if (debug && camLog !== null) console.log('[camlog] ' + JSON.stringify({ m: mode, t: +dt.toFixed(4), p: [cur.pos.x, cur.pos.y, cur.pos.z].map((v) => +v.toFixed(4)), g: [cur.tgt.x, cur.tgt.y, cur.tgt.z].map((v) => +v.toFixed(4)), hd: +headD.toFixed(3), f: +camera.fov.toFixed(3), fk: +focusK.toFixed(3), in: mode === 'shoulder' ? [opts.yaw, opts.viewYaw, opts.viewPitch, opts.zoom, trans].map((v) => v === undefined ? null : +(+v).toFixed(4)) : null, pv: preview && preview.donnee ? 1 : 0, gp: [goal.pos.x, goal.pos.y, goal.pos.z].map((v) => +v.toFixed(3)), gt: [goal.tgt.x, goal.tgt.y, goal.tgt.z].map((v) => +v.toFixed(3)) })); // F110: ?debug&camlog
     let lookAt = cur.tgt;
     camera.lookAt(lookAt);
     // shadow frustum follows what we look at
