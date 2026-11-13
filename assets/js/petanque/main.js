@@ -23,6 +23,7 @@ import {
 } from './donnee.js';
 import { createAudio } from './audio.js';
 import { createClock } from './clock.js';
+import { createVisibility, isPageHidden } from './visibility.js'; // F106
 import { createDrift, REDUCED_PROGRESS } from './daylight.js'; // F71
 import * as THREE from '../vendor/three.module.js';
 import { createCharacter, releaseOffset, bendReach } from './character.js';
@@ -2342,7 +2343,7 @@ function boot() {
 
   // F103/F104: graphics quality. High = level 0, Low = the last level, Auto starts at 0 (Low on a weak device) and the
   // controller steps down one level when frames stay slow; never back up. Changing the setting applies at once.
-  let auto = settings.graphics === 'auto' ? createAutoQuality(level) : null, qLast = 0;
+  let auto = settings.graphics === 'auto' ? createAutoQuality(level) : null;
   function applyLevel(l) { level = l; const s = levelSettings(l); renderer.setQuality(s); audio.setAmbientScale(s.ambient); }
   // F108: smooth edges (context antialiasing) apply at once too, by re-creating the canvas and context; only if that fails
   // does the paused card fall back to the 'reload the page' note
@@ -2354,10 +2355,9 @@ function boot() {
     if (surfaceDiff({ antialias: renderer.antialias }, want).rebuild && !renderer.rebuild(want)) rebuildFailed = true;
     applyLevel(initialLevel(g, weak));
   });
-  function qualityTick(now) {
-    const ms = now - qLast; qLast = now;
+  function qualityTick(ms) { // F106: ms is the frame's visible wall time (hidden intervals are never included)
     if (!auto) return;
-    const next = auto.frame(ms, !pausedNow && !document.hidden);
+    const next = auto.frame(ms, !pausedNow && !vis.hidden && ms > 0);
     if (next !== null) { applyLevel(next); if (debug) console.info('[quality] auto stepped down to', next, LEVELS[next].name); }
   }
   // Fixed timestep loop (?debug&timerframes drives it from timers, for headless screenshots under virtual time)
@@ -2369,15 +2369,30 @@ function boot() {
     const stopped = world.forceRest();
     if (debug) console.warn('[hard cap]', `t=${(world.t - capT0).toFixed(1)}s`, JSON.stringify(stopped.map((s) => ({ ...s, x: +s.x.toFixed(3), y: +s.y.toFixed(3), z: +s.z.toFixed(3), speed: +s.speed.toFixed(4), spin: +s.spin.toFixed(3) }))));
   }
-  let acc = 0, last = performance.now();
+  let acc = 0;
+  // F106: a hidden tab (visibilitychange, pagehide/pageshow, freeze/resume) freezes everything: no frames are simulated or
+  // drawn, the hidden interval is discarded (not caught up), and the audio context is suspended until the page is back.
+  // The game is not paused: it simply does not advance, as if time stopped.
+  const vis = createVisibility(performance.now());
+  function setPageHidden(h) {
+    vis.set(h, performance.now());
+    audio.setHidden(vis.hidden);
+  }
+  const syncVisibility = () => setPageHidden(isPageHidden(document));
+  document.addEventListener('visibilitychange', syncVisibility);
+  window.addEventListener('pagehide', () => setPageHidden(true));
+  window.addEventListener('pageshow', syncVisibility);
+  document.addEventListener('freeze', () => setPageHidden(true));
+  document.addEventListener('resume', syncVisibility);
+  syncVisibility();
   const bodiesById = new Map();
   const freezeAt = debug ? +params.get('freezeat') || 0 : 0; // ?debug&freezeat=0.6 stops the sim at that time (camera checks)
   function frame(now) {
-    const dt = Math.min((now - last) / 1000, 0.1);
-    last = now;
+    const dt = vis.dt(now, 100) / 1000;
+    if (vis.hidden) { nextFrame(frame); return; } // F106: nothing runs while hidden (rAF itself stops; timer-driven loops idle)
     if (pauseHold && ((pending && now > 1500) || now > 3500)) { pauseHold = false; if (playing) userPaused = true; syncPausedUI(); }
     syncPause();
-    qualityTick(now);
+    qualityTick(vis.rawMs);
     clock.tick(dt * 1000);
     acc += dt;
     if ((!playing || userPaused) && match) acc = 0; // paused: the game waits
@@ -2438,7 +2453,7 @@ function boot() {
     get fetchJob() { return fetchJob; }, set fetchJob(v) { fetchJob = v; },
     get inCircle() { return inCircle; }, set inCircle(v) { inCircle = v; },
     get ringCarry() { return ringCarry; }, set ringCarry(v) { ringCarry = v; },
-    get pausedNow() { return pausedNow; }, get level() { return level; }, get aimYaw() { return aimYaw; },
+    visSet: setPageHidden, get pausedNow() { return pausedNow; }, get level() { return level; }, get aimYaw() { return aimYaw; },
   } : null;
   if (debug) debugFloatplane(dbgCtx);
   aimView();

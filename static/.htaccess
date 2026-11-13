@@ -13,3 +13,28 @@ RewriteRule ^ https://seattlepetanque.org%{REQUEST_URI} [L,R=301]
 <FilesMatch "^\.">
     Require all denied
 </FilesMatch>
+
+# F106: caching. Everything below is guarded by <IfModule>: a missing module skips the rules instead of causing a 500.
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresDefault "access plus 1 hour"
+  ExpiresByType text/html "access plus 0 seconds"
+  ExpiresByType image/png "access plus 1 month"
+  ExpiresByType image/jpeg "access plus 1 month"
+  ExpiresByType image/webp "access plus 1 month"
+  ExpiresByType image/svg+xml "access plus 1 month"
+  ExpiresByType image/x-icon "access plus 1 month"
+  ExpiresByType font/woff2 "access plus 1 year"
+  ExpiresByType model/gltf-binary "access plus 1 month"
+</IfModule>
+
+<IfModule mod_headers.c>
+  # Fingerprinted files (name.<16+ hex>.ext: /js/petanque/main.<hash>.js, Hugo's *.min.<hash>.css) never change.
+  <FilesMatch "\.[0-9a-fA-F]{16,}\.(js|css|map|woff2?|png|jpe?g|webp|svg|glb)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  # HTML is revalidated every time (a cheap 304), so a deploy shows at once and points at the new hashed files.
+  <FilesMatch "\.html?$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+</IfModule>

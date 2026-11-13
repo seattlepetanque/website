@@ -175,6 +175,19 @@ export function createAudio(opts = {}) {
     } catch (e) { /* ignore */ }
   }
 
+  // F106: the page is hidden (background tab, frozen page): suspend the context so nothing is scheduled or heard, and bring it
+  // back on return (unless paused or muted, which have their own paths). The F94 unlocker also retries on visibilitychange.
+  let hidden = false;
+  function setHidden(on) {
+    on = !!on; if (on === hidden) return;
+    hidden = on;
+    if (!ctx) return;
+    try {
+      if (hidden && ctx.state === 'running' && ctx.suspend) ctx.suspend().catch(() => {});
+      else if (!hidden && !held && !muted && (ctx.state === 'suspended' || ctx.state === 'interrupted') && ctx.resume) ctx.resume().catch(() => {});
+    } catch (e) { /* ignore */ }
+  }
+
   // F94: resumes on every gesture / visibilitychange / pageshow / focus while the context is not running (and not muted or paused).
   // The state-change log exists only in ?debug builds (the production build drops it).
   const stateLog = (typeof debug !== 'undefined' && debug)
@@ -184,7 +197,7 @@ export function createAudio(opts = {}) {
     win: typeof window !== 'undefined' ? window : null,
     nav: typeof navigator !== 'undefined' ? navigator : null,
     getContext: () => ctx, create: () => unlock(),
-    isMuted: () => muted, isHeld: () => held, onState: stateLog,
+    isMuted: () => muted, isHeld: () => held || hidden, onState: stateLog,
   });
   if (typeof document !== 'undefined') resumer.attach();
 
@@ -573,5 +586,5 @@ export function createAudio(opts = {}) {
     return btn;
   }
 
-  return { unlock, setPaused, handleEvents, update, accent, fanfare, play, setMuted, isMuted, playAmbient, setEngine, setAmbientState, setAmbientScale, createMuteButton };
+  return { unlock, setPaused, setHidden, handleEvents, update, accent, fanfare, play, setMuted, isMuted, playAmbient, setEngine, setAmbientState, setAmbientScale, createMuteButton };
 }
