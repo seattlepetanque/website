@@ -25,7 +25,7 @@ export const CAM = Object.freeze({
   // F110: the aim (shoulder) to follow switch. The camera keeps its pose and only the offset to the follow goal decays through
   // critically damped springs (so there is no lag behind a moving goal), with speed caps: m/s for the camera, m/s for the look-at point.
   follow: { time: 0.12, max: 40 }, // F110: the shoulder (aim) view is a spring on its goal too: a goal that changes at one moment (aim yaw, view offset reset, focus) glides instead of snapping
-  blend: { time: 0.14, posMax: 6, tgtMax: 10, eps: 0.03 },
+  thrown: { time: 0.4, max: 8, behind: 3, side: 1.3, up: 1.6, ahead: 1 }, // F122: after the human's throw: one spring (time s, max m/s per axis) on a goal behind and to the shoulder side of the boule
 });
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -46,46 +46,10 @@ function damp(cur, goal, vel, time, maxSpeed, dt) {
   return [out, nv];
 }
 
-// F110: blend from the current camera pose to a (moving) goal pose. pose = { pos: {x,y,z}, tgt: {x,y,z} }.
-// blendStart keeps `from` as the starting pose; blendStep(b, goal, dt) returns { b, pose, done }: the pose is the goal plus an
-// offset that decays critically damped, so the first frame is exactly `from` and the goal's own motion is never lagged.
-const BK = ['x', 'y', 'z'];
-export function blendStart(from, goal) {
-  const off = [], v = [0, 0, 0, 0, 0, 0];
-  for (const k of BK) off.push(from.pos[k] - goal.pos[k]);
-  for (const k of BK) off.push(from.tgt[k] - goal.tgt[k]);
-  return { off, v };
-}
-export function blendStep(b, goal, dt) {
-  const B = CAM.blend, off = [], v = [];
-  let big = 0;
-  for (let i = 0; i < 6; i++) {
-    const [o, nv] = dt > 0 ? damp(b.off[i], 0, b.v[i], B.time, i < 3 ? B.posMax : B.tgtMax, dt) : [b.off[i], b.v[i]];
-    off.push(o); v.push(nv);
-    big = Math.max(big, Math.abs(o), Math.abs(nv) * 0.1);
-  }
-  const pose = { pos: { x: goal.pos.x + off[0], y: goal.pos.y + off[1], z: goal.pos.z + off[2] }, tgt: { x: goal.tgt.x + off[3], y: goal.tgt.y + off[4], z: goal.tgt.z + off[5] } };
-  return { b: { off, v }, pose, done: big < B.eps };
-}
-
-// F122: keep the camera out of the thrower's head and body. The keep-out is a vertical capsule (head down to the hips, radius
-// `r`); a camera inside is pushed out along the closest-point direction, biased toward the shoulder side `side` ({x,y} unit) so
-// the path passes beside the head, never through it. The result is a continuous function of pos (no pop). Returns a new {x,y,z}.
-export const HEAD_CLEAR = { r: 0.7, drop: 0.8 };
-export function clearHead(pos, head, side, r = HEAD_CLEAR.r, drop = HEAD_CLEAR.drop) {
-  const cz = Math.max(head.z - drop, Math.min(head.z, pos.z));
-  let dx = pos.x - head.x, dy = pos.y - head.y, dz = pos.z - cz;
-  const d = Math.hypot(dx, dy, dz);
-  if (d >= r) return { x: pos.x, y: pos.y, z: pos.z };
-  const k = (r - d) / r; // 0 at the surface, 1 at the axis: the side bias grows as the camera sinks in
-  dx += side.x * r * k; dy += side.y * r * k;
-  const n = Math.hypot(dx, dy, dz) || 1;
-  return { x: head.x + dx / n * r, y: head.y + dy / n * r, z: cz + dz / n * r };
-}
-
 // F110: critically damped follow of a goal pose (the shoulder camera). st = { pos, tgt, v } or null (start from `from`).
-export function followStep(st, from, goal, dt) {
-  const F = CAM.follow, cur = st || { pos: { ...from.pos }, tgt: { ...from.tgt }, v: [0, 0, 0, 0, 0, 0] };
+const BK = ['x', 'y', 'z'];
+export function followStep(st, from, goal, dt, F = CAM.follow) {
+  const cur = st || { pos: { ...from.pos }, tgt: { ...from.tgt }, v: [0, 0, 0, 0, 0, 0] };
   const pos = {}, tgt = {}, v = [];
   BK.forEach((k, i) => { const [a, nv] = dt > 0 ? damp(cur.pos[k], goal.pos[k], cur.v[i], F.time, F.max, dt) : [cur.pos[k], cur.v[i]]; pos[k] = a; v[i] = nv; });
   BK.forEach((k, i) => { const [a, nv] = dt > 0 ? damp(cur.tgt[k], goal.tgt[k], cur.v[i + 3], F.time, F.max, dt) : [cur.tgt[k], cur.v[i + 3]]; tgt[k] = a; v[i + 3] = nv; });
