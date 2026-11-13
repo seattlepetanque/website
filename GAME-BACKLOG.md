@@ -1545,3 +1545,6 @@ F123b OUTCOME: done. rules.js: gapUm (integer micrometres), clusterUm (anchored 
 
 ### F124 Snap radius 8 cm (user)
 User decision: the human aim snap radius is reduced from 25 cm to 8 cm (`TOSS.snapRadius`), so pointing beside the cochonnet or a boule is possible. Effect on shot hit rates not re-measured (the SNAP_SHORT comment cites +8 points at 25 cm).
+
+### F125 Biberon overlay did not appear (user)
+Outcome: detection was fine (real-physics sweep and a real-page autotest run `?debug&play&autotest&announcelog` gave 'biberon' for gaps -0.25 cm and 0.68 cm, not paused, no card). Cause: onSettled shows the announcement and, in the same tick, opens the mène-end (or game-over) card for the last boule of a mène; game.css then hid the announcement (`.petanque:has(.pt-overlay.is-active) .pt-announce { display: none }`), so a biberon/carreau on the deciding boule never showed. Fix: that rule is removed (show() already declines when a card is open at the call) and .pt-announce is z-index 3, above the cards (z-index 2). `?debug&announcelog` logs kind, gap, paused and active overlay per boule (also in instant matches). Not verified: a visual check over the card in a real browser. A real biberon needs a gap within -0.5..1 cm; stops at 1-3 cm (about as common) are not announced by design.

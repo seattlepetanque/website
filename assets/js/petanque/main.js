@@ -2033,10 +2033,11 @@ function boot() {
     if (instant) markLandings(world.events);
     const snap = snapshot();
     const note = describe(was, evs);
-    if (was.kind === 'boule' && !instant) { // F61: CARREAU / BIBERON overlay (the sim keeps running)
+    if (was.kind === 'boule' && (!instant || (debug && params.has('announcelog')))) { // F61: CARREAU / BIBERON overlay (the sim keeps running)
       try {
         const kind = detectAnnouncement({ before: preThrow, bodies: world.bodies, shooterId: was.id, events: evs });
         const early = carreauW && carreauW.fired && carreauW.shooterId === was.id && carreauW.preThrow === preThrow; // F107: announced mid-throw
+        if (debug && params.has('announcelog')) { const jb = jackBody(), sb = world.bodies.find((b) => b.id === was.id); const msg = ('kind=' + kind + ' gap=' + (jb && sb ? gapM(sb, jb).toFixed(4) : 'na') + ' paused=' + root.classList.contains('is-paused') + ' overlay=' + (root.querySelector('.pt-overlay.is-active') || {}).className); console.log('[announce] ' + msg); root.dataset.alog = (root.dataset.alog || '') + msg + ' | '; }
         if (kind && !(early && kind === 'carreau')) announcer.show(kind);
       } catch (err) { console.error('[announce]', err); }
     }
