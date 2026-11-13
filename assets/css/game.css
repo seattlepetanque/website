@@ -181,6 +181,10 @@ html.petanque-playing main { overflow: visible; }
   border: 0; outline: 0; box-shadow: none; overflow: hidden; background: var(--navy, #14284b);
   display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; gap: .4rem;
   font-size: .9rem;
+  /* F120: the mute / fullscreen / pause cluster is pinned to the stage's bottom-right corner (the grid's content box, so the
+     padding and safe-area insets set its margin, whatever the dock or a card does). --cluster-w is its width (3 buttons of
+     2.25rem and 2 gaps of .3rem) plus a gap; every bottom status element keeps that much clear on its right */
+  --cluster-w: 8rem;
 }
 .petanque.is-playing canvas { position: absolute; inset: 0; width: 100%; height: 100%; aspect-ratio: auto; z-index: 0; }
 .petanque.is-playing .petanque-hud, .petanque.is-playing .petanque-controls { display: contents; }
@@ -223,7 +227,7 @@ html.petanque-playing main { overflow: visible; }
    edge so they sit just above the dock. Absolutely positioned, they take no grid column, so the scoreboard and dock
    keep the full width; above the cards (z 4 over the overlays' z 2) */
 .petanque.is-playing .pc-corner {
-  display: flex; gap: .3rem; grid-row: 2 / 3; position: absolute; right: 0; bottom: 0; z-index: 4;
+  display: flex; gap: .3rem; position: absolute; grid-area: 1 / 1 / -1 / -1; right: 0; bottom: 0; z-index: 4;
 }
 .petanque.is-playing .pc-corner button { background: var(--pt-glass); }
 .petanque.is-playing .pc-corner button:focus-visible { box-shadow: 0 0 0 5px var(--paper, #fffaf0); }
@@ -231,6 +235,7 @@ html.petanque-playing main { overflow: visible; }
 /* bottom strip: hint toast, turn banner, status line */
 .petanque.is-playing .pt-dock {
   grid-row: 3; position: relative; z-index: 1; display: grid; gap: .3rem; pointer-events: none;
+  padding-right: calc(var(--cluster-w) - .4rem); /* F120: clear of the pinned cluster (the stage padding supplies the .4rem) */
 }
 .petanque.is-playing .pt-dock > * { pointer-events: auto; }
 .petanque.is-playing .pt-dock > [hidden] { display: none; }
@@ -270,7 +275,7 @@ html.petanque-playing main { overflow: visible; }
 }
 .petanque.is-playing .pt-mene-end .pt-next { grid-area: btn; min-height: 2.4rem; padding: .3rem 1rem; }
 /* F41: the bottom-right icon cluster (about 7.5rem wide) overlays the bar's right end, so the bar stops short of it and its Next button stays clear */
-.petanque.is-playing .pt-mene-end .pt-card { margin-right: 8rem; }
+.petanque.is-playing .pt-mene-end .pt-card { margin-right: calc(var(--cluster-w) - .5rem); } /* F120: the overlay's own padding supplies the .5rem */
 .petanque.is-playing .pt-mene-end .pt-card-title, .petanque.is-playing .pt-card-title { font-size: 1.2rem; }
 .petanque.is-playing .pt-blurb { margin-bottom: .6rem; font-size: .9rem; }
 
@@ -397,7 +402,7 @@ html.petanque-playing main { overflow: visible; }
 .petanque.is-playing .pt-holding {
   --pt-accent: var(--navy, #14284b);
   position: absolute; display: block; grid-row: 2; grid-column: 1; justify-self: center; align-self: start; z-index: 2; /* absolute, so it is no grid item and adds no track; its area (row 2, column 1) still centres it under the controls */
-  margin-top: 2.6rem; max-width: calc(100% - 1rem); padding: .2rem .7rem;
+  margin-top: 2.6rem; max-width: calc(100% - 2 * var(--cluster-w)); padding: .2rem .7rem;
   font-size: .8rem; font-weight: 700; line-height: 1.3; text-align: center; color: var(--fg, #1d2233);
   background: var(--pt-glass); border: 1px solid var(--line, #d9ccb0); border-top: 4px solid var(--pt-accent); border-radius: 6px;
   pointer-events: none; opacity: 0; transition: opacity .3s ease;
